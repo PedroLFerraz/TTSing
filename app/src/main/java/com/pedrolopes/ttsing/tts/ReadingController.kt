@@ -1,0 +1,122 @@
+package com.pedrolopes.ttsing.tts
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
+import android.speech.tts.Voice
+import androidx.core.content.ContextCompat
+import com.pedrolopes.ttsing.data.epub.ReadingPosition
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+/**
+ * App-side handle to [ReadingService]: binds for live [PlaybackState] observation and
+ * in-process control, and uses startForegroundService for the play action so background
+ * playback is established correctly.
+ */
+class ReadingController(context: Context) {
+
+    private val appContext = context.applicationContext
+    private var service: ReadingService? = null
+    private var bound = false
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var stateCollectorJob: Job? = null
+
+    private val _state = MutableStateFlow(PlaybackState())
+    val state: StateFlow<PlaybackState> = _state.asStateFlow()
+
+    private val _connected = MutableStateFlow(false)
+    val connected: StateFlow<Boolean> = _connected.asStateFlow()
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val svc = (binder as? ReadingService.LocalBinder)?.service ?: return
+            service = svc
+            bound = true
+            _connected.value = true
+            stateCollectorJob?.cancel()
+            stateCollectorJob = scope.launch { svc.state.collect { _state.value = it } }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            service = null
+            bound = false
+            _connected.value = false
+        }
+    }
+
+    fun bind() {
+        if (bound) return
+        appContext.bindService(
+            Intent(appContext, ReadingService::class.java),
+            connection,
+            Context.BIND_AUTO_CREATE,
+        )
+    }
+
+    fun unbind() {
+        if (!bound) return
+        stateCollectorJob?.cancel()
+        runCatching { appContext.unbindService(connection) }
+        bound = false
+        service = null
+        _connected.value = false
+    }
+
+    /** Loads a book (without playing) so the reader can restore/highlight the saved position. */
+    fun prepare(bookId: String, onReady: (ReadingPosition) -> Unit = {}) {
+        service?.prepareBook(bookId, onReady)
+    }
+
+    fun play(bookId: String, position: ReadingPosition? = null) {
+        ContextCompat.startForegroundService(appContext, ReadingService.playIntent(appContext, bookId, position))
+    }
+
+    fun togglePlayPause(bookId: String) {
+        val svc = service
+        if (svc != null && svc.state.value.isSpeaking) svc.pause() else play(bookId, _state.value.position)
+    }
+
+    fun pause() {
+        service?.pause()
+    }
+
+    fun next() {
+        service?.skipSentence(forward = true)
+    }
+
+    fun previous() {
+        service?.skipSentence(forward = false)
+    }
+
+    fun seekTo(position: ReadingPosition, alsoPlay: Boolean, bookId: String) {
+        if (alsoPlay || _state.value.isSpeaking) play(bookId, position) else service?.moveTo(position)
+    }
+
+    fun stop() {
+        service?.stopPlayback()
+    }
+
+    fun voicesForCurrentBook(): List<Voice> = service?.voicesForCurrentBook().orEmpty()
+
+    fun currentVoiceName(): String? = service?.currentVoiceName()
+
+    fun defaultVoiceName(): String? = service?.defaultVoiceName()
+
+    fun applySpeechSettings(rate: Float, pitch: Float) {
+        service?.applySpeechSettings(rate, pitch)
+    }
+
+    fun selectVoice(voiceName: String?) {
+        service?.selectVoice(voiceName)
+    }
+}

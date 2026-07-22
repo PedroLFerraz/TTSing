@@ -1,0 +1,99 @@
+# TTSing
+
+An Android app (Kotlin + Jetpack Compose) that reads your EPUB library aloud with
+text-to-speech, highlighting the current sentence and word karaoke-style and
+auto-scrolling to follow along. Built for Portuguese and English books, with
+background playback and media-notification controls.
+
+## Features
+
+- **Library** — pick any folder of `.epub` files (Storage Access Framework); covers,
+  titles, authors and reading progress are cached so the list opens instantly.
+- **Reader** — native Compose rendering of chapters (headings, paragraphs, quotes,
+  inline images) laid out as **swipeable pages** (left/right), like a real e-reader, with
+  a table-of-contents drawer, adjustable font size, and light / sepia / dark themes.
+  Chapter text is paginated to the screen with `TextMeasurer`; swiping past the last page
+  rolls into the next chapter.
+- **Read-aloud TTS** — Android `TextToSpeech`, one utterance per sentence with a small
+  look-ahead queue for smooth speech. The sentence being read gets a soft highlight and
+  the exact word gets a strong highlight (`onRangeStart` word callbacks). Pages turn
+  automatically to keep up with the voice.
+- **Voice picker** — in the reader's settings sheet, voices are grouped by region
+  (US / GB / …), the currently-speaking voice is marked, each shows quality and
+  offline/online, and a "Device default" option returns to the engine's built-in voice.
+  Speed goes up to **2.5×**.
+- **Time to finish** — the bottom bar shows time left in the chapter and in the book. The
+  estimate uses the app's *measured* speaking speed (characters/second, smoothed over real
+  sentences and normalised to rate 1.0), so it adapts to your device, voice and speed.
+- **Messy-EPUB clean-up** — footnote call-outs, note bodies and page-break markers are
+  stripped before rendering, so the voice doesn't read "palavra um" for a footnote number.
+  Conservative by design: a well-formed book is left untouched.
+- **Tap to start** — tap any paragraph to begin reading from there.
+- **Background playback** — a foreground media service keeps playing with the screen off,
+  with play/pause and ±sentence controls in the notification and on the lock screen.
+- **Portuguese + English** — the voice/language is taken from the EPUB's `dc:language`;
+  sentence splitting uses the book's locale. Per-language voice, speed and pitch are
+  saved in settings.
+
+## Project location note
+
+This project lives at `C:\Users\Pedro Lopes\AndroidStudioProjects\TTSing`.
+It was moved off the original Desktop path because that path contains an invisible
+`U+2800` character in the `⠀` folder, and the Android Gradle Plugin rejects non-ASCII
+project paths on Windows. See `LEIA-ME.txt` left in the old Desktop folder for how to
+turn that location into a junction pointing here, if you want it to appear there again.
+
+## Requirements
+
+- Android Studio (uses its bundled JDK 21 — `gradle.properties` pins
+  `org.gradle.java.home` to `C:\Program Files\Android\Android Studio\jbr`).
+- Android SDK platform 36 + build-tools 36.0.0 (already installed).
+- A device or emulator running Android 8.0 (API 26) or newer, with a TTS engine and the
+  Portuguese/English voice data installed (Settings → System → Languages →
+  Text-to-speech). **Note:** stock emulator images often ship English only — for
+  Portuguese, test on a physical phone or install the pt voice via Google TTS.
+
+## Build & run
+
+Open the folder in Android Studio and Run, or from a terminal:
+
+```powershell
+cd "C:\Users\Pedro Lopes\AndroidStudioProjects\TTSing"
+.\gradlew.bat assembleDebug     # build the APK
+.\gradlew.bat test              # run the JVM unit tests
+```
+
+The debug APK is written to `app\build\outputs\apk\debug\app-debug.apk`.
+
+## Trying it out
+
+Sample books are in `sample-books/` (`the-little-garden.epub` in English and
+`o-pequeno-jardim.epub` in Portuguese). Copy them onto the device/emulator (e.g. into
+`Download/`), then in the app tap the folder icon and choose that folder. Open a book and
+press play to see the sentence/word highlighting and auto-scroll.
+
+## Architecture
+
+```
+data/epub/    EpubParser (ZIP + OPF + nav/NCX), ChapterLoader (XHTML → blocks via Jsoup),
+              BreakIterator sentence segmentation. Pure JVM, unit-tested.
+data/db/      Room cache of book metadata + reading position.
+data/settings DataStore: folder URI, speed, pitch, font size, theme, per-language voice.
+data/         BookRepository — SAF folder scan, cover extraction, position persistence.
+tts/          SpeechEngine (sentence queue + word callbacks), BookContentSource
+              (sentence stream across block/chapter boundaries), ReadingService
+              (foreground media service, MediaSession, notification, audio focus),
+              ReadingController (binds the UI to the service).
+ui/library    Folder picker + cover grid.
+ui/reader     Chapter rendering, karaoke highlight, transport bar, TOC, settings sheet.
+```
+
+A reading position is `(chapterIndex, blockIndex, sentenceIndex)`; TTS utterance IDs encode
+it, so every speech callback maps directly to what to highlight and where to scroll.
+
+## Tests
+
+Pure-JVM unit tests under `app/src/test` cover EPUB parsing (EPUB 2 NCX + EPUB 3 nav,
+percent-encoded hrefs, cover detection), the XHTML→blocks conversion, Portuguese/English
+sentence segmentation, and end-to-end parsing of the real sample EPUBs. Run with
+`.\gradlew.bat test`.
