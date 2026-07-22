@@ -37,6 +37,17 @@ sealed interface Block {
         val sentences: List<SentenceSpan>,
     ) : Block {
         enum class Kind { PARAGRAPH, HEADING_1, HEADING_2, HEADING_3, QUOTE }
+
+        /**
+         * Index of the sentence containing [offset] (a char offset into [text]). Spans are
+         * trimmed, so an offset landing in the whitespace between two sentences belongs to
+         * the one before it. Clamped, never out of bounds.
+         */
+        fun sentenceIndexAt(offset: Int): Int {
+            if (sentences.isEmpty()) return 0
+            val index = sentences.indexOfLast { it.start <= offset }
+            return if (index < 0) 0 else index
+        }
     }
 
     data class Image(

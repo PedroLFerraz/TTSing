@@ -16,6 +16,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // The AnkiDroid API is published only on JitPack. FAIL_ON_PROJECT_REPOS above
+        // means it has to be declared here rather than in app/build.gradle.kts.
+        maven("https://jitpack.io")
     }
 }
 
