@@ -1,8 +1,12 @@
 package com.pedrolopes.ttsing.data.epub
 
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.util.Locale
 
 /**
@@ -15,13 +19,35 @@ class ChapterLoader(
 ) {
 
     fun parse(input: InputStream, chapterZipPath: String): List<Block> {
-        val doc = Jsoup.parse(input, null, "")
+        val doc = parseDocument(input.readBytes())
         EpubSanitizer.sanitize(doc)
         val baseDir = EpubPaths.parentDir(chapterZipPath)
         val blocks = mutableListOf<Block>()
         walk(doc.body(), baseDir, blocks)
         return blocks
     }
+
+    /**
+     * Parses the chapter, preferring UTF-8 over whatever the document declares.
+     *
+     * Converted EPUBs frequently ship UTF-8 bytes under a `charset=iso-8859-1` meta tag; obeying
+     * the declaration turns every curly quote into `â€™`, both on screen and in the voice. Bytes
+     * that decode cleanly as UTF-8 are almost never really Latin-1, so a strict decode is a
+     * reliable test: if it succeeds, trust it; if it fails, this is a genuine single-byte
+     * encoding and Jsoup's own sniffing (which reads the meta tag) is right.
+     */
+    private fun parseDocument(bytes: ByteArray): Document {
+        val utf8 = strictUtf8(bytes)
+        return if (utf8 != null) Jsoup.parse(utf8, "") else Jsoup.parse(ByteArrayInputStream(bytes), null, "")
+    }
+
+    private fun strictUtf8(bytes: ByteArray): String? = runCatching {
+        Charsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(bytes))
+            .toString()
+    }.getOrNull()
 
     private fun walk(element: Element, baseDir: String, out: MutableList<Block>) {
         for (child in element.children()) {

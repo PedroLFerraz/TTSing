@@ -12,3 +12,9 @@
 # Debug/release APKs are build output, organized separately in /releases
 /releases
 *.apk
+
+# Only the two tiny synthetic samples belong in the repo. Real books dropped in here for
+# testing are copyrighted and must not be committed or pushed.
+/sample-books/*
+!/sample-books/the-little-garden.epub
+!/sample-books/o-pequeno-jardim.epub

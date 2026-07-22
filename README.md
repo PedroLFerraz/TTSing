@@ -33,6 +33,10 @@ background playback and media-notification controls.
 - **Messy-EPUB clean-up** — footnote call-outs, note bodies and page-break markers are
   stripped before rendering, so the voice doesn't read "palavra um" for a footnote number.
   Conservative by design: a well-formed book is left untouched.
+  Two more real-world defects are worked around: chapters whose bytes are UTF-8 but whose
+  `<meta>` claims `iso-8859-1` (obeying the declaration turns every `’` into `â€™`, on screen
+  *and* in the voice), and `linear="no"` spine items, which are skipped so a book doesn't
+  open on a blank cover page.
 - **Tap to start** — tap any paragraph to begin reading from there (from the sentence you
   actually touched, not the top of the page).
 - **Anki flashcards** — long-press a sentence, tap the word you didn't know, type what it

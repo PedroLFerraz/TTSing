@@ -59,13 +59,23 @@ class EpubParser(file: File) : Closeable {
         }
 
         val spine = mutableListOf<SpineItem>()
+        val nonLinear = mutableListOf<SpineItem>()
         val spineElement = opf.select("spine").firstOrNull()
         for (itemref in opf.select("spine > itemref")) {
             val idref = itemref.attr("idref")
             val item = manifest[idref] ?: continue
             val zipPath = EpubPaths.resolve(opfDir, item.href)
-            if (entryExists(zipPath)) spine.add(SpineItem(idref, zipPath))
+            if (!entryExists(zipPath)) continue
+            // linear="no" marks pages outside the reading flow (covers, ad pages). Including
+            // them means opening a book on a blank cover page.
+            if (itemref.attr("linear").equals("no", ignoreCase = true)) {
+                nonLinear.add(SpineItem(idref, zipPath))
+            } else {
+                spine.add(SpineItem(idref, zipPath))
+            }
         }
+        // Some books mark everything non-linear; keep them rather than showing nothing.
+        if (spine.isEmpty()) spine.addAll(nonLinear)
         if (spine.isEmpty()) throw EpubFormatException("EPUB has an empty spine")
 
         val coverPath = findCover(opf, manifest, opfDir)
