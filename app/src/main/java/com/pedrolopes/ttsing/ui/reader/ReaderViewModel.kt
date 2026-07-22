@@ -12,7 +12,6 @@ import com.pedrolopes.ttsing.data.epub.Chapter
 import com.pedrolopes.ttsing.data.epub.EpubBook
 import com.pedrolopes.ttsing.data.epub.EpubParser
 import com.pedrolopes.ttsing.data.epub.TocEntry
-import com.pedrolopes.ttsing.data.settings.AppSettings
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
 import com.pedrolopes.ttsing.tts.BookContentSource
 import kotlinx.coroutines.Dispatchers
@@ -115,6 +114,7 @@ class ReaderViewModel(
 
     // ---- Anki cards ----
 
+    /** The language the EPUB declares; the user's per-book override is applied on top. */
     fun bookLocale(): Locale = book?.locale() ?: Locale.getDefault()
 
     /**
@@ -135,7 +135,8 @@ class ReaderViewModel(
     fun previewCardAudio(draft: CardDraft) {
         viewModelScope.launch {
             val current = settings.settings.first()
-            cardAudio.speak(draft.sentence, bookLocale(), voiceFor(current), current.pitch)
+            val locale = current.localeFor(bookId, bookLocale())
+            cardAudio.speak(draft.sentence, locale, current.voiceFor(locale.language), current.pitch)
         }
     }
 
@@ -152,10 +153,11 @@ class ReaderViewModel(
                     "AnkiDroid isn't installed"
                 } else {
                     val current = settings.settings.first()
+                    val locale = current.localeFor(bookId, bookLocale())
                     val audio = cardAudio.synthesize(
                         text = draft.sentence,
-                        locale = bookLocale(),
-                        voiceName = voiceFor(current),
+                        locale = locale,
+                        voiceName = current.voiceFor(locale.language),
                         pitch = current.pitch,
                     )
                     when (val result = anki.addCard(draft, audio)) {
@@ -176,9 +178,6 @@ class ReaderViewModel(
             onResult(message)
         }
     }
-
-    private fun voiceFor(current: AppSettings): String? =
-        if (bookLocale().language == "pt") current.voicePt else current.voiceEn
 
     override fun onCleared() {
         parser?.close()

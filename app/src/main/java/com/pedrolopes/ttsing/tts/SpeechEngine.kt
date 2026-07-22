@@ -131,6 +131,21 @@ class SpeechEngine(
         tts.defaultVoice?.takeIf { it.locale.language == locale.language }?.name
     }.getOrNull()
 
+    /**
+     * Every language the engine can actually speak, one entry per language (not per region),
+     * sorted by display name. This is what the language picker offers, so the user can only
+     * choose something they will really hear.
+     */
+    fun availableLanguages(): List<Locale> =
+        tts.voices
+            .orEmpty()
+            .filterNot { it.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true }
+            .map { it.locale.language }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .map { Locale.forLanguageTag(it) }
+            .sortedBy { it.displayLanguage.lowercase() }
+
     /** All usable (installed) voices for the language, including online ones. */
     fun voicesFor(locale: Locale): List<Voice> =
         tts.voices

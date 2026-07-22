@@ -1,6 +1,7 @@
 package com.pedrolopes.ttsing.data.settings
 
 import android.content.Context
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -8,10 +9,25 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.util.Locale
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
 enum class ReaderTheme { SYSTEM, LIGHT, SEPIA, DARK }
+
+/**
+ * Collects the string preferences whose key starts with [prefix], stripped of it — the way
+ * per-language and per-book entries are stored, since their key set isn't known up front.
+ */
+private fun Preferences.stringsWithPrefix(prefix: String): Map<String, String> =
+    asMap().mapNotNull { (key, value) ->
+        val name = key.name
+        if (name.startsWith(prefix) && value is String && name.length > prefix.length) {
+            name.removePrefix(prefix) to value
+        } else {
+            null
+        }
+    }.toMap()
 
 data class AppSettings(
     val libraryFolderUri: String?,
@@ -19,14 +35,29 @@ data class AppSettings(
     val pitch: Float,
     val fontScale: Float,
     val readerTheme: ReaderTheme,
-    val voiceEn: String?,
-    val voicePt: String?,
+    /** Chosen voice name per language code ("en", "pt", "de", …); absent means engine default. */
+    val voices: Map<String, String> = emptyMap(),
+    /** Per-book language override (book id → BCP-47 tag), for books whose `dc:language` is wrong. */
+    val bookLanguages: Map<String, String> = emptyMap(),
     /** Measured speaking speed in characters/second at rate 1.0, used for time estimates. */
     val charsPerSecond: Float = DEFAULT_CHARS_PER_SECOND,
     /** Cached AnkiDroid ids for the TTSing deck and note type; null until first card. */
     val ankiDeckId: Long? = null,
     val ankiModelId: Long? = null,
 ) {
+    /** The stored voice for a language, or null to use the engine's default. */
+    fun voiceFor(languageCode: String): String? = voices[languageCode]
+
+    /**
+     * The language to read [bookId] in: the user's override if they set one, otherwise the
+     * book's own `dc:language`. Books frequently declare the wrong language (or none), and
+     * a book with passages in another language can only ever have one voice.
+     */
+    fun localeFor(bookId: String?, declared: Locale): Locale {
+        val override = bookId?.let { bookLanguages[it] } ?: return declared
+        return Locale.forLanguageTag(override).takeIf { it.language.isNotEmpty() } ?: declared
+    }
+
     companion object {
         /** ~180 wpm at 5 chars+space per word — a reasonable prior before we measure. */
         const val DEFAULT_CHARS_PER_SECOND = 15f
@@ -41,9 +72,17 @@ class SettingsRepository(private val context: Context) {
         val pitch = floatPreferencesKey("pitch")
         val fontScale = floatPreferencesKey("font_scale")
         val readerTheme = stringPreferencesKey("reader_theme")
-        val voiceEn = stringPreferencesKey("voice_en")
-        val voicePt = stringPreferencesKey("voice_pt")
         val charsPerSecond = floatPreferencesKey("chars_per_second")
+
+        /** Voices are stored one key per language, e.g. `voice_de`. */
+        const val VOICE_PREFIX = "voice_"
+
+        /** Language overrides are stored one key per book, e.g. `booklang_<sha1>`. */
+        const val BOOK_LANGUAGE_PREFIX = "booklang_"
+
+        fun voice(languageCode: String) = stringPreferencesKey("$VOICE_PREFIX$languageCode")
+
+        fun bookLanguage(bookId: String) = stringPreferencesKey("$BOOK_LANGUAGE_PREFIX$bookId")
         val ankiDeckId = longPreferencesKey("anki_deck_id")
         val ankiModelId = longPreferencesKey("anki_model_id")
     }
@@ -57,8 +96,8 @@ class SettingsRepository(private val context: Context) {
             readerTheme = prefs[Keys.readerTheme]
                 ?.let { runCatching { ReaderTheme.valueOf(it) }.getOrNull() }
                 ?: ReaderTheme.SYSTEM,
-            voiceEn = prefs[Keys.voiceEn],
-            voicePt = prefs[Keys.voicePt],
+            voices = prefs.stringsWithPrefix(Keys.VOICE_PREFIX),
+            bookLanguages = prefs.stringsWithPrefix(Keys.BOOK_LANGUAGE_PREFIX),
             charsPerSecond = prefs[Keys.charsPerSecond] ?: AppSettings.DEFAULT_CHARS_PER_SECOND,
             ankiDeckId = prefs[Keys.ankiDeckId],
             ankiModelId = prefs[Keys.ankiModelId],
@@ -101,8 +140,16 @@ class SettingsRepository(private val context: Context) {
     /** Stores the chosen voice for a language, or clears it (null) to use the engine default. */
     suspend fun setVoice(languageCode: String, voiceName: String?) {
         context.dataStore.edit {
-            val key = if (languageCode == "pt") Keys.voicePt else Keys.voiceEn
+            val key = Keys.voice(languageCode)
             if (voiceName == null) it.remove(key) else it[key] = voiceName
+        }
+    }
+
+    /** Overrides the language for one book, or clears it (null) to trust its `dc:language`. */
+    suspend fun setBookLanguage(bookId: String, languageTag: String?) {
+        context.dataStore.edit {
+            val key = Keys.bookLanguage(bookId)
+            if (languageTag == null) it.remove(key) else it[key] = languageTag
         }
     }
 }
