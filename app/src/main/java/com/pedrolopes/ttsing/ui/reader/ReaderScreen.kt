@@ -1,6 +1,7 @@
 package com.pedrolopes.ttsing.ui.reader
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -37,6 +38,8 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -50,14 +53,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pedrolopes.ttsing.TTSingApp
+import com.pedrolopes.ttsing.anki.CardDraft
 import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.settings.AppSettings
@@ -95,6 +101,8 @@ fun ReaderScreen(
     val scope = rememberCoroutineScope()
     var showSettings by remember { mutableStateOf(false) }
     var pageInfo by remember { mutableStateOf(PageInfo()) }
+    var cardDraft by remember { mutableStateOf<CardDraft?>(null) }
+    val snackbarHost = remember { SnackbarHostState() }
     val drawerState = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
 
     LaunchedEffect(Unit) { viewModel.load() }
@@ -154,6 +162,7 @@ fun ReaderScreen(
     ) {
         Scaffold(
             containerColor = palette.background,
+            snackbarHost = { SnackbarHost(snackbarHost) },
             topBar = {
                 TopAppBar(
                     title = {
@@ -230,6 +239,9 @@ fun ReaderScreen(
                         sentenceRange = playback.sentenceRange,
                         wordRange = playback.wordRange,
                         onTapStart = { position -> controller.play(bookId, position) },
+                        onMakeCard = { blockIndex, offset ->
+                            cardDraft = viewModel.draftFor(blockIndex, offset)
+                        },
                         onRequestNextChapter = { viewModel.nextChapter() },
                         loadImage = viewModel::imageBytes,
                         onPageInfo = { info -> pageInfo = info },
@@ -241,6 +253,23 @@ fun ReaderScreen(
                 }
             }
         }
+    }
+
+    cardDraft?.let { draft ->
+        CardSheet(
+            draft = draft,
+            locale = viewModel.bookLocale(),
+            isSubmitting = ui.isSavingCard,
+            onDraftChange = { cardDraft = it },
+            onPreviewAudio = { viewModel.previewCardAudio(it) },
+            onDismiss = { cardDraft = null },
+            onSubmit = { toAdd ->
+                viewModel.submitCard(toAdd) { message ->
+                    cardDraft = null
+                    scope.launch { snackbarHost.showSnackbar(message) }
+                }
+            },
+        )
     }
 
     if (showSettings) {
@@ -286,6 +315,7 @@ private fun PagedChapter(
     sentenceRange: IntRange?,
     wordRange: IntRange?,
     onTapStart: (ReadingPosition) -> Unit,
+    onMakeCard: (blockIndex: Int, offsetInBlock: Int) -> Unit,
     onRequestNextChapter: () -> Unit,
     loadImage: suspend (String) -> ByteArray?,
     onPageInfo: (PageInfo) -> Unit,
@@ -349,6 +379,7 @@ private fun PagedChapter(
                     sentenceRange = sentenceRange,
                     wordRange = wordRange,
                     onTapStart = onTapStart,
+                    onMakeCard = onMakeCard,
                     loadImage = loadImage,
                 )
             }
@@ -379,6 +410,7 @@ private fun PageView(
     sentenceRange: IntRange?,
     wordRange: IntRange?,
     onTapStart: (ReadingPosition) -> Unit,
+    onMakeCard: (blockIndex: Int, offsetInBlock: Int) -> Unit,
     loadImage: suspend (String) -> ByteArray?,
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
@@ -399,21 +431,42 @@ private fun PageView(
                         wordColor = palette.wordHighlight,
                         wordTextColor = palette.wordText,
                     )
+                    // Captured so a touch can be resolved to the exact character under the
+                    // finger, rather than to the start of the page slice.
+                    var layout by remember(slice) { mutableStateOf<TextLayoutResult?>(null) }
                     Text(
                         text = annotated,
                         style = blockTextStyle(slice.kind, fontScale),
                         color = palette.text,
+                        onTextLayout = { layout = it },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                var sIdx = full.sentences.indexOfLast { it.start <= slice.start }
-                                if (sIdx < 0) sIdx = 0
-                                onTapStart(ReadingPosition(chapterIndex, slice.blockIndex, sIdx))
-                            }
                             .padding(vertical = blockVerticalPadding(slice.kind))
                             .then(
                                 if (slice.kind == Block.Text.Kind.QUOTE) Modifier.padding(start = 12.dp) else Modifier,
-                            ),
+                            )
+                            // Innermost, so pointer coordinates line up with the glyphs.
+                            .pointerInput(slice, full) {
+                                fun offsetInBlock(point: Offset): Int? =
+                                    layout?.getOffsetForPosition(point)?.plus(slice.start)
+
+                                detectTapGestures(
+                                    onTap = { point ->
+                                        val offset = offsetInBlock(point) ?: slice.start
+                                        onTapStart(
+                                            ReadingPosition(
+                                                chapterIndex,
+                                                slice.blockIndex,
+                                                full.sentenceIndexAt(offset),
+                                            ),
+                                        )
+                                    },
+                                    onLongPress = { point ->
+                                        val offset = offsetInBlock(point) ?: slice.start
+                                        onMakeCard(slice.blockIndex, offset)
+                                    },
+                                )
+                            },
                     )
                 }
 

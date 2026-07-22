@@ -28,7 +28,12 @@ background playback and media-notification controls.
 - **Messy-EPUB clean-up** — footnote call-outs, note bodies and page-break markers are
   stripped before rendering, so the voice doesn't read "palavra um" for a footnote number.
   Conservative by design: a well-formed book is left untouched.
-- **Tap to start** — tap any paragraph to begin reading from there.
+- **Tap to start** — tap any paragraph to begin reading from there (from the sentence you
+  actually touched, not the top of the page).
+- **Anki flashcards** — long-press a sentence, tap the word you didn't know, type what it
+  means, and the card goes straight into AnkiDroid. The front is the sentence with the word
+  in bold plus the sentence spoken by the book's own voice; the back is your definition.
+  Cards land in a `TTSing` deck, tagged with the book.
 - **Background playback** — a foreground media service keeps playing with the screen off,
   with play/pause and ±sentence controls in the notification and on the lock screen.
 - **Portuguese + English** — the voice/language is taken from the EPUB's `dc:language`;
@@ -52,6 +57,12 @@ turn that location into a junction pointing here, if you want it to appear there
   Portuguese/English voice data installed (Settings → System → Languages →
   Text-to-speech). **Note:** stock emulator images often ship English only — for
   Portuguese, test on a physical phone or install the pt voice via Google TTS.
+- For the flashcard feature: [AnkiDroid](https://play.google.com/store/apps/details?id=com.ichi2.anki)
+  installed on the same device. The first card asks for AnkiDroid's
+  `READ_WRITE_DATABASE` permission. Without AnkiDroid the rest of the app works
+  normally — adding a card just reports that it isn't installed. The API comes from
+  JitPack (`com.github.ankidroid:Anki-Android:api-v1.1.0`), so the first sync needs
+  network access.
 
 ## Build & run
 
@@ -86,8 +97,12 @@ tts/          SpeechEngine (sentence queue + word callbacks), BookContentSource
               (sentence stream across block/chapter boundaries), ReadingService
               (foreground media service, MediaSession, notification, audio focus),
               ReadingController (binds the UI to the service).
+anki/         CardDraft (sentence + target word → Anki HTML), CardAudio (its own
+              TextToSpeech for synthesizeToFile, so playback is never interrupted),
+              AnkiExporter (AnkiDroid AddContentApi: deck, note type, media, note).
 ui/library    Folder picker + cover grid.
-ui/reader     Chapter rendering, karaoke highlight, transport bar, TOC, settings sheet.
+ui/reader     Chapter rendering, karaoke highlight, transport bar, TOC, settings sheet,
+              flashcard sheet.
 ```
 
 A reading position is `(chapterIndex, blockIndex, sentenceIndex)`; TTS utterance IDs encode

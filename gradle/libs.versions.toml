@@ -14,6 +14,7 @@ documentfile = "1.0.1"
 media = "1.7.0"
 jsoup = "1.21.1"
 coroutines = "1.10.2"
+ankidroidApi = "api-v1.1.0"
 junit = "4.13.2"
 
 [libraries]
@@ -38,6 +39,7 @@ androidx-documentfile = { group = "androidx.documentfile", name = "documentfile"
 androidx-media = { group = "androidx.media", name = "media", version.ref = "media" }
 jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+ankidroid-api = { group = "com.github.ankidroid", name = "Anki-Android", version.ref = "ankidroidApi" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

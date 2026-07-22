@@ -3,19 +3,26 @@ package com.pedrolopes.ttsing.ui.reader
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pedrolopes.ttsing.TTSingApp
+import com.pedrolopes.ttsing.anki.AnkiExporter
+import com.pedrolopes.ttsing.anki.CardAudio
+import com.pedrolopes.ttsing.anki.CardDraft
 import com.pedrolopes.ttsing.data.BookRepository
 import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.Chapter
 import com.pedrolopes.ttsing.data.epub.EpubBook
 import com.pedrolopes.ttsing.data.epub.EpubParser
 import com.pedrolopes.ttsing.data.epub.TocEntry
+import com.pedrolopes.ttsing.data.settings.AppSettings
+import com.pedrolopes.ttsing.data.settings.SettingsRepository
 import com.pedrolopes.ttsing.tts.BookContentSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 data class ReaderUiState(
     val title: String = "",
@@ -29,11 +36,16 @@ data class ReaderUiState(
     val error: String? = null,
     /** Character count per chapter, for time-to-finish estimates; empty until computed. */
     val chapterCharCounts: List<Int> = emptyList(),
+    /** True while a card's audio is being synthesized and handed to AnkiDroid. */
+    val isSavingCard: Boolean = false,
 )
 
 class ReaderViewModel(
     private val bookId: String,
     private val repo: BookRepository,
+    private val cardAudio: CardAudio,
+    private val anki: AnkiExporter,
+    private val settings: SettingsRepository,
 ) : ViewModel() {
 
     private var parser: EpubParser? = null
@@ -101,15 +113,91 @@ class ReaderViewModel(
     suspend fun imageBytes(zipPath: String): ByteArray? =
         withContext(Dispatchers.IO) { parser?.readEntry(zipPath) }
 
+    // ---- Anki cards ----
+
+    fun bookLocale(): Locale = book?.locale() ?: Locale.getDefault()
+
+    /**
+     * Builds an empty card for the sentence containing [offsetInBlock] — the character the
+     * user long-pressed. Returns null if that block has no speakable text.
+     */
+    fun draftFor(blockIndex: Int, offsetInBlock: Int): CardDraft? {
+        val block = _ui.value.blocks.getOrNull(blockIndex) as? Block.Text ?: return null
+        val span = block.sentences.getOrNull(block.sentenceIndexAt(offsetInBlock)) ?: return null
+        return CardDraft(
+            sentence = block.text.substring(span.start, span.end),
+            bookTitle = _ui.value.title,
+            languageTag = _ui.value.languageTag,
+        )
+    }
+
+    /** Speaks the draft's sentence so the user can hear the card before saving it. */
+    fun previewCardAudio(draft: CardDraft) {
+        viewModelScope.launch {
+            val current = settings.settings.first()
+            cardAudio.speak(draft.sentence, bookLocale(), voiceFor(current), current.pitch)
+        }
+    }
+
+    /**
+     * Synthesizes the sentence audio and adds the note to AnkiDroid, reporting a
+     * user-facing message either way. Runs in [viewModelScope] so it survives rotation.
+     */
+    fun submitCard(draft: CardDraft, onResult: (String) -> Unit) {
+        if (_ui.value.isSavingCard) return
+        _ui.value = _ui.value.copy(isSavingCard = true)
+        viewModelScope.launch {
+            val message = try {
+                if (!anki.isAnkiInstalled()) {
+                    "AnkiDroid isn't installed"
+                } else {
+                    val current = settings.settings.first()
+                    val audio = cardAudio.synthesize(
+                        text = draft.sentence,
+                        locale = bookLocale(),
+                        voiceName = voiceFor(current),
+                        pitch = current.pitch,
+                    )
+                    when (val result = anki.addCard(draft, audio)) {
+                        is AnkiExporter.Result.Added ->
+                            if (result.audioAttached) {
+                                "Card added to ${AnkiExporter.DECK_NAME}"
+                            } else {
+                                "Card added to ${AnkiExporter.DECK_NAME} (without audio)"
+                            }
+                        AnkiExporter.Result.AnkiNotInstalled -> "AnkiDroid isn't installed"
+                        AnkiExporter.Result.PermissionDenied -> "AnkiDroid permission denied"
+                        is AnkiExporter.Result.Failed -> "Could not add the card: ${result.message}"
+                    }
+                }
+            } finally {
+                _ui.value = _ui.value.copy(isSavingCard = false)
+            }
+            onResult(message)
+        }
+    }
+
+    private fun voiceFor(current: AppSettings): String? =
+        if (bookLocale().language == "pt") current.voicePt else current.voiceEn
+
     override fun onCleared() {
         parser?.close()
         parser = null
         source = null
+        cardAudio.shutdown()
         super.onCleared()
     }
 
     companion object {
-        fun create(bookId: String): ReaderViewModel =
-            ReaderViewModel(bookId, TTSingApp.instance.books)
+        fun create(bookId: String): ReaderViewModel {
+            val app = TTSingApp.instance
+            return ReaderViewModel(
+                bookId = bookId,
+                repo = app.books,
+                cardAudio = CardAudio(app),
+                anki = AnkiExporter(app, app.settings),
+                settings = app.settings,
+            )
+        }
     }
 }

@@ -66,6 +66,7 @@ dependencies {
     implementation(libs.androidx.media)
     implementation(libs.jsoup)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.ankidroid.api)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)

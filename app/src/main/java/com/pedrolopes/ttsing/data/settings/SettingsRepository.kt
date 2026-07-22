@@ -3,6 +3,7 @@ package com.pedrolopes.ttsing.data.settings
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -22,6 +23,9 @@ data class AppSettings(
     val voicePt: String?,
     /** Measured speaking speed in characters/second at rate 1.0, used for time estimates. */
     val charsPerSecond: Float = DEFAULT_CHARS_PER_SECOND,
+    /** Cached AnkiDroid ids for the TTSing deck and note type; null until first card. */
+    val ankiDeckId: Long? = null,
+    val ankiModelId: Long? = null,
 ) {
     companion object {
         /** ~180 wpm at 5 chars+space per word — a reasonable prior before we measure. */
@@ -40,6 +44,8 @@ class SettingsRepository(private val context: Context) {
         val voiceEn = stringPreferencesKey("voice_en")
         val voicePt = stringPreferencesKey("voice_pt")
         val charsPerSecond = floatPreferencesKey("chars_per_second")
+        val ankiDeckId = longPreferencesKey("anki_deck_id")
+        val ankiModelId = longPreferencesKey("anki_model_id")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -54,7 +60,17 @@ class SettingsRepository(private val context: Context) {
             voiceEn = prefs[Keys.voiceEn],
             voicePt = prefs[Keys.voicePt],
             charsPerSecond = prefs[Keys.charsPerSecond] ?: AppSettings.DEFAULT_CHARS_PER_SECOND,
+            ankiDeckId = prefs[Keys.ankiDeckId],
+            ankiModelId = prefs[Keys.ankiModelId],
         )
+    }
+
+    /** Caches the AnkiDroid deck/note-type ids so they are looked up only once. */
+    suspend fun setAnkiIds(deckId: Long, modelId: Long) {
+        context.dataStore.edit {
+            it[Keys.ankiDeckId] = deckId
+            it[Keys.ankiModelId] = modelId
+        }
     }
 
     /** Persists the measured speaking speed (characters/second normalised to rate 1.0). */
