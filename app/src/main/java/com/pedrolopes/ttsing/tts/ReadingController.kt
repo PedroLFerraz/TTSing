@@ -113,8 +113,8 @@ class ReadingController(context: Context) {
 
     fun defaultVoiceName(): String? = service?.defaultVoiceName()
 
-    /** Languages the TTS engine can speak, for the reader's language picker. */
-    fun availableLanguages(): List<Locale> = service?.availableLanguages().orEmpty()
+    /** Languages the TTS engine offers, downloaded ones first, for the reader's picker. */
+    fun availableLanguages(): List<LanguageOption> = service?.availableLanguages().orEmpty()
 
     /** The language the current book is being read in. */
     fun activeLocale(): Locale? = service?.activeLocale()

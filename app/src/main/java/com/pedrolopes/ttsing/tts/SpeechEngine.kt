@@ -13,6 +13,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+/**
+ * A language the engine can speak. [downloaded] is false when every voice for it is flagged
+ * `KEY_FEATURE_NOT_INSTALLED` — the engine still offers it, and selecting it starts the
+ * download, so it belongs in the picker rather than being hidden.
+ */
+data class LanguageOption(
+    val locale: Locale,
+    val downloaded: Boolean,
+)
+
+/**
+ * True when this voice's data still has to be fetched. Selecting it is what starts the
+ * download, so these are offered rather than hidden.
+ */
+fun Voice.needsDownload(): Boolean =
+    features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true
+
 /** A single sentence ready to be spoken. */
 data class SentenceRef(
     val position: ReadingPosition,
@@ -132,27 +149,34 @@ class SpeechEngine(
     }.getOrNull()
 
     /**
-     * Every language the engine can actually speak, one entry per language (not per region),
-     * sorted by display name. This is what the language picker offers, so the user can only
-     * choose something they will really hear.
+     * Every language the engine offers, one entry per language (not per region), ready ones
+     * first then alphabetically.
+     *
+     * Languages whose data isn't downloaded yet are **included**, flagged
+     * `downloaded = false`: the engine starts the download when the language is selected, so
+     * excluding them would hide most of what the device can actually speak.
      */
-    fun availableLanguages(): List<Locale> =
+    fun availableLanguages(): List<LanguageOption> =
         tts.voices
             .orEmpty()
-            .filterNot { it.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true }
-            .map { it.locale.language }
-            .filter { it.isNotEmpty() }
-            .distinct()
-            .map { Locale.forLanguageTag(it) }
-            .sortedBy { it.displayLanguage.lowercase() }
+            .filter { it.locale.language.isNotEmpty() }
+            .groupBy { it.locale.language }
+            .map { (language, voices) ->
+                LanguageOption(
+                    locale = Locale.forLanguageTag(language),
+                    downloaded = voices.any { !it.needsDownload() },
+                )
+            }
+            .sortedWith(compareByDescending<LanguageOption> { it.downloaded }.thenBy { it.locale.displayLanguage.lowercase() })
 
-    /** All usable (installed) voices for the language, including online ones. */
+    /** All voices for the language, including online ones and ones still to be downloaded. */
     fun voicesFor(locale: Locale): List<Voice> =
         tts.voices
             .orEmpty()
             .filter { it.locale.language == locale.language }
-            .filterNot { it.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true }
-            .sortedWith(compareBy({ it.locale.country }, { -it.quality }, { it.name }))
+            .sortedWith(
+                compareBy({ it.needsDownload() }, { it.locale.country }, { -it.quality }, { it.name }),
+            )
 
     fun setSpeechRate(rate: Float) {
         tts.setSpeechRate(rate)
