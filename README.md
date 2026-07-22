@@ -37,7 +37,7 @@ background playback and media-notification controls.
 
 ## Project location note
 
-This project lives at `C:\Users\Pedro Lopes\AndroidStudioProjects\TTSing`.
+This project (code + git repo) lives at `C:\Users\Pedro Lopes\AndroidStudioProjects\TTSing`.
 It was moved off the original Desktop path because that path contains an invisible
 `U+2800` character in the `⠀` folder, and the Android Gradle Plugin rejects non-ASCII
 project paths on Windows. See `LEIA-ME.txt` left in the old Desktop folder for how to
@@ -63,7 +63,9 @@ cd "C:\Users\Pedro Lopes\AndroidStudioProjects\TTSing"
 .\gradlew.bat test              # run the JVM unit tests
 ```
 
-The debug APK is written to `app\build\outputs\apk\debug\app-debug.apk`.
+The debug APK is written to `app\build\outputs\apk\debug\app-debug.apk`. Copies handed
+off for install/testing are kept in `releases/` (git-ignored — it's build output, not
+source).
 
 ## Trying it out
 
