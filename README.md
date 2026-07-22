@@ -18,6 +18,11 @@ background playback and media-notification controls.
   look-ahead queue for smooth speech. The sentence being read gets a soft highlight and
   the exact word gets a strong highlight (`onRangeStart` word callbacks). Pages turn
   automatically to keep up with the voice.
+- **Language picker** — books often declare the wrong `dc:language` (or none), which used to
+  mean a German book read aloud in English with no way to fix it. The reader's settings sheet
+  now lets you pick the reading language first, from the languages your TTS engine actually
+  has voices for; the voice list below then follows that choice. The override is remembered
+  **per book**, and the chosen voice is remembered **per language**.
 - **Voice picker** — in the reader's settings sheet, voices are grouped by region
   (US / GB / …), the currently-speaking voice is marked, each shows quality and
   offline/online, and a "Device default" option returns to the engine's built-in voice.
@@ -36,9 +41,9 @@ background playback and media-notification controls.
   Cards land in a `TTSing` deck, tagged with the book.
 - **Background playback** — a foreground media service keeps playing with the screen off,
   with play/pause and ±sentence controls in the notification and on the lock screen.
-- **Portuguese + English** — the voice/language is taken from the EPUB's `dc:language`;
-  sentence splitting uses the book's locale. Per-language voice, speed and pitch are
-  saved in settings.
+- **Any language your engine speaks** — the reading language starts from the EPUB's
+  `dc:language` and can be overridden per book (see above). Speed and pitch are global;
+  the voice is saved per language.
 
 ## Project location note
 
@@ -91,7 +96,8 @@ press play to see the sentence/word highlighting and auto-scroll.
 data/epub/    EpubParser (ZIP + OPF + nav/NCX), ChapterLoader (XHTML → blocks via Jsoup),
               BreakIterator sentence segmentation. Pure JVM, unit-tested.
 data/db/      Room cache of book metadata + reading position.
-data/settings DataStore: folder URI, speed, pitch, font size, theme, per-language voice.
+data/settings DataStore: folder URI, speed, pitch, font size, theme, voice per language
+              (`voice_<lang>`), language override per book (`booklang_<id>`).
 data/         BookRepository — SAF folder scan, cover extraction, position persistence.
 tts/          SpeechEngine (sentence queue + word callbacks), BookContentSource
               (sentence stream across block/chapter boundaries), ReadingService

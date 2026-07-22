@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 /**
  * App-side handle to [ReadingService]: binds for live [PlaybackState] observation and
@@ -111,6 +112,16 @@ class ReadingController(context: Context) {
     fun currentVoiceName(): String? = service?.currentVoiceName()
 
     fun defaultVoiceName(): String? = service?.defaultVoiceName()
+
+    /** Languages the TTS engine can speak, for the reader's language picker. */
+    fun availableLanguages(): List<Locale> = service?.availableLanguages().orEmpty()
+
+    /** The language the current book is being read in. */
+    fun activeLocale(): Locale? = service?.activeLocale()
+
+    fun selectLanguage(languageTag: String) {
+        service?.selectLanguage(languageTag)
+    }
 
     fun applySpeechSettings(rate: Float, pitch: Float) {
         service?.applySpeechSettings(rate, pitch)

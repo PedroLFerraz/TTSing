@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -14,6 +15,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -25,6 +28,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,20 +48,28 @@ fun ReaderSettingsSheet(
     voices: List<Voice>,
     currentVoiceName: String?,
     defaultVoiceName: String?,
-    languageTag: String?,
+    /** The language the book is actually read in — the override if set, else `dc:language`. */
+    activeLocale: Locale,
+    /** What the EPUB itself declares, shown so a wrong declaration is visible. */
+    declaredLanguageTag: String?,
+    availableLanguages: List<Locale>,
     onDismiss: () -> Unit,
     onSpeechRate: (Float) -> Unit,
     onPitch: (Float) -> Unit,
     onFontScale: (Float) -> Unit,
     onTheme: (ReaderTheme) -> Unit,
+    onSelectLanguage: (Locale) -> Unit,
     onSelectDefaultVoice: () -> Unit,
     onSelectVoice: (Voice) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val storedVoice = if (languageTag?.startsWith("pt") == true) settings.voicePt else settings.voiceEn
-    val languageName = languageTag
-        ?.let { Locale.forLanguageTag(it).displayLanguage.replaceFirstChar { c -> c.uppercase() } }
-        ?: "this book"
+    val storedVoice = settings.voiceFor(activeLocale.language)
+    val languageName = activeLocale.displayName()
+    var languageMenuOpen by remember { mutableStateOf(false) }
+    val declaredLocale = declaredLanguageTag
+        ?.let { Locale.forLanguageTag(it) }
+        ?.takeIf { it.language.isNotEmpty() }
+    val isOverridden = declaredLocale != null && declaredLocale.language != activeLocale.language
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
@@ -79,6 +94,55 @@ fun ReaderSettingsSheet(
                         onClick = { onTheme(theme) },
                         label = { Text(theme.displayName()) },
                     )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+            Text("Language", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = when {
+                    isOverridden -> "Set by you. This book declares ${declaredLocale!!.displayName()}."
+                    declaredLocale != null -> "From the book's own metadata. Change it if it's wrong."
+                    else -> "This book doesn't say what language it's in."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Box {
+                VoiceRow(
+                    title = languageName,
+                    subtitle = "Tap to change the reading language",
+                    selected = true,
+                    isSpeaking = false,
+                    onClick = { languageMenuOpen = true },
+                )
+                DropdownMenu(
+                    expanded = languageMenuOpen,
+                    onDismissRequest = { languageMenuOpen = false },
+                    modifier = Modifier.heightIn(max = 360.dp),
+                ) {
+                    if (availableLanguages.isEmpty()) {
+                        DropdownMenuItem(
+                            text = { Text("No languages available yet") },
+                            onClick = { languageMenuOpen = false },
+                        )
+                    }
+                    availableLanguages.forEach { locale ->
+                        DropdownMenuItem(
+                            text = { Text(locale.displayName()) },
+                            leadingIcon = {
+                                if (locale.language == activeLocale.language) {
+                                    Icon(Icons.Filled.Check, contentDescription = "Current language")
+                                }
+                            },
+                            onClick = {
+                                languageMenuOpen = false
+                                onSelectLanguage(locale)
+                            },
+                        )
+                    }
                 }
             }
 
@@ -199,6 +263,10 @@ private fun ReaderTheme.displayName(): String = when (this) {
     ReaderTheme.SEPIA -> "Sepia"
     ReaderTheme.DARK -> "Dark"
 }
+
+/** "German", "Portuguese" — capitalised for the picker and section headings. */
+private fun Locale.displayName(): String =
+    displayLanguage.replaceFirstChar { it.uppercase() }.ifBlank { language }
 
 private fun regionName(locale: Locale): String {
     val country = locale.country

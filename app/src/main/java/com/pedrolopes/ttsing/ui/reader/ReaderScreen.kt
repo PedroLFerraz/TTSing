@@ -72,6 +72,7 @@ import com.pedrolopes.ttsing.tts.ReadingController
 import com.pedrolopes.ttsing.ui.common.LocalImage
 import com.pedrolopes.ttsing.ui.common.simpleFactory
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 private val DefaultSettings = AppSettings(
     libraryFolderUri = null,
@@ -79,8 +80,6 @@ private val DefaultSettings = AppSettings(
     pitch = 1f,
     fontScale = 1f,
     readerTheme = ReaderTheme.SYSTEM,
-    voiceEn = null,
-    voicePt = null,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -273,13 +272,20 @@ fun ReaderScreen(
     }
 
     if (showSettings) {
-        val languageCode = if (ui.languageTag?.startsWith("pt") == true) "pt" else "en"
+        // Re-read on every language change so the voice list follows the picker.
+        val activeLocale = remember(showSettings, settings.bookLanguages[bookId]) {
+            controller.activeLocale()
+        } ?: settings.localeFor(bookId, ui.languageTag?.let { Locale.forLanguageTag(it) } ?: Locale.getDefault())
+        val languageCode = activeLocale.language
         ReaderSettingsSheet(
             settings = settings,
-            voices = remember(showSettings) { controller.voicesForCurrentBook() },
-            currentVoiceName = remember(showSettings) { controller.currentVoiceName() },
-            defaultVoiceName = remember(showSettings) { controller.defaultVoiceName() },
-            languageTag = ui.languageTag,
+            voices = remember(showSettings, languageCode) { controller.voicesForCurrentBook() },
+            currentVoiceName = remember(showSettings, languageCode) { controller.currentVoiceName() },
+            defaultVoiceName = remember(showSettings, languageCode) { controller.defaultVoiceName() },
+            activeLocale = activeLocale,
+            declaredLanguageTag = ui.languageTag,
+            availableLanguages = remember(showSettings) { controller.availableLanguages() },
+            onSelectLanguage = { locale -> controller.selectLanguage(locale.toLanguageTag()) },
             onDismiss = { showSettings = false },
             onSpeechRate = { rate ->
                 scope.launch { app.settings.setSpeechRate(rate) }

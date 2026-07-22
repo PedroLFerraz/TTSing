@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.Locale
 
 /**
  * Foreground service that owns the [SpeechEngine] so read-aloud continues with the
@@ -51,6 +52,9 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
     private var parser: EpubParser? = null
     private var content: BookContentSource? = null
     private var openMutex = Mutex()
+
+    /** Language the book is being read in; the user's override, else its `dc:language`. */
+    private var activeLocale: Locale? = null
 
     private val _state = MutableStateFlow(PlaybackState())
     val state: StateFlow<PlaybackState> = _state.asStateFlow()
@@ -172,13 +176,33 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
         engine.moveTo(position)
     }
 
-    fun voicesForCurrentBook() =
-        content?.let { engine.voicesFor(it.book.locale()) }.orEmpty()
+    fun voicesForCurrentBook() = engine.voicesFor(activeLocale())
 
     fun currentVoiceName(): String? = engine.currentVoiceName()
 
-    fun defaultVoiceName(): String? =
-        content?.book?.locale()?.let { engine.defaultVoiceName(it) }
+    fun defaultVoiceName(): String? = engine.defaultVoiceName(activeLocale())
+
+    fun availableLanguages() = engine.availableLanguages()
+
+    /** The language the current book is actually being read in (override or `dc:language`). */
+    fun activeLocale(): Locale = activeLocale ?: content?.book?.locale() ?: Locale.getDefault()
+
+    /**
+     * Switches the book to another language: remembers the choice for this book, reloads the
+     * voice stored for that language, and keeps speaking if it already was.
+     */
+    fun selectLanguage(languageTag: String) {
+        val bookId = _state.value.bookId ?: return
+        lifecycleScope.launch {
+            val locale = Locale.forLanguageTag(languageTag).takeIf { it.language.isNotEmpty() }
+                ?: return@launch
+            app.settings.setBookLanguage(bookId, languageTag)
+            activeLocale = locale
+            val available = engine.configureLanguage(locale, app.settings.settings.first().voiceFor(locale.language))
+            _state.value = _state.value.copy(languageAvailable = available)
+            if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
+        }
+    }
 
     fun applySpeechSettings(rate: Float, pitch: Float) {
         currentRate = rate
@@ -191,8 +215,7 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
     /** Selects a voice by name, or null to fall back to the engine default. */
     fun selectVoice(voiceName: String?) {
         lifecycleScope.launch {
-            val locale = content?.book?.locale() ?: return@launch
-            engine.configureLanguage(locale, voiceName)
+            engine.configureLanguage(activeLocale(), voiceName)
             if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
         }
     }
@@ -211,6 +234,7 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
         parser?.close()
         parser = null
         content = null
+        activeLocale = null
 
         val entity = app.books.getBook(bookId) ?: run {
             _state.value = PlaybackState(error = "Book not found")
@@ -230,9 +254,9 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
         measuredCharsPerSecond = settings.charsPerSecond
         engine.setSpeechRate(settings.speechRate)
         engine.setPitch(settings.pitch)
-        val locale = opened.second.locale()
-        val preferredVoice = if (locale.language == "pt") settings.voicePt else settings.voiceEn
-        val languageOk = engine.configureLanguage(locale, preferredVoice)
+        val locale = settings.localeFor(bookId, opened.second.locale())
+        activeLocale = locale
+        val languageOk = engine.configureLanguage(locale, settings.voiceFor(locale.language))
 
         val restored = ReadingPosition(entity.chapterIndex, entity.blockIndex, entity.sentenceIndex)
         _state.value = PlaybackState(
