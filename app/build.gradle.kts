@@ -17,6 +17,12 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+
+        // The sherpa-onnx AAR ships prebuilt native libraries for every ABI (~46 MB total).
+        // Restrict to the two that cover essentially all real phones to keep the APK sane.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
@@ -67,6 +73,7 @@ dependencies {
     implementation(libs.jsoup)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.ankidroid.api)
+    implementation(libs.sherpa.onnx)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)
