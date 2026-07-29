@@ -23,6 +23,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
+import androidx.media.session.MediaButtonReceiver
 import androidx.lifecycle.lifecycleScope
 import com.pedrolopes.ttsing.MainActivity
 import com.pedrolopes.ttsing.R
@@ -117,6 +118,14 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+        if (intent?.action == Intent.ACTION_MEDIA_BUTTON) {
+            // Forwarded by the manifest-declared MediaButtonReceiver when our MediaSession
+            // was no longer the one Android routes hardware media keys to directly (e.g.
+            // this service got killed while paused) - translates the KeyEvent back into
+            // the same onPlay/onPause/onSkipToNext/onSkipToPrevious calls below.
+            mediaSession?.let { MediaButtonReceiver.handleIntent(it, intent) }
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_PLAY -> {
                 // Foreground must be established quickly; do it before the (async) book open.
