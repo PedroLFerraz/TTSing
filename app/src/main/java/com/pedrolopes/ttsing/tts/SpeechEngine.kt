@@ -46,7 +46,7 @@ class SpeechEngine(
     context: Context,
     private val scope: CoroutineScope,
     private val listener: Listener,
-) {
+) : Narrator {
 
     interface ContentSource {
         /** First speakable sentence at or after [position], or null at end of book. */
@@ -80,10 +80,10 @@ class SpeechEngine(
     private var generation = 0
     private val queued = LinkedHashMap<String, SentenceRef>()
 
-    var currentRef: SentenceRef? = null
+    override var currentRef: SentenceRef? = null
         private set
 
-    var isSpeaking: Boolean = false
+    override var isSpeaking: Boolean = false
         private set
 
     init {
@@ -117,14 +117,14 @@ class SpeechEngine(
         })
     }
 
-    suspend fun awaitReady(): Boolean = ready.await()
+    override suspend fun awaitReady(): Boolean = ready.await()
 
-    fun setContentSource(contentSource: ContentSource) {
+    override fun setContentSource(contentSource: ContentSource) {
         source = contentSource
     }
 
     /** Returns true if the language is available on the active engine. */
-    suspend fun configureLanguage(locale: Locale, preferredVoiceName: String?): Boolean {
+    override suspend fun configureLanguage(locale: Locale, preferredVoiceName: String?): Boolean {
         if (!awaitReady()) return false
         val result = tts.setLanguage(locale)
         val available = result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
@@ -141,10 +141,10 @@ class SpeechEngine(
     }
 
     /** The name of the voice currently in use (what the user is actually hearing). */
-    fun currentVoiceName(): String? = runCatching { tts.voice?.name }.getOrNull()
+    override fun currentVoiceName(): String? = runCatching { tts.voice?.name }.getOrNull()
 
     /** The engine's default voice name for [locale], shown as the "Device default" choice. */
-    fun defaultVoiceName(locale: Locale): String? = runCatching {
+    override fun defaultVoiceName(locale: Locale): String? = runCatching {
         tts.defaultVoice?.takeIf { it.locale.language == locale.language }?.name
     }.getOrNull()
 
@@ -156,7 +156,7 @@ class SpeechEngine(
      * `downloaded = false`: the engine starts the download when the language is selected, so
      * excluding them would hide most of what the device can actually speak.
      */
-    fun availableLanguages(): List<LanguageOption> =
+    override fun availableLanguages(): List<LanguageOption> =
         tts.voices
             .orEmpty()
             .filter { it.locale.language.isNotEmpty() }
@@ -170,7 +170,7 @@ class SpeechEngine(
             .sortedWith(compareByDescending<LanguageOption> { it.downloaded }.thenBy { it.locale.displayLanguage.lowercase() })
 
     /** All voices for the language, including online ones and ones still to be downloaded. */
-    fun voicesFor(locale: Locale): List<Voice> =
+    override fun voicesFor(locale: Locale): List<Voice> =
         tts.voices
             .orEmpty()
             .filter { it.locale.language == locale.language }
@@ -178,15 +178,15 @@ class SpeechEngine(
                 compareBy({ it.needsDownload() }, { it.locale.country }, { -it.quality }, { it.name }),
             )
 
-    fun setSpeechRate(rate: Float) {
+    override fun setSpeechRate(rate: Float) {
         tts.setSpeechRate(rate)
     }
 
-    fun setPitch(pitch: Float) {
+    override fun setPitch(pitch: Float) {
         tts.setPitch(pitch)
     }
 
-    fun playFrom(position: ReadingPosition) {
+    override fun playFrom(position: ReadingPosition) {
         scope.launch(Dispatchers.Main) {
             if (!awaitReady()) {
                 listener.onEngineError("Text-to-speech engine failed to initialize")
@@ -215,19 +215,19 @@ class SpeechEngine(
         }
     }
 
-    fun pause() {
+    override fun pause() {
         generation++
         queued.clear()
         isSpeaking = false
         tts.stop()
     }
 
-    fun resume() {
+    override fun resume() {
         val ref = currentRef
         if (ref != null) playFrom(ref.position)
     }
 
-    fun skipToNext() {
+    override fun skipToNext() {
         scope.launch(Dispatchers.Main) {
             val src = source ?: return@launch
             val current = currentRef ?: return@launch
@@ -241,7 +241,7 @@ class SpeechEngine(
         }
     }
 
-    fun skipToPrev() {
+    override fun skipToPrev() {
         scope.launch(Dispatchers.Main) {
             val src = source ?: return@launch
             val current = currentRef ?: return@launch
@@ -255,7 +255,7 @@ class SpeechEngine(
         }
     }
 
-    fun moveTo(position: ReadingPosition) {
+    override fun moveTo(position: ReadingPosition) {
         scope.launch(Dispatchers.Main) {
             val src = source ?: return@launch
             val ref = src.firstAtOrAfter(position) ?: return@launch
@@ -264,7 +264,7 @@ class SpeechEngine(
         }
     }
 
-    fun shutdown() {
+    override fun shutdown() {
         generation++
         queued.clear()
         tts.stop()

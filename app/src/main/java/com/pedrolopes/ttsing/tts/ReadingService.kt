@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.Locale
@@ -52,7 +53,7 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
 
     private val binder = LocalBinder()
 
-    private lateinit var engine: SpeechEngine
+    private lateinit var engine: Narrator
     private var parser: EpubParser? = null
     private var content: BookContentSource? = null
     private var openMutex = Mutex()
@@ -94,7 +95,14 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
 
     override fun onCreate() {
         super.onCreate()
-        engine = SpeechEngine(this, lifecycleScope, this)
+        // Which engine reads aloud is read once here and cached: switching mid-session would
+        // mean tearing down a live TextToSpeech connection. Changing the setting takes effect
+        // the next time the service starts.
+        engine = if (runBlocking { app.settings.settings.first() }.ownAudioPlayback) {
+            AudioTrackNarrator(this, lifecycleScope, this)
+        } else {
+            SpeechEngine(this, lifecycleScope, this)
+        }
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         mediaSession = MediaSessionCompat(this, "TTSing").apply {
             setCallback(object : MediaSessionCompat.Callback() {
