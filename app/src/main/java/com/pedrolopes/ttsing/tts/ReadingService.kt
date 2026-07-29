@@ -4,8 +4,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -19,6 +21,7 @@ import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.pedrolopes.ttsing.MainActivity
@@ -77,6 +80,17 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
 
     private val app: TTSingApp get() = application as TTSingApp
 
+    /**
+     * Fired when the current audio route (wired or Bluetooth headset) is about to
+     * disappear - e.g. the headphones were just unplugged. Without this, playback
+     * would carry on out loud through the speaker the instant they're pulled out.
+     */
+    private val becomingNoisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (_state.value.isSpeaking) pause()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         engine = SpeechEngine(this, lifecycleScope, this)
@@ -90,6 +104,14 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
                 override fun onStop() = stopPlayback()
             })
         }
+        // Only the system can ever send this broadcast, so it's safe (and required on
+        // Android 13+) to mark the receiver as not exported to other apps.
+        ContextCompat.registerReceiver(
+            this,
+            becomingNoisyReceiver,
+            IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         createNotificationChannel()
     }
 
@@ -386,6 +408,7 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
                 .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, s.author ?: "")
                 .build(),
         )
+        mediaSession?.setSessionActivity(openBookPendingIntent(s.bookId))
     }
 
     private fun updateSessionAndNotification() {
@@ -414,17 +437,21 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
         }
     }
 
-    private fun buildNotification(): Notification {
-        val s = _state.value
-        val openIntent = PendingIntent.getActivity(
+    /** Reopens the app on the book currently loaded - used by both the notification tap and the media session (lock screen art, Android Auto, Wear). */
+    private fun openBookPendingIntent(bookId: String?): PendingIntent =
+        PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java).apply {
-                putExtra(MainActivity.EXTRA_BOOK_ID, s.bookId)
+                putExtra(MainActivity.EXTRA_BOOK_ID, bookId)
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+
+    private fun buildNotification(): Notification {
+        val s = _state.value
+        val openIntent = openBookPendingIntent(s.bookId)
         val playPauseAction = NotificationCompat.Action(
             if (s.isSpeaking) R.drawable.ic_pause else R.drawable.ic_play,
             if (s.isSpeaking) "Pause" else "Play",
@@ -503,6 +530,7 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
         parser?.close()
         mediaSession?.release()
         focusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
+        runCatching { unregisterReceiver(becomingNoisyReceiver) }
         releaseWakeLock()
         super.onDestroy()
     }
