@@ -20,6 +20,20 @@ data class SynthesizedSentence(
     /** A word boundary reported by the engine, positioned in audio frames. */
     data class FrameMark(val frame: Int, val start: Int, val end: Int)
 
+    val bytesPerFrame: Int
+        get() {
+            val bytesPerSample = when (audioFormat) {
+                android.media.AudioFormat.ENCODING_PCM_8BIT -> 1
+                android.media.AudioFormat.ENCODING_PCM_FLOAT -> 4
+                else -> 2
+            }
+            return (bytesPerSample * channelCount).coerceAtLeast(1)
+        }
+
+    val frameCount: Int get() = (pcm.size / bytesPerFrame).coerceAtLeast(1)
+
+    val durationMs: Int get() = NeuralWordTiming.durationMs(frameCount, sampleRateHz)
+
     // ByteArray in a data class: identity comparison is what we want (these are large
     // buffers, only ever compared to themselves), so equals/hashCode are made explicit.
     override fun equals(other: Any?): Boolean = this === other

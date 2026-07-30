@@ -4,6 +4,7 @@ import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
+import com.pedrolopes.ttsing.data.epub.WordSplitter
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +48,9 @@ class AudioTrackNarrator(
     /** Playback speed; applied by resampling the request, mirroring SpeechEngine's contract. */
     private var speechRate = 1f
 
+    /** Language in use, for the word-splitting fallback below. */
+    private var locale: Locale = Locale.getDefault()
+
     override var currentRef: SentenceRef? = null
         private set
 
@@ -65,6 +69,7 @@ class AudioTrackNarrator(
 
     override suspend fun configureLanguage(locale: Locale, preferredVoiceName: String?): Boolean {
         if (!awaitReady()) return false
+        this.locale = locale
         val result = tts.setLanguage(locale)
         val available = result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
         val match = preferredVoiceName?.let { name -> tts.voices?.firstOrNull { it.name == name } }
@@ -146,12 +151,18 @@ class AudioTrackNarrator(
                 continue
             }
             val speaking = ref
+            val marks = audio.marks.ifEmpty { estimatedMarks(speaking, audio) }
             withMain { listener.onSentenceStart(speaking) }
 
+            var lastRange: IntRange? = null
             val completed = player.play(audio) { frame ->
-                val mark = markAt(audio, frame) ?: return@play
+                val mark = markAt(marks, frame) ?: return@play
                 val range = (speaking.startInBlock + mark.start) until (speaking.startInBlock + mark.end)
-                scope.launch(Dispatchers.Main) { listener.onWordRange(speaking, range) }
+                // The position poll runs far faster than words change; only publish on change.
+                if (range != lastRange) {
+                    lastRange = range
+                    scope.launch(Dispatchers.Main) { listener.onWordRange(speaking, range) }
+                }
             }
             if (!completed || !coroutineIsActive()) return
             ref = src.next(speaking.position)
@@ -159,8 +170,38 @@ class AudioTrackNarrator(
         if (coroutineIsActive()) finishBook()
     }
 
-    private fun markAt(audio: SynthesizedSentence, frame: Int): SynthesizedSentence.FrameMark? =
-        audio.marks.lastOrNull { it.frame <= frame }
+    private fun markAt(
+        marks: List<SynthesizedSentence.FrameMark>,
+        frame: Int,
+    ): SynthesizedSentence.FrameMark? = marks.lastOrNull { it.frame <= frame }
+
+    /**
+     * Word marks for engines that report none for `synthesizeToFile` (`onRangeStart` is
+     * optional - the platform only calls it if the engine supplies timing). Falls back to
+     * spreading the measured audio duration across the words by character position, so the
+     * highlight still tracks instead of disappearing.
+     */
+    private fun estimatedMarks(
+        ref: SentenceRef,
+        audio: SynthesizedSentence,
+    ): List<SynthesizedSentence.FrameMark> {
+        val words = WordSplitter.split(ref.text, locale)
+        if (words.isEmpty()) return emptyList()
+        val timings = NeuralWordTiming.estimate(
+            sentenceLength = ref.text.length,
+            wordSpans = words,
+            startInBlock = 0,
+            totalDurationMs = audio.durationMs,
+        )
+        val framesPerMs = audio.sampleRateHz / 1000f
+        return timings.map { timing ->
+            SynthesizedSentence.FrameMark(
+                frame = (timing.startMs * framesPerMs).toInt(),
+                start = timing.rangeInBlock.first,
+                end = timing.rangeInBlock.last + 1,
+            )
+        }
+    }
 
     private suspend fun finishBook() {
         isSpeaking = false

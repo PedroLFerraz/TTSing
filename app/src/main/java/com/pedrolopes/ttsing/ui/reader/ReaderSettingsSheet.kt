@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -62,6 +63,7 @@ fun ReaderSettingsSheet(
     onTheme: (ReaderTheme) -> Unit,
     onSelectLanguage: (Locale) -> Unit,
     onInstallVoiceData: () -> Unit,
+    onOwnAudioPlayback: (Boolean) -> Unit,
     onSelectDefaultVoice: () -> Unit,
     onSelectVoice: (Voice) -> Unit,
 ) {
@@ -98,6 +100,32 @@ fun ReaderSettingsSheet(
                         label = { Text(theme.displayName()) },
                     )
                 }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Handle headphone buttons",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "Plays the voice through this app so Bluetooth play/pause reaches it. " +
+                            "Turn off if audio stutters or misbehaves.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = settings.ownAudioPlayback,
+                    onCheckedChange = onOwnAudioPlayback,
+                    modifier = Modifier.padding(start = 12.dp),
+                )
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))

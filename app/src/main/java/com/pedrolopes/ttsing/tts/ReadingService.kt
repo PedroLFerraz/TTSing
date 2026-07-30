@@ -98,11 +98,7 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
         // Which engine reads aloud is read once here and cached: switching mid-session would
         // mean tearing down a live TextToSpeech connection. Changing the setting takes effect
         // the next time the service starts.
-        engine = if (runBlocking { app.settings.settings.first() }.ownAudioPlayback) {
-            AudioTrackNarrator(this, lifecycleScope, this)
-        } else {
-            SpeechEngine(this, lifecycleScope, this)
-        }
+        engine = newEngine(runBlocking { app.settings.settings.first() }.ownAudioPlayback)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         mediaSession = MediaSessionCompat(this, "TTSing").apply {
             setCallback(object : MediaSessionCompat.Callback() {
@@ -250,6 +246,36 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
         engine.setPitch(pitch)
         if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
     }
+
+    /**
+     * Switches between app-owned audio playback and letting the TTS engine play. Rebuilds
+     * the engine in place and resumes where it was, so the change is audible immediately
+     * rather than needing the service to be restarted.
+     */
+    fun setOwnAudioPlayback(enabled: Boolean) {
+        lifecycleScope.launch {
+            app.settings.setOwnAudioPlayback(enabled)
+            val wasSpeaking = _state.value.isSpeaking
+            val position = engine.currentRef?.position ?: _state.value.position
+            engine.pause()
+            engine.shutdown()
+            engine = newEngine(enabled)
+            content?.let { engine.setContentSource(it) }
+            val settings = app.settings.settings.first()
+            engine.setSpeechRate(settings.speechRate)
+            engine.setPitch(settings.pitch)
+            val locale = activeLocale()
+            engine.configureLanguage(locale, settings.voiceFor(locale.language))
+            if (wasSpeaking) engine.playFrom(position) else engine.moveTo(position)
+        }
+    }
+
+    private fun newEngine(ownAudioPlayback: Boolean): Narrator =
+        if (ownAudioPlayback) {
+            AudioTrackNarrator(this, lifecycleScope, this)
+        } else {
+            SpeechEngine(this, lifecycleScope, this)
+        }
 
     /** Selects a voice by name, or null to fall back to the engine default. */
     fun selectVoice(voiceName: String?) {

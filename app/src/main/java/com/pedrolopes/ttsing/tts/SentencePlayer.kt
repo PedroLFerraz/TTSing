@@ -3,9 +3,12 @@ package com.pedrolopes.ttsing.tts
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -16,18 +19,15 @@ import kotlinx.coroutines.withContext
  * engine app and routes Bluetooth/headset media buttons there instead of here. Writing the
  * audio ourselves makes TTSing the app that is audibly playing, which is what the platform
  * keys media-button routing off.
- *
- * Writing is chunked so pausing takes effect within a few milliseconds instead of at the end
- * of the sentence, and so playback position can drive the word highlight.
  */
 class SentencePlayer {
 
     private var track: AudioTrack? = null
 
     /**
-     * Plays [sentence] to completion, invoking [onFrame] as playback advances so the caller
-     * can highlight the current word. Returns true if it finished, false if it was stopped
-     * (via [stop]) or the coroutine was cancelled.
+     * Plays [sentence] to completion, invoking [onFrame] with the playback position so the
+     * caller can highlight the current word. Returns true if it finished, false if it was
+     * stopped (via [stop]) or the coroutine was cancelled.
      */
     suspend fun play(
         sentence: SynthesizedSentence,
@@ -69,14 +69,29 @@ class SentencePlayer {
             .build()
 
         track = audioTrack
-        audioTrack.play()
-
         val pcm = sentence.pcm
-        var offset = 0
+        val totalFrames = sentence.frameCount
+
+        // Report position on a timer rather than after each write. Writes are small and
+        // finish almost immediately into the buffer, long before that audio is audible, so
+        // driving the highlight off them would freeze it on the first word.
+        val progress = launch {
+            while (isActive) {
+                val head = runCatching { audioTrack.playbackHeadPosition }.getOrNull() ?: break
+                onFrame(head)
+                if (head >= totalFrames) break
+                delay(PROGRESS_POLL_MS)
+            }
+        }
+
         var completed = true
         try {
+            audioTrack.play()
+            var offset = 0
             while (offset < pcm.size) {
-                if (!currentCoroutineContext().isActive || audioTrack.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                if (!currentCoroutineContext().isActive ||
+                    audioTrack.playState != AudioTrack.PLAYSTATE_PLAYING
+                ) {
                     completed = false
                     break
                 }
@@ -87,18 +102,17 @@ class SentencePlayer {
                     break
                 }
                 offset += written
-                onFrame(audioTrack.playbackHeadPosition)
             }
-            if (completed) {
-                // Let the buffered tail actually reach the speaker before reporting done,
-                // otherwise the next sentence clips the end of this one.
-                audioTrack.stop()
-                drain(audioTrack, sentence)
-            }
+            // Wait for the queued audio to actually reach the speaker BEFORE stopping:
+            // AudioTrack.stop() resets playbackHeadPosition to zero, so polling it after
+            // stopping waits on a counter that never advances again.
+            if (completed) completed = awaitDrain(audioTrack, totalFrames, sentence.sampleRateHz)
         } catch (_: IllegalStateException) {
             // The track was released underneath us by stop(); treat as interrupted.
             completed = false
         } finally {
+            progress.cancel()
+            runCatching { audioTrack.stop() }
             runCatching { audioTrack.release() }
             if (track === audioTrack) track = null
         }
@@ -109,31 +123,34 @@ class SentencePlayer {
     fun stop() {
         val current = track ?: return
         runCatching { current.pause() }
+        // flush() discards what's buffered, which also unblocks a write() waiting for space.
         runCatching { current.flush() }
         runCatching { current.stop() }
     }
 
-    private suspend fun drain(audioTrack: AudioTrack, sentence: SynthesizedSentence) {
-        val totalFrames = sentence.pcm.size / bytesPerFrame(sentence)
+    /**
+     * Waits until the whole sentence has been heard, so the next one doesn't clip its tail.
+     * Bounded by the sentence's own duration plus a grace margin: a device that never
+     * reports the final frame must not be able to wedge the reader.
+     */
+    private suspend fun awaitDrain(audioTrack: AudioTrack, totalFrames: Int, sampleRateHz: Int): Boolean {
+        val expectedMs = totalFrames * 1000L / sampleRateHz.coerceAtLeast(1)
+        val deadline = SystemClock.elapsedRealtime() + expectedMs + DRAIN_GRACE_MS
         while (currentCoroutineContext().isActive) {
-            val head = runCatching { audioTrack.playbackHeadPosition }.getOrNull() ?: return
-            if (head >= totalFrames) return
-            kotlinx.coroutines.delay(DRAIN_POLL_MS)
+            if (audioTrack.playState != AudioTrack.PLAYSTATE_PLAYING) return false
+            val head = runCatching { audioTrack.playbackHeadPosition }.getOrNull() ?: return true
+            if (head >= totalFrames) return true
+            if (SystemClock.elapsedRealtime() > deadline) return true
+            delay(DRAIN_POLL_MS)
         }
-    }
-
-    private fun bytesPerFrame(sentence: SynthesizedSentence): Int {
-        val bytesPerSample = when (sentence.audioFormat) {
-            AudioFormat.ENCODING_PCM_8BIT -> 1
-            AudioFormat.ENCODING_PCM_FLOAT -> 4
-            else -> 2
-        }
-        return (bytesPerSample * sentence.channelCount).coerceAtLeast(1)
+        return false
     }
 
     private companion object {
         const val DEFAULT_BUFFER_BYTES = 16 * 1024
         const val WRITE_CHUNK_BYTES = 4 * 1024
+        const val PROGRESS_POLL_MS = 40L
         const val DRAIN_POLL_MS = 20L
+        const val DRAIN_GRACE_MS = 750L
     }
 }
