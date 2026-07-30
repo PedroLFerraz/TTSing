@@ -13,7 +13,7 @@ import java.util.Locale
 /**
  * Renders a card's sentence to a WAV file with [TextToSpeech.synthesizeToFile].
  *
- * Deliberately keeps its **own** engine instance: [com.pedrolopes.ttsing.tts.SpeechEngine]
+ * Deliberately keeps its **own** engine instance: [com.pedrolopes.ttsing.tts.AudioTrackNarrator]
  * owns the one used for read-aloud, and sharing it would flush the playback queue
  * mid-sentence when a card is made while the book is being read.
  */

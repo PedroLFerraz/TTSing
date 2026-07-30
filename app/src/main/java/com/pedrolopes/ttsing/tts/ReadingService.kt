@@ -36,16 +36,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 
 /**
- * Foreground service that owns the [SpeechEngine] so read-aloud continues with the
+ * Foreground service that owns the [Narrator] so read-aloud continues with the
  * screen off. Exposes [PlaybackState] to the UI and media-style notification controls.
  */
-class ReadingService : LifecycleService(), SpeechEngine.Listener {
+class ReadingService : LifecycleService(), Narrator.Listener {
 
     inner class LocalBinder : Binder() {
         val service: ReadingService get() = this@ReadingService
@@ -95,10 +94,7 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
 
     override fun onCreate() {
         super.onCreate()
-        // Which engine reads aloud is read once here and cached: switching mid-session would
-        // mean tearing down a live TextToSpeech connection. Changing the setting takes effect
-        // the next time the service starts.
-        engine = newEngine(runBlocking { app.settings.settings.first() }.ownAudioPlayback)
+        engine = AudioTrackNarrator(this, lifecycleScope, this)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         mediaSession = MediaSessionCompat(this, "TTSing").apply {
             setCallback(object : MediaSessionCompat.Callback() {
@@ -247,36 +243,6 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
         if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
     }
 
-    /**
-     * Switches between app-owned audio playback and letting the TTS engine play. Rebuilds
-     * the engine in place and resumes where it was, so the change is audible immediately
-     * rather than needing the service to be restarted.
-     */
-    fun setOwnAudioPlayback(enabled: Boolean) {
-        lifecycleScope.launch {
-            app.settings.setOwnAudioPlayback(enabled)
-            val wasSpeaking = _state.value.isSpeaking
-            val position = engine.currentRef?.position ?: _state.value.position
-            engine.pause()
-            engine.shutdown()
-            engine = newEngine(enabled)
-            content?.let { engine.setContentSource(it) }
-            val settings = app.settings.settings.first()
-            engine.setSpeechRate(settings.speechRate)
-            engine.setPitch(settings.pitch)
-            val locale = activeLocale()
-            engine.configureLanguage(locale, settings.voiceFor(locale.language))
-            if (wasSpeaking) engine.playFrom(position) else engine.moveTo(position)
-        }
-    }
-
-    private fun newEngine(ownAudioPlayback: Boolean): Narrator =
-        if (ownAudioPlayback) {
-            AudioTrackNarrator(this, lifecycleScope, this)
-        } else {
-            SpeechEngine(this, lifecycleScope, this)
-        }
-
     /** Selects a voice by name, or null to fall back to the engine default. */
     fun selectVoice(voiceName: String?) {
         lifecycleScope.launch {
@@ -338,7 +304,7 @@ class ReadingService : LifecycleService(), SpeechEngine.Listener {
         return restored
     }
 
-    // ---- SpeechEngine.Listener ----
+    // ---- Narrator.Listener ----
 
     override fun onSentenceStart(ref: SentenceRef) {
         _state.value = _state.value.copy(

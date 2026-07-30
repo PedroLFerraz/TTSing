@@ -130,9 +130,4 @@ class ReadingController(context: Context) {
     fun selectVoice(voiceName: String?) {
         service?.selectVoice(voiceName)
     }
-
-    /** Toggles app-owned audio playback (needed for Bluetooth media buttons). */
-    fun setOwnAudioPlayback(enabled: Boolean) {
-        service?.setOwnAudioPlayback(enabled)
-    }
 }

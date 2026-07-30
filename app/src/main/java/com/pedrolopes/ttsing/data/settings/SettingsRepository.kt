@@ -2,7 +2,6 @@ package com.pedrolopes.ttsing.data.settings
 
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -45,12 +44,6 @@ data class AppSettings(
     /** Cached AnkiDroid ids for the TTSing deck and note type; null until first card. */
     val ankiDeckId: Long? = null,
     val ankiModelId: Long? = null,
-    /**
-     * Play synthesized audio through the app's own AudioTrack instead of letting the TTS
-     * engine play it. Required for Bluetooth/headset media buttons to reach this app, since
-     * Android routes them to whichever app is actually producing the audio.
-     */
-    val ownAudioPlayback: Boolean = true,
 ) {
     /** The stored voice for a language, or null to use the engine's default. */
     fun voiceFor(languageCode: String): String? = voices[languageCode]
@@ -92,7 +85,6 @@ class SettingsRepository(private val context: Context) {
         fun bookLanguage(bookId: String) = stringPreferencesKey("$BOOK_LANGUAGE_PREFIX$bookId")
         val ankiDeckId = longPreferencesKey("anki_deck_id")
         val ankiModelId = longPreferencesKey("anki_model_id")
-        val ownAudioPlayback = booleanPreferencesKey("own_audio_playback")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -109,13 +101,7 @@ class SettingsRepository(private val context: Context) {
             charsPerSecond = prefs[Keys.charsPerSecond] ?: AppSettings.DEFAULT_CHARS_PER_SECOND,
             ankiDeckId = prefs[Keys.ankiDeckId],
             ankiModelId = prefs[Keys.ankiModelId],
-            ownAudioPlayback = prefs[Keys.ownAudioPlayback] ?: true,
         )
-    }
-
-    /** Escape hatch: turn off app-owned playback and go back to TextToSpeech.speak(). */
-    suspend fun setOwnAudioPlayback(enabled: Boolean) {
-        context.dataStore.edit { it[Keys.ownAudioPlayback] = enabled }
     }
 
     /** Caches the AnkiDroid deck/note-type ids so they are looked up only once. */

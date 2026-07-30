@@ -4,7 +4,7 @@ import com.pedrolopes.ttsing.data.epub.SentenceSpan
 
 /** When one word is spoken within a sentence's synthesized audio. */
 data class WordTiming(
-    /** The word as char offsets into the owning block's text, matching [SpeechEngine.Listener.onWordRange]. */
+    /** The word as char offsets into the owning block's text, matching [Narrator.Listener.onWordRange]. */
     val rangeInBlock: IntRange,
     val startMs: Int,
     val endMs: Int,

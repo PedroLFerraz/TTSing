@@ -11,13 +11,13 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * Feeds sentences from an [EpubBook] to the [SpeechEngine], loading and caching
+ * Feeds sentences from an [EpubBook] to the [Narrator], loading and caching
  * chapters on demand and transparently crossing block/chapter boundaries.
  */
 class BookContentSource(
     private val parser: EpubParser,
     val book: EpubBook,
-) : SpeechEngine.ContentSource {
+) : Narrator.ContentSource {
 
     private val locale = book.locale()
     private val mutex = Mutex()

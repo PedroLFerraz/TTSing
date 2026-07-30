@@ -18,9 +18,8 @@ import java.util.Locale
  * Reads a book aloud by synthesizing each sentence to PCM and playing it through an
  * app-owned [android.media.AudioTrack].
  *
- * Drop-in alternative to [SpeechEngine], which uses [TextToSpeech.speak] instead. The
- * difference matters for one specific reason: with `speak()` the audio comes out of the TTS
- * engine's own process, so Android treats *that* app as the one playing audio and routes
+ * Using [TextToSpeech.speak] instead would hand the audio to an `AudioTrack` inside the TTS
+ * engine's own process, so Android would treat *that* app as the one playing and route
  * Bluetooth/headset media buttons there. Here the sound genuinely originates from this app.
  *
  * Word highlighting also gets better as a side effect: the engine reports each word's exact
@@ -30,7 +29,7 @@ import java.util.Locale
 class AudioTrackNarrator(
     context: Context,
     private val scope: CoroutineScope,
-    private val listener: SpeechEngine.Listener,
+    private val listener: Narrator.Listener,
 ) : Narrator {
 
     private val ready = CompletableDeferred<Boolean>()
@@ -42,10 +41,10 @@ class AudioTrackNarrator(
     private val synthesizer = PcmSynthesizer(tts, context.applicationContext.cacheDir)
     private val player = SentencePlayer()
 
-    private var source: SpeechEngine.ContentSource? = null
+    private var source: Narrator.ContentSource? = null
     private var readingJob: Job? = null
 
-    /** Playback speed; applied by resampling the request, mirroring SpeechEngine's contract. */
+    /** Playback speed, applied by the engine during synthesis. */
     private var speechRate = 1f
 
     /** Language in use, for the word-splitting fallback below. */
@@ -63,7 +62,7 @@ class AudioTrackNarrator(
 
     override suspend fun awaitReady(): Boolean = ready.await()
 
-    override fun setContentSource(contentSource: SpeechEngine.ContentSource) {
+    override fun setContentSource(contentSource: Narrator.ContentSource) {
         source = contentSource
     }
 
@@ -135,7 +134,7 @@ class AudioTrackNarrator(
     }
 
     /** Synthesizes and plays sentence after sentence until the book ends or we're stopped. */
-    private suspend fun readLoop(src: SpeechEngine.ContentSource, from: ReadingPosition) {
+    private suspend fun readLoop(src: Narrator.ContentSource, from: ReadingPosition) {
         var ref = src.firstAtOrAfter(from)
         if (ref == null) {
             finishBook()

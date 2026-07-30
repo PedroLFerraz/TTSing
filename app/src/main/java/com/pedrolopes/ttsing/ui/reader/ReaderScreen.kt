@@ -289,7 +289,6 @@ fun ReaderScreen(
             availableLanguages = remember(showSettings) { controller.availableLanguages() },
             onSelectLanguage = { locale -> controller.selectLanguage(locale.toLanguageTag()) },
             onInstallVoiceData = { openTtsDataInstaller(context) },
-            onOwnAudioPlayback = { enabled -> controller.setOwnAudioPlayback(enabled) },
             onDismiss = { showSettings = false },
             onSpeechRate = { rate ->
                 scope.launch { app.settings.setSpeechRate(rate) }
