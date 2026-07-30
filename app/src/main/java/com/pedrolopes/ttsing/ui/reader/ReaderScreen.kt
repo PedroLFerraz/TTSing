@@ -55,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -97,6 +98,7 @@ fun ReaderScreen(
     val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = DefaultSettings)
     val palette = readerPalette(settings.readerTheme)
 
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showSettings by remember { mutableStateOf(false) }
     var pageInfo by remember { mutableStateOf(PageInfo()) }
@@ -286,6 +288,7 @@ fun ReaderScreen(
             declaredLanguageTag = ui.languageTag,
             availableLanguages = remember(showSettings) { controller.availableLanguages() },
             onSelectLanguage = { locale -> controller.selectLanguage(locale.toLanguageTag()) },
+            onInstallVoiceData = { openTtsDataInstaller(context) },
             onDismiss = { showSettings = false },
             onSpeechRate = { rate ->
                 scope.launch { app.settings.setSpeechRate(rate) }
@@ -508,6 +511,19 @@ private fun EndOfChapterPage(palette: ReaderPalette) {
             )
         }
     }
+}
+
+/**
+ * Opens the TTS engine's own voice-data download screen, falling back to Android's
+ * Text-to-speech settings if the engine doesn't offer one.
+ */
+private fun openTtsDataInstaller(context: android.content.Context) {
+    val install = android.content.Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
+        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    val fallback = android.content.Intent("com.android.settings.TTS_SETTINGS")
+        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(install) }
+        .recoverCatching { context.startActivity(fallback) }
 }
 
 @Composable

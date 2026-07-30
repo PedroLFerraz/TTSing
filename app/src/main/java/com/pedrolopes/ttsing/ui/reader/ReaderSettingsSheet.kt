@@ -39,6 +39,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pedrolopes.ttsing.data.settings.AppSettings
 import com.pedrolopes.ttsing.data.settings.ReaderTheme
+import com.pedrolopes.ttsing.tts.LanguageOption
+import com.pedrolopes.ttsing.tts.needsDownload
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -52,13 +54,14 @@ fun ReaderSettingsSheet(
     activeLocale: Locale,
     /** What the EPUB itself declares, shown so a wrong declaration is visible. */
     declaredLanguageTag: String?,
-    availableLanguages: List<Locale>,
+    availableLanguages: List<LanguageOption>,
     onDismiss: () -> Unit,
     onSpeechRate: (Float) -> Unit,
     onPitch: (Float) -> Unit,
     onFontScale: (Float) -> Unit,
     onTheme: (ReaderTheme) -> Unit,
     onSelectLanguage: (Locale) -> Unit,
+    onInstallVoiceData: () -> Unit,
     onSelectDefaultVoice: () -> Unit,
     onSelectVoice: (Voice) -> Unit,
 ) {
@@ -121,7 +124,7 @@ fun ReaderSettingsSheet(
                 DropdownMenu(
                     expanded = languageMenuOpen,
                     onDismissRequest = { languageMenuOpen = false },
-                    modifier = Modifier.heightIn(max = 360.dp),
+                    modifier = Modifier.heightIn(max = 400.dp),
                 ) {
                     if (availableLanguages.isEmpty()) {
                         DropdownMenuItem(
@@ -129,20 +132,39 @@ fun ReaderSettingsSheet(
                             onClick = { languageMenuOpen = false },
                         )
                     }
-                    availableLanguages.forEach { locale ->
+                    availableLanguages.forEach { option ->
                         DropdownMenuItem(
-                            text = { Text(locale.displayName()) },
+                            text = {
+                                Column {
+                                    Text(option.locale.displayName())
+                                    if (!option.downloaded) {
+                                        Text(
+                                            "Downloads on first use",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            },
                             leadingIcon = {
-                                if (locale.language == activeLocale.language) {
+                                if (option.locale.language == activeLocale.language) {
                                     Icon(Icons.Filled.Check, contentDescription = "Current language")
                                 }
                             },
                             onClick = {
                                 languageMenuOpen = false
-                                onSelectLanguage(locale)
+                                onSelectLanguage(option.locale)
                             },
                         )
                     }
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Install voice data…") },
+                        onClick = {
+                            languageMenuOpen = false
+                            onInstallVoiceData()
+                        },
+                    )
                 }
             }
 
@@ -171,8 +193,8 @@ fun ReaderSettingsSheet(
 
             if (voices.isEmpty()) {
                 Text(
-                    "No installed voices found for this language. Install voice data in Android's " +
-                        "Text-to-speech settings to add more.",
+                    "This engine has no voices for $languageName. Install voice data in Android's " +
+                        "Text-to-speech settings, or pick another language above.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -290,5 +312,6 @@ private fun voiceTitle(voice: Voice): String {
         else -> null
     }
     val online = if (voice.isNetworkConnectionRequired) "Online" else "Offline"
-    return listOfNotNull(gender, quality, online).joinToString(" · ")
+    val download = if (voice.needsDownload()) "Downloads on first use" else null
+    return listOfNotNull(gender, quality, online, download).joinToString(" · ")
 }

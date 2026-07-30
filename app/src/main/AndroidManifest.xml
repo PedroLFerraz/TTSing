@@ -41,7 +41,25 @@
         <service
             android:name=".tts.ReadingService"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+            android:foregroundServiceType="mediaPlayback">
+            <!-- Lets MediaButtonReceiver below find this service to restart/resume
+                 playback when a hardware media button is pressed after the session
+                 has gone inactive (e.g. the service was killed while paused). -->
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </service>
+
+        <!-- Only the system can send this broadcast; it forwards media button presses
+             (headphone/Bluetooth play, pause, next, previous) to ReadingService above
+             when our MediaSession isn't already the one Android is routing keys to. -->
+        <receiver
+            android:name="androidx.media.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
 
         <!-- AnkiDroid reads card audio through its own resolver, so it needs a
              content:// URI; a file:// URI is rejected. -->
