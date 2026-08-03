@@ -30,6 +30,7 @@ import com.pedrolopes.ttsing.R
 import com.pedrolopes.ttsing.TTSingApp
 import com.pedrolopes.ttsing.data.epub.EpubParser
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
+import com.pedrolopes.ttsing.data.news.NewsRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,7 +55,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
     private lateinit var engine: Narrator
     private var parser: EpubParser? = null
-    private var content: BookContentSource? = null
+    private var content: ReadableContent? = null
     private var openMutex = Mutex()
 
     /** Language the book is being read in; the user's override, else its `dc:language`. */
@@ -216,7 +217,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     fun availableLanguages() = engine.availableLanguages()
 
     /** The language the current book is actually being read in (override or `dc:language`). */
-    fun activeLocale(): Locale = activeLocale ?: content?.book?.locale() ?: Locale.getDefault()
+    fun activeLocale(): Locale = activeLocale ?: content?.locale ?: Locale.getDefault()
 
     /**
      * Switches the book to another language: remembers the choice for this book, reloads the
@@ -267,6 +268,35 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         content = null
         activeLocale = null
 
+        val opened = if (NewsRepository.isArticle(bookId)) openArticle(bookId) else openBook(bookId)
+        val (source, restored) = opened ?: return null
+        content = source
+        engine.setContentSource(source)
+
+        val settings = app.settings.settings.first()
+        currentRate = settings.speechRate
+        measuredCharsPerSecond = settings.charsPerSecond
+        engine.setSpeechRate(settings.speechRate)
+        engine.setPitch(settings.pitch)
+        val locale = settings.localeFor(bookId, source.locale)
+        activeLocale = locale
+        val languageOk = engine.configureLanguage(locale, settings.voiceFor(locale.language))
+
+        _state.value = PlaybackState(
+            bookId = bookId,
+            bookTitle = source.title,
+            author = source.author,
+            isActive = true,
+            isSpeaking = false,
+            position = restored,
+            languageAvailable = languageOk,
+        )
+        engine.moveTo(restored)
+        updateMetadata()
+        return restored
+    }
+
+    private suspend fun openBook(bookId: String): Pair<ReadableContent, ReadingPosition>? {
         val entity = app.books.getBook(bookId) ?: run {
             _state.value = PlaybackState(error = "Book not found")
             return null
@@ -276,32 +306,38 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             return null
         }
         parser = opened.first
-        val source = BookContentSource(opened.first, opened.second)
-        content = source
-        engine.setContentSource(source)
+        return BookContentSource(opened.first, opened.second) to
+            ReadingPosition(entity.chapterIndex, entity.blockIndex, entity.sentenceIndex)
+    }
 
+    /**
+     * Loads a news article. Its full text may still need fetching, which is why this can fail
+     * with a network-flavoured message rather than a missing-file one.
+     */
+    private suspend fun openArticle(articleId: String): Pair<ReadableContent, ReadingPosition>? {
+        val article = app.news.article(articleId) ?: run {
+            _state.value = PlaybackState(error = "Article not found")
+            return null
+        }
         val settings = app.settings.settings.first()
-        currentRate = settings.speechRate
-        measuredCharsPerSecond = settings.charsPerSecond
-        engine.setSpeechRate(settings.speechRate)
-        engine.setPitch(settings.pitch)
-        val locale = settings.localeFor(bookId, opened.second.locale())
-        activeLocale = locale
-        val languageOk = engine.configureLanguage(locale, settings.voiceFor(locale.language))
+        val feedLocale = app.news.feedLocale(article.feedUrl) ?: Locale.getDefault()
+        val locale = settings.localeFor(articleId, feedLocale)
 
-        val restored = ReadingPosition(entity.chapterIndex, entity.blockIndex, entity.sentenceIndex)
-        _state.value = PlaybackState(
-            bookId = bookId,
-            bookTitle = opened.second.title,
-            author = opened.second.author,
-            isActive = true,
-            isSpeaking = false,
-            position = restored,
-            languageAvailable = languageOk,
-        )
-        engine.moveTo(restored)
-        updateMetadata()
-        return restored
+        return when (val body = app.news.body(articleId, locale)) {
+            is NewsRepository.ArticleBody.Failed -> {
+                _state.value = PlaybackState(error = body.message)
+                null
+            }
+            is NewsRepository.ArticleBody.Ready -> {
+                val source = ArticleContentSource(
+                    articleId = articleId,
+                    title = article.title,
+                    locale = feedLocale,
+                    blocks = body.blocks,
+                )
+                source to ReadingPosition(0, article.blockIndex, article.sentenceIndex)
+            }
+        }
     }
 
     // ---- Narrator.Listener ----
@@ -512,10 +548,14 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         val source = content ?: return
         saveJob?.cancel()
         saveJob = lifecycleScope.launch {
-            val blocks = source.chapter(s.position.chapterIndex)?.blocks?.size ?: 1
-            val spineCount = source.book.spine.size.coerceAtLeast(1)
-            val withinChapter = if (blocks == 0) 0f else s.position.blockIndex.toFloat() / blocks
-            val progress = (s.position.chapterIndex + withinChapter) / spineCount
+            if (NewsRepository.isArticle(bookId)) {
+                app.news.savePosition(bookId, s.position.blockIndex, s.position.sentenceIndex)
+                return@launch
+            }
+            val blocks = source.blockCount(s.position.chapterIndex).coerceAtLeast(1)
+            val sectionCount = source.sectionCount.coerceAtLeast(1)
+            val withinSection = s.position.blockIndex.toFloat() / blocks
+            val progress = (s.position.chapterIndex + withinSection) / sectionCount
             app.books.savePosition(bookId, s.position, progress)
         }
     }

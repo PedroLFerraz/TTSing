@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.RssFeed
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -48,6 +49,7 @@ import java.io.File
 @Composable
 fun LibraryScreen(
     onOpenBook: (String) -> Unit,
+    onOpenNews: () -> Unit,
     viewModel: LibraryViewModel = viewModel(factory = simpleFactory { LibraryViewModel.create() }),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -71,6 +73,9 @@ fun LibraryScreen(
             TopAppBar(
                 title = { Text("TTSing") },
                 actions = {
+                    IconButton(onClick = onOpenNews) {
+                        Icon(Icons.Outlined.RssFeed, contentDescription = "News feeds")
+                    }
                     IconButton(onClick = { folderPicker.launch(null) }) {
                         Icon(Icons.Outlined.FolderOpen, contentDescription = "Choose books folder")
                     }

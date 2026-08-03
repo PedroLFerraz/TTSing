@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.room.Room
 import com.pedrolopes.ttsing.data.BookRepository
 import com.pedrolopes.ttsing.data.db.AppDatabase
+import com.pedrolopes.ttsing.data.news.NewsRepository
+import com.pedrolopes.ttsing.data.news.db.NewsDatabase
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
 
 class TTSingApp : Application() {
@@ -16,9 +18,19 @@ class TTSingApp : Application() {
             .build()
     }
 
+    /**
+     * Separate from [database] on purpose: that one is destructively migrated because it only
+     * caches the books folder, whereas feed subscriptions are user data that must survive.
+     */
+    val newsDatabase: NewsDatabase by lazy {
+        Room.databaseBuilder(this, NewsDatabase::class.java, "ttsing-news.db").build()
+    }
+
     val settings: SettingsRepository by lazy { SettingsRepository(this) }
 
     val books: BookRepository by lazy { BookRepository(this, database.bookDao(), settings) }
+
+    val news: NewsRepository by lazy { NewsRepository(newsDatabase.newsDao()) }
 
     override fun onCreate() {
         super.onCreate()

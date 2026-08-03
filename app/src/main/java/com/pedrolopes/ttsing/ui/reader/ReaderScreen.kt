@@ -251,6 +251,8 @@ fun ReaderScreen(
 
                 if (isThisBook && !playback.languageAvailable) {
                     MissingVoiceBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
+                } else if (ui.isTruncated) {
+                    TruncatedArticleBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
                 }
             }
         }
@@ -524,6 +526,23 @@ private fun openTtsDataInstaller(context: android.content.Context) {
         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
     runCatching { context.startActivity(install) }
         .recoverCatching { context.startActivity(fallback) }
+}
+
+/** Shown when the article's page couldn't be reached, so only the feed's teaser is available. */
+@Composable
+private fun TruncatedArticleBanner(modifier: Modifier = Modifier) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        shape = RoundedCornerShape(8.dp),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Text(
+            "Only the feed's summary is available — the full article couldn't be downloaded.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(12.dp),
+        )
+    }
 }
 
 @Composable

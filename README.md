@@ -39,6 +39,12 @@ background playback and media-notification controls.
   open on a blank cover page.
 - **Tap to start** — tap any paragraph to begin reading from there (from the sentence you
   actually touched, not the top of the page).
+- **News feeds** — subscribe to any RSS or Atom feed and read its stories the same way you
+  read a book. Articles are fetched and stripped down to the actual text (navigation, cookie
+  banners, related-story rails and newsletter prompts are scored out), so the **whole** piece
+  is read aloud rather than the truncated summary the feed ships. Feeds that inline their
+  full text are used directly, and if a page can't be reached the reader falls back to the
+  summary and says so.
 - **Anki flashcards** — long-press a sentence, tap the word you didn't know, type what it
   means, and the card goes straight into AnkiDroid. The front is the sentence with the word
   in bold plus the sentence spoken by the book's own voice; the back is your definition.
@@ -100,6 +106,10 @@ press play to see the sentence/word highlighting and auto-scroll.
 data/epub/    EpubParser (ZIP + OPF + nav/NCX), ChapterLoader (XHTML → blocks via Jsoup),
               BreakIterator sentence segmentation. Pure JVM, unit-tested.
 data/db/      Room cache of book metadata + reading position.
+data/news/    RssParser (RSS 2.0 + Atom), ArticleExtractor (readability-style scoring to pull
+              the article body out of a news page), HttpFetcher, NewsRepository. Its own Room
+              database (`ttsing-news.db`) with real migrations — feed subscriptions are user
+              data, unlike the books cache.
 data/settings DataStore: folder URI, speed, pitch, font size, theme, voice per language
               (`voice_<lang>`), language override per book (`booklang_<id>`).
 data/         BookRepository — SAF folder scan, cover extraction, position persistence.
