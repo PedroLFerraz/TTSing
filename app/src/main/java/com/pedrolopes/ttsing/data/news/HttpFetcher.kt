@@ -50,6 +50,51 @@ object HttpFetcher {
         Result.Failure("Too many redirects")
     }
 
+    /** Raw bytes, for article images. Null on any failure — a missing photo is not an error. */
+    suspend fun getBytes(url: String, maxBytes: Int = MAX_BYTES): ByteArray? = withContext(Dispatchers.IO) {
+        var current = url
+        repeat(MAX_REDIRECTS) {
+            val connection = runCatching { URL(current).openConnection() as HttpURLConnection }
+                .getOrNull() ?: return@withContext null
+            try {
+                connection.apply {
+                    requestMethod = "GET"
+                    connectTimeout = CONNECT_TIMEOUT_MS
+                    readTimeout = READ_TIMEOUT_MS
+                    instanceFollowRedirects = false
+                    setRequestProperty("User-Agent", USER_AGENT)
+                    setRequestProperty("Accept", "image/*,*/*;q=0.8")
+                }
+                val status = connection.responseCode
+                if (status in 300..399) {
+                    val location = connection.getHeaderField("Location") ?: return@withContext null
+                    current = URL(URL(current), location).toString()
+                    return@repeat
+                }
+                if (status !in 200..299) return@withContext null
+                return@withContext connection.inputStream.use { it.readBounded(maxBytes) }
+            } catch (_: Exception) {
+                return@withContext null
+            } finally {
+                runCatching { connection.disconnect() }
+            }
+        }
+        null
+    }
+
+    private fun InputStream.readBounded(maxBytes: Int): ByteArray? {
+        val buffer = ByteArray(16 * 1024)
+        val out = java.io.ByteArrayOutputStream()
+        while (true) {
+            val read = read(buffer)
+            if (read < 0) break
+            out.write(buffer, 0, read)
+            // Refuse rather than truncate: half an image decodes to nothing useful.
+            if (out.size() > maxBytes) return null
+        }
+        return out.toByteArray().takeIf { it.isNotEmpty() }
+    }
+
     private sealed interface Step {
         data class Body(val text: String) : Step
         data class Redirect(val location: String) : Step

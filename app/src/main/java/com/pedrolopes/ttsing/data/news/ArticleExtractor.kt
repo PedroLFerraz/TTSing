@@ -167,13 +167,14 @@ object ArticleExtractor {
     private val INLINE_TAGS = setOf(
         "a", "span", "em", "strong", "i", "b", "u", "s", "small", "sub", "sup", "code",
         "br", "abbr", "cite", "q", "dfn", "kbd", "mark", "samp", "time", "var", "wbr",
-        "big", "tt", "font", "ins", "del", "ruby", "rt", "rp", "picture", "img",
+        "big", "tt", "font", "ins", "del", "ruby", "rt", "rp",
     )
 
     private fun walk(element: Element, locale: Locale, out: MutableList<Block>) {
         for (child in element.children()) {
             val tag = child.normalName()
             when {
+                tag == "img" -> addImage(child, out)
                 tag in HEADINGS -> addText(child, HEADINGS.getValue(tag), locale, out)
                 tag == "blockquote" ->
                     if (child.children().any { it.normalName() in NESTABLE_IN_QUOTE }) {
@@ -200,6 +201,10 @@ object ArticleExtractor {
         locale: Locale,
         out: MutableList<Block>,
     ) {
+        // Photos are often wrapped inside the paragraph they illustrate, so pull them out
+        // ahead of the text rather than losing them.
+        element.select("img").forEach { addImage(it, out) }
+
         val text = element.text().trim()
         if (text.isEmpty()) return
         // Leftover link clusters ("Read more", tag lists) survive scoring but shouldn't be read
@@ -208,10 +213,63 @@ object ArticleExtractor {
         out.add(Block.Text(text, kind, SentenceSplitter.split(text, locale)))
     }
 
+    private fun addImage(img: Element, out: MutableList<Block>) {
+        val url = imageUrl(img) ?: return
+        // The same photo can appear in both a <picture> source and its fallback <img>.
+        if (out.any { it is Block.Image && it.zipPath == url }) return
+        val alt = img.attr("alt").trimmed() ?: img.attr("title").trimmed()
+        out.add(Block.Image(url, alt))
+    }
+
+    /**
+     * The image's real address, as an absolute URL.
+     *
+     * News sites lazy-load almost universally, so `src` is frequently a placeholder (a grey
+     * spacer or an inline data URI) while the actual photo sits in `data-src` or a `srcset`.
+     * Those are checked first, and the widest candidate in a `srcset` wins.
+     */
+    private fun imageUrl(img: Element): String? = sequenceOf(
+        img.absUrl("data-src"),
+        img.absUrl("data-original"),
+        img.absUrl("data-lazy-src"),
+        widestFromSrcset(img, "data-srcset"),
+        widestFromSrcset(img, "srcset"),
+        img.absUrl("src"),
+    ).firstOrNull { it.isNotEmpty() && isDisplayable(it) && !isSpacer(img) }
+
+    private fun widestFromSrcset(img: Element, attribute: String): String {
+        val raw = img.attr(attribute).ifEmpty { return "" }
+        // "photo-400.jpg 400w, photo-800.jpg 800w" — take the largest declared width.
+        val best = raw.split(',')
+            .mapNotNull { candidate ->
+                val parts = candidate.trim().split(Regex("\\s+"))
+                val url = parts.firstOrNull()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                val width = parts.getOrNull(1)?.removeSuffix("w")?.toIntOrNull() ?: 0
+                url to width
+            }
+            .maxByOrNull { it.second }
+            ?.first
+            ?: return ""
+        return runCatching { java.net.URL(java.net.URL(img.baseUri()), best).toString() }.getOrDefault(best)
+    }
+
+    /** Skips what the bitmap decoder can't render anyway, plus lazy-load placeholders. */
+    private fun isDisplayable(url: String): Boolean =
+        !url.startsWith("data:", ignoreCase = true) &&
+            !url.substringBefore('?').endsWith(".svg", ignoreCase = true)
+
+    /** Tracking pixels and 1x1 spacers declare their size; real photos rarely do so tiny. */
+    private fun isSpacer(img: Element): Boolean {
+        val width = img.attr("width").toIntOrNull()
+        val height = img.attr("height").toIntOrNull()
+        return (width != null && width <= SPACER_MAX_PX) || (height != null && height <= SPACER_MAX_PX)
+    }
+
     private fun String.trimmed(): String? = trim().takeIf { it.isNotEmpty() }
 
     private const val MIN_PARAGRAPH_CHARS = 25
     private const val MIN_ARTICLE_CHARS = 200
     private const val LINK_CLUSTER_CHARS = 120
     private const val PARENT_PREFERENCE = 0.95
+    private const val SPACER_MAX_PX = 2
 }

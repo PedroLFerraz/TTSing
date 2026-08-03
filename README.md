@@ -44,7 +44,9 @@ background playback and media-notification controls.
   banners, related-story rails and newsletter prompts are scored out), so the **whole** piece
   is read aloud rather than the truncated summary the feed ships. Feeds that inline their
   full text are used directly, and if a page can't be reached the reader falls back to the
-  summary and says so.
+  summary and says so. Photos and their captions are kept, downloaded once and cached on
+  disk; lazy-loaded sources (`data-src`, `srcset`) are resolved, and tracking pixels, SVG
+  icons and placeholder data URIs are filtered out.
 - **Anki flashcards** — long-press a sentence, tap the word you didn't know, type what it
   means, and the card goes straight into AnkiDroid. The front is the sentence with the word
   in bold plus the sentence spoken by the book's own voice; the back is your definition.

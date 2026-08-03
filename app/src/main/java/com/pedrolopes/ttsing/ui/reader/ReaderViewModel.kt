@@ -12,6 +12,7 @@ import com.pedrolopes.ttsing.data.epub.Chapter
 import com.pedrolopes.ttsing.data.epub.EpubBook
 import com.pedrolopes.ttsing.data.epub.EpubParser
 import com.pedrolopes.ttsing.data.epub.TocEntry
+import com.pedrolopes.ttsing.data.news.ArticleImageStore
 import com.pedrolopes.ttsing.data.news.NewsRepository
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
 import com.pedrolopes.ttsing.tts.BookContentSource
@@ -46,6 +47,7 @@ class ReaderViewModel(
     private val bookId: String,
     private val repo: BookRepository,
     private val news: NewsRepository,
+    private val articleImages: ArticleImageStore,
     private val cardAudio: CardAudio,
     private val anki: AnkiExporter,
     private val settings: SettingsRepository,
@@ -164,8 +166,16 @@ class ReaderViewModel(
 
     fun previousChapter() = showChapter(_ui.value.chapterIndex - 1)
 
-    suspend fun imageBytes(zipPath: String): ByteArray? =
-        withContext(Dispatchers.IO) { parser?.readEntry(zipPath) }
+    /**
+     * Bytes for an image block. Book images come out of the EPUB zip; article images are
+     * absolute URLs, downloaded once and then served from disk.
+     */
+    suspend fun imageBytes(key: String): ByteArray? =
+        if (isArticle) {
+            articleImages.bytes(key)
+        } else {
+            withContext(Dispatchers.IO) { parser?.readEntry(key) }
+        }
 
     // ---- Anki cards ----
 
@@ -252,6 +262,7 @@ class ReaderViewModel(
                 bookId = bookId,
                 repo = app.books,
                 news = app.news,
+                articleImages = ArticleImageStore(app),
                 cardAudio = CardAudio(app),
                 anki = AnkiExporter(app, app.settings),
                 settings = app.settings,
