@@ -208,11 +208,18 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         engine.moveTo(position)
     }
 
-    fun voicesForCurrentBook() = engine.voicesFor(activeLocale())
+    /**
+     * Voices for an explicitly given language.
+     *
+     * The caller passes the language rather than this reading [activeLocale]: that field is a
+     * plain var the UI cannot observe, so a screen asking "what voices are there now?" raced
+     * the service updating it and could show the previous language's list indefinitely.
+     */
+    fun voicesFor(locale: Locale) = engine.voicesFor(locale)
 
     fun currentVoiceName(): String? = engine.currentVoiceName()
 
-    fun defaultVoiceName(): String? = engine.defaultVoiceName(activeLocale())
+    fun defaultVoiceNameFor(locale: Locale): String? = engine.defaultVoiceName(locale)
 
     fun availableLanguages() = engine.availableLanguages()
 
@@ -220,18 +227,20 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     fun activeLocale(): Locale = activeLocale ?: content?.locale ?: Locale.getDefault()
 
     /**
-     * Switches the book to another language: remembers the choice for this book, reloads the
-     * voice stored for that language, and keeps speaking if it already was.
+     * Applies the language the user chose. The choice itself is written to settings by the
+     * caller, which is what the UI reads back — this only reconfigures the running engine.
+     *
+     * Deliberately does *not* bail out when no book is loaded: the previous version returned
+     * early on a null bookId, so choosing a language before playback had ever started silently
+     * did nothing.
      */
     fun selectLanguage(languageTag: String) {
-        val bookId = _state.value.bookId ?: return
         lifecycleScope.launch {
             val locale = Locale.forLanguageTag(languageTag).takeIf { it.language.isNotEmpty() }
                 ?: return@launch
-            app.settings.setBookLanguage(bookId, languageTag)
             activeLocale = locale
             val available = engine.configureLanguage(locale, app.settings.settings.first().voiceFor(locale.language))
-            _state.value = _state.value.copy(languageAvailable = available)
+            _state.value = _state.value.copy(languageAvailable = available, error = null)
             if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
         }
     }

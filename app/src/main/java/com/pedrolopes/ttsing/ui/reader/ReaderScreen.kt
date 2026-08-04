@@ -249,10 +249,19 @@ fun ReaderScreen(
                     )
                 }
 
-                if (isThisBook && !playback.languageAvailable) {
-                    MissingVoiceBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
-                } else if (ui.isTruncated) {
-                    TruncatedArticleBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
+                val playbackError = playback.error.takeIf { isThisBook }
+                when {
+                    // An engine failure is the most urgent thing to say: without it, a voice
+                    // that cannot speak just looks like a reader that stopped working.
+                    playbackError != null -> EngineErrorBanner(
+                        message = playbackError,
+                        onOpenSettings = { showSettings = true },
+                        modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                    )
+                    isThisBook && !playback.languageAvailable ->
+                        MissingVoiceBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
+                    ui.isTruncated ->
+                        TruncatedArticleBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
                 }
             }
         }
@@ -276,20 +285,30 @@ fun ReaderScreen(
     }
 
     if (showSettings) {
-        // Re-read on every language change so the voice list follows the picker.
-        val activeLocale = remember(showSettings, settings.bookLanguages[bookId]) {
-            controller.activeLocale()
-        } ?: settings.localeFor(bookId, ui.languageTag?.let { Locale.forLanguageTag(it) } ?: Locale.getDefault())
+        // The language is whatever the user last chose for this book, falling back to what the
+        // book declares. Derived straight from settings — which is DataStore-backed and so
+        // recomposes on change — rather than asking the service, whose copy is a plain var the
+        // UI cannot observe. Reading that var through `remember` is what previously left the
+        // picker stuck on a language the user was trying to move away from.
+        val declaredLocale = ui.languageTag
+            ?.let { Locale.forLanguageTag(it) }
+            ?.takeIf { it.language.isNotEmpty() }
+        val activeLocale = settings.localeFor(bookId, declaredLocale ?: Locale.getDefault())
         val languageCode = activeLocale.language
         ReaderSettingsSheet(
             settings = settings,
-            voices = remember(showSettings, languageCode) { controller.voicesForCurrentBook() },
-            currentVoiceName = remember(showSettings, languageCode) { controller.currentVoiceName() },
-            defaultVoiceName = remember(showSettings, languageCode) { controller.defaultVoiceName() },
+            voices = remember(languageCode, connected) { controller.voicesFor(activeLocale) },
+            currentVoiceName = remember(languageCode, connected) { controller.currentVoiceName() },
+            defaultVoiceName = remember(languageCode, connected) { controller.defaultVoiceNameFor(activeLocale) },
             activeLocale = activeLocale,
             declaredLanguageTag = ui.languageTag,
-            availableLanguages = remember(showSettings) { controller.availableLanguages() },
-            onSelectLanguage = { locale -> controller.selectLanguage(locale.toLanguageTag()) },
+            availableLanguages = remember(connected) { controller.availableLanguages() },
+            onSelectLanguage = { locale ->
+                // Persist first: settings drive the UI, so the picker updates even if the
+                // service is not bound yet.
+                scope.launch { app.settings.setBookLanguage(bookId, locale.toLanguageTag()) }
+                controller.selectLanguage(locale.toLanguageTag())
+            },
             onInstallVoiceData = { openTtsDataInstaller(context) },
             onDismiss = { showSettings = false },
             onSpeechRate = { rate ->
@@ -526,6 +545,30 @@ private fun openTtsDataInstaller(context: android.content.Context) {
         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
     runCatching { context.startActivity(install) }
         .recoverCatching { context.startActivity(fallback) }
+}
+
+/**
+ * Shown when the speech engine itself failed. Tapping opens the reading settings, since the
+ * fix is almost always picking a different language or voice.
+ */
+@Composable
+private fun EngineErrorBanner(
+    message: String,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = RoundedCornerShape(8.dp),
+        modifier = modifier.fillMaxWidth().clickable(onClick = onOpenSettings),
+    ) {
+        Text(
+            "$message\nTap to open reading settings.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            modifier = Modifier.padding(12.dp),
+        )
+    }
 }
 
 /** Shown when the article's page couldn't be reached, so only the feed's teaser is available. */

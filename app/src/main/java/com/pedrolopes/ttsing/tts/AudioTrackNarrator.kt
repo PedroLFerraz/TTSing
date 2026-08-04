@@ -140,17 +140,33 @@ class AudioTrackNarrator(
             finishBook()
             return
         }
+        var consecutiveFailures = 0
         while (ref != null && coroutineIsActive()) {
             currentRef = ref
             val audio = synthesizer.synthesize(ref.text, utteranceIdFor(ref))
             if (!coroutineIsActive()) return
             if (audio == null) {
-                // Skip a sentence the engine refused rather than stalling the whole book.
+                // One refused sentence is skipped rather than stalling the whole book. A run of
+                // them means the voice itself cannot speak — a language whose data never
+                // downloaded, most often — and silently skipping every sentence looks exactly
+                // like "playback does nothing and the highlight is dead", with no way to tell
+                // why. Say so instead.
+                if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                    isSpeaking = false
+                    withMain {
+                        listener.onEngineError(
+                            "This voice can't speak the text. Its data may still need downloading — " +
+                                "try another language or voice.",
+                        )
+                    }
+                    return
+                }
                 ref = src.next(ref.position)
                 continue
             }
+            consecutiveFailures = 0
             val speaking = ref
-            val marks = audio.marks.ifEmpty { estimatedMarks(speaking, audio) }
+            val marks = audio.marks.takeIf { it.usableFor(audio) } ?: estimatedMarks(speaking, audio)
             withMain { listener.onSentenceStart(speaking) }
 
             var lastRange: IntRange? = null
@@ -173,6 +189,22 @@ class AudioTrackNarrator(
         marks: List<SynthesizedSentence.FrameMark>,
         frame: Int,
     ): SynthesizedSentence.FrameMark? = marks.lastOrNull { it.frame <= frame }
+
+    /**
+     * Whether engine-reported word timings can actually drive the highlight.
+     *
+     * `onRangeStart`'s `frame` argument is only as good as the engine supplying it, and they
+     * vary: some never advance it past zero, some report positions past the end of the audio
+     * they produced. Either way the highlight sticks on one word for the whole sentence, which
+     * looks like it is broken. Marks that fail this check are replaced by the estimate, which
+     * is always roughly right.
+     */
+    private fun List<SynthesizedSentence.FrameMark>.usableFor(audio: SynthesizedSentence): Boolean {
+        if (isEmpty()) return false
+        if (size == 1) return true
+        val last = maxOf { it.frame }
+        return last > 0 && last <= audio.frameCount
+    }
 
     /**
      * Word marks for engines that report none for `synthesizeToFile` (`onRangeStart` is
@@ -276,4 +308,9 @@ class AudioTrackNarrator(
 
     private fun utteranceIdFor(ref: SentenceRef): String =
         "u|${ref.position.chapterIndex}|${ref.position.blockIndex}|${ref.position.sentenceIndex}"
+
+    private companion object {
+        /** Enough to ride out one odd sentence, few enough to report a broken voice quickly. */
+        const val MAX_CONSECUTIVE_FAILURES = 3
+    }
 }
