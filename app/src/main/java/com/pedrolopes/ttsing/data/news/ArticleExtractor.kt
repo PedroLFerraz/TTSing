@@ -16,6 +16,13 @@ data class ExtractedArticle(
      * different language only has to redo sentence splitting.
      */
     val contentHtml: String,
+    /**
+     * The page's social-share image (`og:image`/`twitter:image`), for the article-list
+     * thumbnail. Far more reliable than the first photo in the body: almost every news page
+     * declares one in its `<head>`, and it survives even when the hero image sits outside the
+     * scored content root or gets stripped as page furniture.
+     */
+    val leadImageUrl: String? = null,
 ) {
     val textLength: Int get() = blocks.filterIsInstance<Block.Text>().sumOf { it.text.length }
 }
@@ -38,6 +45,9 @@ object ArticleExtractor {
     fun extract(html: String, baseUri: String = "", locale: Locale = Locale.ENGLISH): ExtractedArticle {
         val doc = Jsoup.parse(html, baseUri)
         val title = extractTitle(doc)
+        // Read the social-share image before stripping anything: it lives in <head>, so it
+        // survives junk removal, but reading it up front keeps it independent of body scoring.
+        val leadImage = extractLeadImage(doc)
         stripJunk(doc)
 
         val root = findContentRoot(doc)
@@ -50,6 +60,7 @@ object ArticleExtractor {
             title = title,
             blocks = blocks,
             contentHtml = root?.html().orEmpty(),
+            leadImageUrl = leadImage,
         )
     }
 
@@ -63,6 +74,31 @@ object ArticleExtractor {
         // Page titles usually carry the site name after a separator; keep the longer half.
         return doc.title().trimmed()?.split(" | ", " - ", " — ", " · ")?.maxByOrNull { it.length }?.trimmed()
     }
+
+    // ---- Lead image ----
+
+    /**
+     * The page's declared share image, resolved to an absolute URL. `absUrl` handles the
+     * common cases feeds get wrong on their own — protocol-relative `//cdn…` and site-relative
+     * `/media/…` — against the article's base URI. SVGs are skipped, since the reader's bitmap
+     * decoder can't render them.
+     */
+    private fun extractLeadImage(doc: Document): String? {
+        for (selector in LEAD_IMAGE_SELECTORS) {
+            val url = doc.selectFirst(selector)?.absUrl("content")?.trimmed() ?: continue
+            if (isDisplayable(url)) return url
+        }
+        return null
+    }
+
+    private val LEAD_IMAGE_SELECTORS = listOf(
+        "meta[property=og:image]",
+        "meta[property=og:image:url]",
+        "meta[name=og:image]",
+        "meta[name=twitter:image]",
+        "meta[name=twitter:image:src]",
+        "meta[itemprop=image]",
+    )
 
     // ---- Junk removal ----
 

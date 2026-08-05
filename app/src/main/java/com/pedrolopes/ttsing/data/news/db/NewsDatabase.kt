@@ -95,6 +95,23 @@ interface NewsDao {
     @Query("SELECT id FROM articles WHERE feedUrl = :feedUrl")
     suspend fun articleIds(feedUrl: String): List<String>
 
+    /**
+     * Newest stories in a feed whose page hasn't been fetched yet (`fetchedAt == 0`) — i.e.
+     * that still need their body and/or thumbnail. Drives the background prefetch, and crucially
+     * includes articles stored before the prefetch existed, not only ones from the latest
+     * refresh, which is what lets thumbnails appear for a feed already subscribed to.
+     *
+     * Keyed on `fetchedAt` rather than `contentHtml` so it converges even for a page that
+     * yields a usable thumbnail but too little body text to store: that page is still marked
+     * fetched and won't be retried every refresh. A genuinely failed fetch leaves `fetchedAt`
+     * at 0, so transient errors are retried next time.
+     */
+    @Query(
+        """SELECT id FROM articles WHERE feedUrl = :feedUrl AND fetchedAt = 0
+           ORDER BY publishedAt DESC LIMIT :limit""",
+    )
+    suspend fun articlesToPrefetch(feedUrl: String, limit: Int): List<String>
+
     @Query(
         """UPDATE articles SET blockIndex = :block, sentenceIndex = :sentence,
            lastOpenedAt = :openedAt, isRead = 1 WHERE id = :id""",

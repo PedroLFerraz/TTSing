@@ -68,8 +68,8 @@ class NewsRepository(
                 )
                 dao.upsertFeed(feed)
                 val fresh = storeItems(url, parsed.items)
-                prefetchBodies(fresh)
-                AddResult.Added(feed, fresh.size)
+                prefetchBodies(url)
+                AddResult.Added(feed, fresh)
             }
         }
     }
@@ -89,33 +89,36 @@ class NewsRepository(
     }
 
     suspend fun refresh(feedUrl: String): Int {
-        val response = HttpFetcher.get(feedUrl)
-        if (response !is HttpFetcher.Result.Success) return 0
-        val parsed = RssParser.parse(response.body) ?: return 0
-
-        dao.feed(feedUrl)?.let { existing ->
-            dao.upsertFeed(
-                existing.copy(
-                    title = parsed.title.ifEmpty { existing.title },
-                    siteLink = parsed.siteLink ?: existing.siteLink,
-                    language = parsed.language ?: existing.language,
-                    lastRefreshedAt = System.currentTimeMillis(),
-                ),
-            )
+        val fresh = when (val response = HttpFetcher.get(feedUrl)) {
+            is HttpFetcher.Result.Success -> RssParser.parse(response.body)?.let { parsed ->
+                dao.feed(feedUrl)?.let { existing ->
+                    dao.upsertFeed(
+                        existing.copy(
+                            title = parsed.title.ifEmpty { existing.title },
+                            siteLink = parsed.siteLink ?: existing.siteLink,
+                            language = parsed.language ?: existing.language,
+                            lastRefreshedAt = System.currentTimeMillis(),
+                        ),
+                    )
+                }
+                storeItems(feedUrl, parsed.items)
+            } ?: 0
+            is HttpFetcher.Result.Failure -> 0
         }
-        val fresh = storeItems(feedUrl, parsed.items)
-        prefetchBodies(fresh)
-        return fresh.size
+        // Fire regardless of the feed fetch: this also backfills stories stored earlier that
+        // still have no thumbnail, which don't depend on the latest feed content.
+        prefetchBodies(feedUrl)
+        return fresh
     }
 
-    /** Inserts stories not seen before; existing ones keep their text and reading position. */
-    private suspend fun storeItems(feedUrl: String, items: List<FeedItem>): List<String> {
+    /** Inserts stories not seen before, returning how many; existing ones keep their text and position. */
+    private suspend fun storeItems(feedUrl: String, items: List<FeedItem>): Int {
         val known = dao.articleIds(feedUrl).toSet()
         val fresh = items
             .map { it to articleId(feedUrl, it.guid) }
             .filter { (_, id) -> id !in known }
 
-        if (fresh.isEmpty()) return emptyList()
+        if (fresh.isEmpty()) return 0
 
         dao.upsertArticles(
             fresh.map { (item, id) ->
@@ -136,26 +139,26 @@ class NewsRepository(
                 )
             },
         )
-        return fresh.map { it.second }
+        return fresh.size
     }
 
     /**
-     * Fetches and caches each new story's full text and thumbnail in the background, so the
-     * article list shows a real photo without the user having to open every story first —
+     * Fetches and caches each unfetched story's full text and thumbnail in the background, so
+     * the article list shows a real photo without the user having to open every story first —
      * which was the only time this ever happened before, and looked like most stories simply
-     * had no image. Not awaited by [refresh]/[addFeed]: with many new stories this could take
-     * a while, and the point is for the list to fill in progressively (each `dao.upsertArticle`
-     * re-emits the Flow the screen observes) rather than hold the refresh spinner hostage.
+     * had no image. Works from [NewsDao.articlesToPrefetch] rather than only the just-added
+     * stories, so a feed the user subscribed to earlier also fills in.
      *
-     * Capped and sequential, one request at a time — this is a courtesy background pass, not
-     * the user explicitly asking to read something, so it shouldn't hammer a single site with
-     * concurrent requests or, on first subscribing to a feed with a long backlog, try to fetch
-     * all of it at once.
+     * Not awaited by [refresh]/[addFeed]: with many stories this could take a while, and the
+     * point is for the list to fill in progressively (each `dao.upsertArticle` re-emits the
+     * Flow the screen observes) rather than hold the refresh spinner hostage. Capped and
+     * sequential, one request at a time — a courtesy background pass, not the user asking to
+     * read something, so it must not hammer a single site with concurrent requests.
      */
-    private fun prefetchBodies(articleIds: List<String>) {
-        if (articleIds.isEmpty()) return
+    private fun prefetchBodies(feedUrl: String) {
         scope.launch {
-            for (id in articleIds.take(MAX_PREFETCH_PER_REFRESH)) {
+            val ids = dao.articlesToPrefetch(feedUrl, MAX_PREFETCH_PER_REFRESH)
+            for (id in ids) {
                 runCatching { prefetchOne(id) }
             }
         }
@@ -163,30 +166,41 @@ class NewsRepository(
 
     private suspend fun prefetchOne(articleId: String) {
         val article = dao.article(articleId) ?: return
-        // Already have the body (the feed inlined it) - nothing to fetch.
-        if (article.contentHtml != null) return
+        if (article.fetchedAt > 0L) return // already attempted
 
         val response = HttpFetcher.get(article.link)
+        // Leave fetchedAt at 0 on a failed fetch so a transient error is retried next refresh.
         if (response !is HttpFetcher.Result.Success) return
+
         // Locale doesn't matter here: only contentHtml and the lead image are kept. body()
         // re-extracts from this cached HTML in the real reading locale when the article is
         // actually opened, which is cheap since it no longer needs the network.
         val extracted = ArticleExtractor.extract(response.body, article.link)
-        if (extracted.textLength < MIN_FULL_TEXT || extracted.blocks.isEmpty()) return
+        val hasBody = extracted.textLength >= MIN_FULL_TEXT && extracted.blocks.isNotEmpty()
 
         dao.upsertArticle(
             article.copy(
-                contentHtml = extracted.contentHtml,
+                // Only keep a body substantial enough to read; a thin one leaves contentHtml
+                // null so opening the story still falls back to the feed summary. The
+                // thumbnail is saved either way — it doesn't depend on the body being good.
+                contentHtml = if (hasBody) extracted.contentHtml else article.contentHtml,
                 fetchedAt = System.currentTimeMillis(),
-                textLength = extracted.textLength,
-                title = extracted.title?.takeIf { it.isNotBlank() } ?: article.title,
+                textLength = if (hasBody) extracted.textLength else article.textLength,
+                title = if (hasBody) extracted.title?.takeIf { it.isNotBlank() } ?: article.title else article.title,
                 imageUrl = leadImageOf(article.imageUrl, extracted),
             ),
         )
     }
 
+    /**
+     * The best thumbnail for a story, in descending order of reliability: an image the feed
+     * itself named, then the article's own social-share image (`og:image`), then whatever
+     * photo the body happens to lead with.
+     */
     private fun leadImageOf(existing: String?, extracted: ExtractedArticle?): String? =
-        existing ?: extracted?.blocks?.filterIsInstance<Block.Image>()?.firstOrNull()?.zipPath
+        existing
+            ?: extracted?.leadImageUrl
+            ?: extracted?.blocks?.filterIsInstance<Block.Image>()?.firstOrNull()?.zipPath
 
     sealed interface ArticleBody {
         data class Ready(val blocks: List<Block>, val truncated: Boolean) : ArticleBody
