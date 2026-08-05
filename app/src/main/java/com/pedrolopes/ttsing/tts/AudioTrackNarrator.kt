@@ -22,9 +22,14 @@ import java.util.Locale
  * engine's own process, so Android would treat *that* app as the one playing and route
  * Bluetooth/headset media buttons there. Here the sound genuinely originates from this app.
  *
- * Word highlighting also gets better as a side effect: the engine reports each word's exact
- * audio frame via `onRangeStart`, and playback position is compared against those frames, so
- * the highlight is measured rather than estimated.
+ * Word highlighting is driven entirely by [NeuralWordTiming]'s character-proportional
+ * estimate, not by the engine's own `onRangeStart` callback. That callback is optional, and
+ * in practice inconsistent enough across engines and voices to be worse than not trusting it
+ * at all: an engine that never advances its reported frame, or reports one in the wrong
+ * unit, doesn't just desync the highlight a little — it can make it jump to the last word
+ * and sit there for the rest of the sentence. The estimate is instead built from data this
+ * class already controls (the audio's own measured duration and our own `AudioTrack`
+ * position), so its scale can never be wrong.
  */
 class AudioTrackNarrator(
     context: Context,
@@ -166,7 +171,7 @@ class AudioTrackNarrator(
             }
             consecutiveFailures = 0
             val speaking = ref
-            val marks = audio.marks.takeIf { it.usableFor(audio) } ?: estimatedMarks(speaking, audio)
+            val marks = estimatedMarks(speaking, audio)
             withMain { listener.onSentenceStart(speaking) }
 
             var lastRange: IntRange? = null
@@ -191,26 +196,9 @@ class AudioTrackNarrator(
     ): SynthesizedSentence.FrameMark? = marks.lastOrNull { it.frame <= frame }
 
     /**
-     * Whether engine-reported word timings can actually drive the highlight.
-     *
-     * `onRangeStart`'s `frame` argument is only as good as the engine supplying it, and they
-     * vary: some never advance it past zero, some report positions past the end of the audio
-     * they produced. Either way the highlight sticks on one word for the whole sentence, which
-     * looks like it is broken. Marks that fail this check are replaced by the estimate, which
-     * is always roughly right.
-     */
-    private fun List<SynthesizedSentence.FrameMark>.usableFor(audio: SynthesizedSentence): Boolean {
-        if (isEmpty()) return false
-        if (size == 1) return true
-        val last = maxOf { it.frame }
-        return last > 0 && last <= audio.frameCount
-    }
-
-    /**
-     * Word marks for engines that report none for `synthesizeToFile` (`onRangeStart` is
-     * optional - the platform only calls it if the engine supplies timing). Falls back to
-     * spreading the measured audio duration across the words by character position, so the
-     * highlight still tracks instead of disappearing.
+     * Spreads the sentence's measured audio duration across its words by character position.
+     * See the class doc for why this is used unconditionally rather than trusting the
+     * engine's own `onRangeStart` timing.
      */
     private fun estimatedMarks(
         ref: SentenceRef,

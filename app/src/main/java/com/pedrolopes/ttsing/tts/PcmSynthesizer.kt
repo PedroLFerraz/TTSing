@@ -52,8 +52,10 @@ data class SynthesizedSentence(
  * `onAudioAvailable` and play it ourselves (see [AudioTrackNarrator]), making this app the
  * one producing sound.
  *
- * `onRangeStart` still fires on this path, and its `frame` argument is exact, so word
- * highlighting becomes frame-accurate rather than estimated.
+ * `onRangeStart` marks are still collected into [SynthesizedSentence.marks] where the engine
+ * supplies them, but nothing in this app currently trusts them for the highlight — see
+ * [AudioTrackNarrator]'s class doc for why. They're kept around rather than dropped in case a
+ * future engine-specific refinement wants them.
  */
 class PcmSynthesizer(private val tts: TextToSpeech, private val cacheDir: File) {
 
