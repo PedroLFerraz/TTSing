@@ -3,6 +3,7 @@ package com.pedrolopes.ttsing.ui.news
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pedrolopes.ttsing.TTSingApp
+import com.pedrolopes.ttsing.data.news.ArticleImageStore
 import com.pedrolopes.ttsing.data.news.NewsRepository
 import com.pedrolopes.ttsing.data.news.db.ArticleEntity
 import com.pedrolopes.ttsing.data.news.db.FeedEntity
@@ -60,14 +61,23 @@ class FeedsViewModel(private val news: NewsRepository) : ViewModel() {
     }
 }
 
+/**
+ * Backs both the "News" button's direct, all-feeds view and a single feed's article list.
+ * [feedUrl] is null for the former, so the two share one screen and one code path rather than
+ * maintaining a near-duplicate for each.
+ */
 class ArticlesViewModel(
-    private val feedUrl: String,
+    private val feedUrl: String?,
     private val news: NewsRepository,
+    private val images: ArticleImageStore,
 ) : ViewModel() {
 
     val articles: StateFlow<List<ArticleEntity>> =
-        news.observeArticles(feedUrl)
+        (if (feedUrl != null) news.observeArticles(feedUrl) else news.observeLatest())
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val feeds: StateFlow<List<FeedEntity>> =
+        news.observeFeeds().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
@@ -76,7 +86,9 @@ class ArticlesViewModel(
     val feedTitle: StateFlow<String> = _feedTitle.asStateFlow()
 
     init {
-        viewModelScope.launch { _feedTitle.value = news.feed(feedUrl)?.title.orEmpty() }
+        if (feedUrl != null) {
+            viewModelScope.launch { _feedTitle.value = news.feed(feedUrl)?.title.orEmpty() }
+        }
         refresh()
     }
 
@@ -84,13 +96,18 @@ class ArticlesViewModel(
         if (_refreshing.value) return
         _refreshing.value = true
         viewModelScope.launch {
-            news.refresh(feedUrl)
+            if (feedUrl != null) news.refresh(feedUrl) else news.refreshAll()
             _refreshing.value = false
         }
     }
 
+    /** Article thumbnails, downloaded once and cached — the same store the reader uses. */
+    suspend fun imageBytes(url: String): ByteArray? = images.bytes(url)
+
     companion object {
-        fun create(feedUrl: String): ArticlesViewModel =
-            ArticlesViewModel(feedUrl, TTSingApp.instance.news)
+        fun create(feedUrl: String?): ArticlesViewModel {
+            val app = TTSingApp.instance
+            return ArticlesViewModel(feedUrl, app.news, ArticleImageStore(app))
+        }
     }
 }

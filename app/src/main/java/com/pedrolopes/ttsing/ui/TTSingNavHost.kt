@@ -16,6 +16,9 @@ object Routes {
     const val LIBRARY = "library"
     const val READER = "reader"
     const val FEEDS = "feeds"
+    /** All feeds' stories together — where the library's News button goes directly. */
+    const val NEWS = "news"
+    /** One feed's own stories, reached from "Manage feeds". */
     const val ARTICLES = "articles"
     const val ARG_BOOK_ID = "bookId"
     const val ARG_FEED_URL = "feedUrl"
@@ -36,7 +39,15 @@ fun TTSingNavHost(
         composable(Routes.LIBRARY) {
             LibraryScreen(
                 onOpenBook = { bookId -> navController.navigate(Routes.reader(bookId)) },
-                onOpenNews = { navController.navigate(Routes.FEEDS) },
+                onOpenNews = { navController.navigate(Routes.NEWS) },
+            )
+        }
+        composable(Routes.NEWS) {
+            ArticlesScreen(
+                feedUrl = null,
+                onBack = { navController.popBackStack() },
+                onOpenArticle = { articleId -> navController.navigate(Routes.reader(articleId)) },
+                onManageFeeds = { navController.navigate(Routes.FEEDS) },
             )
         }
         composable(Routes.FEEDS) {
@@ -52,6 +63,7 @@ fun TTSingNavHost(
                 feedUrl = feedUrl,
                 onBack = { navController.popBackStack() },
                 onOpenArticle = { articleId -> navController.navigate(Routes.reader(articleId)) },
+                onManageFeeds = { navController.navigate(Routes.FEEDS) },
             )
         }
         composable("${Routes.READER}/{${Routes.ARG_BOOK_ID}}") { entry ->

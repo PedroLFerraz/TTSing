@@ -23,7 +23,9 @@ class TTSingApp : Application() {
      * caches the books folder, whereas feed subscriptions are user data that must survive.
      */
     val newsDatabase: NewsDatabase by lazy {
-        Room.databaseBuilder(this, NewsDatabase::class.java, "ttsing-news.db").build()
+        Room.databaseBuilder(this, NewsDatabase::class.java, "ttsing-news.db")
+            .addMigrations(com.pedrolopes.ttsing.data.news.db.MIGRATION_1_2)
+            .build()
     }
 
     val settings: SettingsRepository by lazy { SettingsRepository(this) }

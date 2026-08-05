@@ -1,6 +1,7 @@
 package com.pedrolopes.ttsing.ui.news
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,10 +11,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -21,39 +25,50 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pedrolopes.ttsing.data.news.db.ArticleEntity
+import com.pedrolopes.ttsing.ui.common.LocalImage
 import com.pedrolopes.ttsing.ui.common.simpleFactory
 import java.util.concurrent.TimeUnit
 
+/**
+ * The article list: either every story across every subscribed feed ([feedUrl] null — what
+ * the library's News button opens directly onto), or one feed's own stories (reached from
+ * "Manage feeds"). Sharing one screen keeps the row design and thumbnail handling in one place.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ArticlesScreen(
-    feedUrl: String,
+    feedUrl: String?,
     onBack: () -> Unit,
     onOpenArticle: (String) -> Unit,
+    onManageFeeds: () -> Unit,
     viewModel: ArticlesViewModel = viewModel(
         key = feedUrl,
         factory = simpleFactory { ArticlesViewModel.create(feedUrl) },
     ),
 ) {
     val articles by viewModel.articles.collectAsStateWithLifecycle()
+    val feeds by viewModel.feeds.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val feedTitle by viewModel.feedTitle.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(feedTitle.ifEmpty { "Stories" }, maxLines = 1) },
+                title = { Text(if (feedUrl != null) feedTitle.ifEmpty { "Stories" } else "News", maxLines = 1) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -70,22 +85,33 @@ fun ArticlesScreen(
                             Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
                         }
                     }
+                    // Only the all-feeds view needs a way to subscriptions; a single feed's
+                    // list is itself reached from there.
+                    if (feedUrl == null) {
+                        IconButton(onClick = onManageFeeds) {
+                            Icon(Icons.Filled.RssFeed, contentDescription = "Manage feeds")
+                        }
+                    }
                 },
             )
         },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (articles.isEmpty() && !refreshing) {
-                Text(
+            when {
+                feedUrl == null && feeds.isEmpty() -> NoFeedsYet(onManageFeeds)
+                articles.isEmpty() && !refreshing -> Text(
                     "No stories in this feed yet.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.align(Alignment.Center).padding(32.dp),
                 )
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
                     items(articles, key = { it.id }) { article ->
-                        ArticleRow(article) { onOpenArticle(article.id) }
+                        ArticleRow(
+                            article = article,
+                            loadImage = viewModel::imageBytes,
+                            onClick = { onOpenArticle(article.id) },
+                        )
                         HorizontalDivider()
                     }
                 }
@@ -95,7 +121,41 @@ fun ArticlesScreen(
 }
 
 @Composable
-private fun ArticleRow(article: ArticleEntity, onClick: () -> Unit) {
+private fun NoFeedsYet(onManageFeeds: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            Icons.Filled.RssFeed,
+            contentDescription = null,
+            modifier = Modifier.size(64.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            "No feeds yet",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            "Add an RSS or Atom feed and its stories will be read aloud like a book — " +
+                "full text, not just the summary.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
+        )
+        Button(onClick = onManageFeeds) { Text("Add a feed") }
+    }
+}
+
+@Composable
+private fun ArticleRow(
+    article: ArticleEntity,
+    loadImage: suspend (String) -> ByteArray?,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(16.dp),
         verticalAlignment = Alignment.Top,
@@ -116,25 +176,41 @@ private fun ArticleRow(article: ArticleEntity, onClick: () -> Unit) {
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
-            Text(
-                text = buildString {
-                    append(relativeTime(article.publishedAt))
-                    // Once fetched we know the real length, which is a useful "is this a
-                    // quick read or a long piece" signal before pressing play.
-                    if (article.textLength > 0) append("  ·  ${article.textLength / 1000 + 1} min read")
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                Text(
+                    text = buildString {
+                        append(relativeTime(article.publishedAt))
+                        // Once fetched we know the real length, which is a useful "is this a
+                        // quick read or a long piece" signal before pressing play.
+                        if (article.textLength > 0) append("  ·  ${article.textLength / 1000 + 1} min read")
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (article.isRead) {
+                    Icon(
+                        Icons.Filled.CheckCircle,
+                        contentDescription = "Already read",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp).padding(start = 6.dp),
+                    )
+                }
+            }
         }
-        if (article.isRead) {
-            Icon(
-                Icons.Filled.CheckCircle,
-                contentDescription = "Already read",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp).padding(start = 8.dp),
-            )
+        article.imageUrl?.let { url ->
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.size(width = 96.dp, height = 72.dp).padding(start = 12.dp).clip(RoundedCornerShape(8.dp)),
+            ) {
+                LocalImage(
+                    key = url,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    loadBytes = { loadImage(url) },
+                )
+            }
         }
     }
 }

@@ -108,6 +108,8 @@ class NewsRepository(private val dao: NewsDao) {
                 // Some feeds ship the whole body inline, which saves fetching the page at all.
                 val inline = item.contentHtml?.takeIf { it.isNotBlank() }
                 val extracted = inline?.let { ArticleExtractor.extract(it, item.link) }
+                val leadImage = item.imageUrl
+                    ?: extracted?.blocks?.filterIsInstance<Block.Image>()?.firstOrNull()?.zipPath
                 ArticleEntity(
                     id = id,
                     feedUrl = feedUrl,
@@ -115,6 +117,7 @@ class NewsRepository(private val dao: NewsDao) {
                     link = item.link,
                     summary = item.summary?.let { stripHtml(it) },
                     contentHtml = extracted?.contentHtml?.takeIf { extracted.textLength >= MIN_FULL_TEXT },
+                    imageUrl = leadImage,
                     publishedAt = item.publishedAt,
                     fetchedAt = if (extracted != null) System.currentTimeMillis() else 0,
                     textLength = extracted?.textLength ?: 0,
@@ -148,6 +151,10 @@ class NewsRepository(private val dao: NewsDao) {
             is HttpFetcher.Result.Success -> {
                 val extracted = ArticleExtractor.extract(response.body, article.link, locale)
                 if (extracted.textLength >= MIN_FULL_TEXT && extracted.blocks.isNotEmpty()) {
+                    // Feeds without media metadata get a thumbnail the first time the story
+                    // is actually opened, from whatever photo the article itself leads with.
+                    val leadImage = article.imageUrl
+                        ?: extracted.blocks.filterIsInstance<Block.Image>().firstOrNull()?.zipPath
                     dao.upsertArticle(
                         article.copy(
                             contentHtml = extracted.contentHtml,
@@ -155,6 +162,7 @@ class NewsRepository(private val dao: NewsDao) {
                             textLength = extracted.textLength,
                             // Publishers often give the headline better here than in the feed.
                             title = extracted.title?.takeIf { it.isNotBlank() } ?: article.title,
+                            imageUrl = leadImage,
                         ),
                     )
                     ArticleBody.Ready(extracted.blocks, truncated = false)

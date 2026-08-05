@@ -22,6 +22,12 @@ data class FeedItem(
     val publishedAt: Long,
     /** Stable identity for de-duplication across refreshes. */
     val guid: String,
+    /**
+     * A lead image for the story, if the feed offers one — `media:thumbnail`, `media:content`,
+     * an image `enclosure`, or an `<img>` embedded in the summary/full content. Lets the
+     * article list show a thumbnail before the page has ever been fetched.
+     */
+    val imageUrl: String? = null,
 )
 
 data class ParsedFeed(
@@ -61,14 +67,17 @@ object RssParser {
                 ?: item.getElementsByTag("guid").firstOrNull()?.text()?.takeIf { it.startsWith("http") }
                 ?: return@mapNotNull null
             val title = item.childText("title") ?: link
+            val summary = item.childText("description")
+            // content:encoded is the convention for the full body in RSS.
+            val contentHtml = item.childText("content:encoded")
             FeedItem(
                 title = title,
                 link = link,
-                summary = item.childText("description"),
-                // content:encoded is the convention for the full body in RSS.
-                contentHtml = item.childText("content:encoded"),
+                summary = summary,
+                contentHtml = contentHtml,
                 publishedAt = parseDate(item.childText("pubDate") ?: item.childText("dc:date")),
                 guid = item.childText("guid") ?: link,
+                imageUrl = imageUrlOf(item, link, summary, contentHtml),
             )
         }
         return ParsedFeed(
@@ -84,13 +93,16 @@ object RssParser {
     private fun parseAtom(feed: Element): ParsedFeed {
         val items = feed.getElementsByTag("entry").mapNotNull { entry ->
             val link = entry.atomLink() ?: return@mapNotNull null
+            val summary = entry.childText("summary")
+            val contentHtml = entry.childText("content")
             FeedItem(
                 title = entry.childText("title") ?: link,
                 link = link,
-                summary = entry.childText("summary"),
-                contentHtml = entry.childText("content"),
+                summary = summary,
+                contentHtml = contentHtml,
                 publishedAt = parseDate(entry.childText("published") ?: entry.childText("updated")),
                 guid = entry.childText("id") ?: link,
+                imageUrl = imageUrlOf(entry, link, summary, contentHtml),
             )
         }
         return ParsedFeed(
@@ -100,6 +112,53 @@ object RssParser {
             items = items,
         )
     }
+
+    /**
+     * A lead image for [entryOrItem], checked in the order feeds actually use them: explicit
+     * media metadata first (reliable, deliberately chosen by the publisher), then an image
+     * physically embedded in the story's own HTML as a last resort.
+     */
+    private fun imageUrlOf(entryOrItem: Element, link: String, summary: String?, contentHtml: String?): String? {
+        entryOrItem.getElementsByTag("media:thumbnail").firstOrNull()
+            ?.attr("url")?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        entryOrItem.getElementsByTag("media:content")
+            .firstOrNull { it.attr("medium").equals("image", ignoreCase = true) || isImageUrl(it.attr("url")) }
+            ?.attr("url")?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        // RSS: <enclosure url="..." type="image/...">. Atom: <link rel="enclosure" href="..." type="image/...">.
+        entryOrItem.getElementsByTag("enclosure")
+            .firstOrNull { it.attr("type").startsWith("image/", ignoreCase = true) }
+            ?.attr("url")?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
+        entryOrItem.children()
+            .firstOrNull {
+                it.normalName() == "link" &&
+                    it.attr("rel").equals("enclosure", ignoreCase = true) &&
+                    it.attr("type").startsWith("image/", ignoreCase = true)
+            }
+            ?.attr("href")?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        return firstImageIn(contentHtml, link) ?: firstImageIn(summary, link)
+    }
+
+    private fun isImageUrl(url: String): Boolean {
+        val path = url.substringBefore('?').substringBefore('#').lowercase(Locale.US)
+        return IMAGE_EXTENSIONS.any { path.endsWith(it) }
+    }
+
+    /** The first `<img>`'s address in a fragment of story HTML, resolved against [baseUri]. */
+    private fun firstImageIn(html: String?, baseUri: String): String? {
+        if (html.isNullOrBlank()) return null
+        return runCatching {
+            Jsoup.parse(html, baseUri).selectFirst("img")?.absUrl("src")?.takeIf { it.isNotEmpty() }
+        }.getOrNull()
+    }
+
+    private val IMAGE_EXTENSIONS = listOf(".jpg", ".jpeg", ".png", ".gif", ".webp")
 
     /** Atom links live in an attribute; prefer the alternate (human-readable) one. */
     private fun Element.atomLink(): String? {

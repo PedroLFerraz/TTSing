@@ -74,7 +74,7 @@ fun LibraryScreen(
                 title = { Text("TTSing") },
                 actions = {
                     IconButton(onClick = onOpenNews) {
-                        Icon(Icons.Outlined.RssFeed, contentDescription = "News feeds")
+                        Icon(Icons.Outlined.RssFeed, contentDescription = "News")
                     }
                     IconButton(onClick = { folderPicker.launch(null) }) {
                         Icon(Icons.Outlined.FolderOpen, contentDescription = "Choose books folder")

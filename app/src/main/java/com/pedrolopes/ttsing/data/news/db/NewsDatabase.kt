@@ -7,6 +7,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
+import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.room.migration.Migration
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -37,6 +39,12 @@ data class ArticleEntity(
     val summary: String?,
     /** Cleaned article body; null until the full text has been fetched. */
     val contentHtml: String? = null,
+    /**
+     * A thumbnail for the article list. Filled from the feed's own media metadata when it
+     * offers one; otherwise backfilled from the first photo in the article once its full
+     * text has been fetched.
+     */
+    val imageUrl: String? = null,
     val publishedAt: Long = 0,
     val fetchedAt: Long = 0,
     /** Characters of prose, for the reading-time estimate and to spot failed extractions. */
@@ -94,13 +102,20 @@ interface NewsDao {
     suspend fun updatePosition(id: String, block: Int, sentence: Int, openedAt: Long)
 }
 
+/** Adds the article thumbnail column; existing feeds and reading positions are untouched. */
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE articles ADD COLUMN imageUrl TEXT")
+    }
+}
+
 /**
  * Kept separate from the books database on purpose. That one is
  * `fallbackToDestructiveMigration` because it is a rebuildable cache of a folder of EPUBs;
  * feed subscriptions are user-created and cannot be rebuilt, so they need a database that
  * forces real migrations instead of quietly dropping everything on a schema bump.
  */
-@Database(entities = [FeedEntity::class, ArticleEntity::class], version = 1, exportSchema = false)
+@Database(entities = [FeedEntity::class, ArticleEntity::class], version = 2, exportSchema = false)
 abstract class NewsDatabase : RoomDatabase() {
     abstract fun newsDao(): NewsDao
 }

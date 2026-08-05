@@ -39,14 +39,18 @@ background playback and media-notification controls.
   open on a blank cover page.
 - **Tap to start** — tap any paragraph to begin reading from there (from the sentence you
   actually touched, not the top of the page).
-- **News feeds** — subscribe to any RSS or Atom feed and read its stories the same way you
-  read a book. Articles are fetched and stripped down to the actual text (navigation, cookie
-  banners, related-story rails and newsletter prompts are scored out), so the **whole** piece
-  is read aloud rather than the truncated summary the feed ships. Feeds that inline their
-  full text are used directly, and if a page can't be reached the reader falls back to the
-  summary and says so. Photos and their captions are kept, downloaded once and cached on
-  disk; lazy-loaded sources (`data-src`, `srcset`) are resolved, and tracking pixels, SVG
-  icons and placeholder data URIs are filtered out.
+- **News feeds** — the RSS icon in the library opens straight onto the latest stories across
+  every subscribed feed (not a feed picker first); "Manage feeds" from there is where you add
+  or remove subscriptions. Reads a story the same way as a book. Articles are fetched and
+  stripped down to the actual text (navigation, cookie banners, related-story rails and
+  newsletter prompts are scored out), so the **whole** piece is read aloud rather than the
+  truncated summary the feed ships. Feeds that inline their full text are used directly, and
+  if a page can't be reached the reader falls back to the summary and says so. Photos and
+  their captions are kept, downloaded once and cached on disk; lazy-loaded sources (`data-src`,
+  `srcset`) are resolved, and tracking pixels, SVG icons and placeholder data URIs are filtered
+  out. The article list itself shows a thumbnail per story — pulled from the feed's own media
+  metadata (`media:thumbnail`, an image `enclosure`) where it offers one, or backfilled from
+  the article's own lead photo the first time it's opened.
 - **Anki flashcards** — long-press a sentence, tap the word you didn't know, type what it
   means, and the card goes straight into AnkiDroid. The front is the sentence with the word
   in bold plus the sentence spoken by the book's own voice; the back is your definition.
