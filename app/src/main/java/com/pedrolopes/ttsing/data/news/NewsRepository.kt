@@ -5,13 +5,24 @@ import com.pedrolopes.ttsing.data.epub.SentenceSplitter
 import com.pedrolopes.ttsing.data.news.db.ArticleEntity
 import com.pedrolopes.ttsing.data.news.db.FeedEntity
 import com.pedrolopes.ttsing.data.news.db.NewsDao
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.security.MessageDigest
 import java.util.Locale
 
-class NewsRepository(private val dao: NewsDao) {
+/**
+ * [scope] is used only for the background prefetch in [refresh]/[addFeed]: firing full-text
+ * and thumbnail fetches that outlive whichever screen triggered them, so the article list
+ * keeps filling in even after the user has moved on. Every other method here is a plain
+ * suspend function that runs in the caller's own scope, same as before.
+ */
+class NewsRepository(
+    private val dao: NewsDao,
+    private val scope: CoroutineScope,
+) {
 
     fun observeFeeds(): Flow<List<FeedEntity>> = dao.observeFeeds()
 
@@ -56,8 +67,9 @@ class NewsRepository(private val dao: NewsDao) {
                     addedAt = now,
                 )
                 dao.upsertFeed(feed)
-                val stored = storeItems(url, parsed.items)
-                AddResult.Added(feed, stored)
+                val fresh = storeItems(url, parsed.items)
+                prefetchBodies(fresh)
+                AddResult.Added(feed, fresh.size)
             }
         }
     }
@@ -91,25 +103,25 @@ class NewsRepository(private val dao: NewsDao) {
                 ),
             )
         }
-        return storeItems(feedUrl, parsed.items)
+        val fresh = storeItems(feedUrl, parsed.items)
+        prefetchBodies(fresh)
+        return fresh.size
     }
 
     /** Inserts stories not seen before; existing ones keep their text and reading position. */
-    private suspend fun storeItems(feedUrl: String, items: List<FeedItem>): Int {
+    private suspend fun storeItems(feedUrl: String, items: List<FeedItem>): List<String> {
         val known = dao.articleIds(feedUrl).toSet()
         val fresh = items
             .map { it to articleId(feedUrl, it.guid) }
             .filter { (_, id) -> id !in known }
 
-        if (fresh.isEmpty()) return 0
+        if (fresh.isEmpty()) return emptyList()
 
         dao.upsertArticles(
             fresh.map { (item, id) ->
                 // Some feeds ship the whole body inline, which saves fetching the page at all.
                 val inline = item.contentHtml?.takeIf { it.isNotBlank() }
                 val extracted = inline?.let { ArticleExtractor.extract(it, item.link) }
-                val leadImage = item.imageUrl
-                    ?: extracted?.blocks?.filterIsInstance<Block.Image>()?.firstOrNull()?.zipPath
                 ArticleEntity(
                     id = id,
                     feedUrl = feedUrl,
@@ -117,15 +129,64 @@ class NewsRepository(private val dao: NewsDao) {
                     link = item.link,
                     summary = item.summary?.let { stripHtml(it) },
                     contentHtml = extracted?.contentHtml?.takeIf { extracted.textLength >= MIN_FULL_TEXT },
-                    imageUrl = leadImage,
+                    imageUrl = leadImageOf(item.imageUrl, extracted),
                     publishedAt = item.publishedAt,
                     fetchedAt = if (extracted != null) System.currentTimeMillis() else 0,
                     textLength = extracted?.textLength ?: 0,
                 )
             },
         )
-        return fresh.size
+        return fresh.map { it.second }
     }
+
+    /**
+     * Fetches and caches each new story's full text and thumbnail in the background, so the
+     * article list shows a real photo without the user having to open every story first —
+     * which was the only time this ever happened before, and looked like most stories simply
+     * had no image. Not awaited by [refresh]/[addFeed]: with many new stories this could take
+     * a while, and the point is for the list to fill in progressively (each `dao.upsertArticle`
+     * re-emits the Flow the screen observes) rather than hold the refresh spinner hostage.
+     *
+     * Capped and sequential, one request at a time — this is a courtesy background pass, not
+     * the user explicitly asking to read something, so it shouldn't hammer a single site with
+     * concurrent requests or, on first subscribing to a feed with a long backlog, try to fetch
+     * all of it at once.
+     */
+    private fun prefetchBodies(articleIds: List<String>) {
+        if (articleIds.isEmpty()) return
+        scope.launch {
+            for (id in articleIds.take(MAX_PREFETCH_PER_REFRESH)) {
+                runCatching { prefetchOne(id) }
+            }
+        }
+    }
+
+    private suspend fun prefetchOne(articleId: String) {
+        val article = dao.article(articleId) ?: return
+        // Already have the body (the feed inlined it) - nothing to fetch.
+        if (article.contentHtml != null) return
+
+        val response = HttpFetcher.get(article.link)
+        if (response !is HttpFetcher.Result.Success) return
+        // Locale doesn't matter here: only contentHtml and the lead image are kept. body()
+        // re-extracts from this cached HTML in the real reading locale when the article is
+        // actually opened, which is cheap since it no longer needs the network.
+        val extracted = ArticleExtractor.extract(response.body, article.link)
+        if (extracted.textLength < MIN_FULL_TEXT || extracted.blocks.isEmpty()) return
+
+        dao.upsertArticle(
+            article.copy(
+                contentHtml = extracted.contentHtml,
+                fetchedAt = System.currentTimeMillis(),
+                textLength = extracted.textLength,
+                title = extracted.title?.takeIf { it.isNotBlank() } ?: article.title,
+                imageUrl = leadImageOf(article.imageUrl, extracted),
+            ),
+        )
+    }
+
+    private fun leadImageOf(existing: String?, extracted: ExtractedArticle?): String? =
+        existing ?: extracted?.blocks?.filterIsInstance<Block.Image>()?.firstOrNull()?.zipPath
 
     sealed interface ArticleBody {
         data class Ready(val blocks: List<Block>, val truncated: Boolean) : ArticleBody
@@ -151,10 +212,9 @@ class NewsRepository(private val dao: NewsDao) {
             is HttpFetcher.Result.Success -> {
                 val extracted = ArticleExtractor.extract(response.body, article.link, locale)
                 if (extracted.textLength >= MIN_FULL_TEXT && extracted.blocks.isNotEmpty()) {
-                    // Feeds without media metadata get a thumbnail the first time the story
-                    // is actually opened, from whatever photo the article itself leads with.
-                    val leadImage = article.imageUrl
-                        ?: extracted.blocks.filterIsInstance<Block.Image>().firstOrNull()?.zipPath
+                    // Belt and braces: the background prefetch in refresh()/addFeed() usually
+                    // gets here first, but an article opened before its turn came up (or one
+                    // whose feed still had no thumbnail metadata) is backfilled right here too.
                     dao.upsertArticle(
                         article.copy(
                             contentHtml = extracted.contentHtml,
@@ -162,7 +222,7 @@ class NewsRepository(private val dao: NewsDao) {
                             textLength = extracted.textLength,
                             // Publishers often give the headline better here than in the feed.
                             title = extracted.title?.takeIf { it.isNotBlank() } ?: article.title,
-                            imageUrl = leadImage,
+                            imageUrl = leadImageOf(article.imageUrl, extracted),
                         ),
                     )
                     ArticleBody.Ready(extracted.blocks, truncated = false)
@@ -193,6 +253,13 @@ class NewsRepository(private val dao: NewsDao) {
     companion object {
         /** Below this the "article" is a paywall stub or a nav page, not the story. */
         const val MIN_FULL_TEXT = 400
+
+        /**
+         * Ceiling on how many new stories get their body/thumbnail prefetched per refresh.
+         * Protects against a first-ever subscribe to a feed with a long backlog turning into
+         * dozens of immediate page fetches; the rest still get fetched normally on open.
+         */
+        const val MAX_PREFETCH_PER_REFRESH = 20
 
         /** Ids are stable across refreshes so reading positions survive. */
         fun articleId(feedUrl: String, guid: String): String = ARTICLE_PREFIX + sha1("$feedUrl|$guid")

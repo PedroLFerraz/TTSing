@@ -7,6 +7,9 @@ import com.pedrolopes.ttsing.data.db.AppDatabase
 import com.pedrolopes.ttsing.data.news.NewsRepository
 import com.pedrolopes.ttsing.data.news.db.NewsDatabase
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 class TTSingApp : Application() {
 
@@ -32,7 +35,15 @@ class TTSingApp : Application() {
 
     val books: BookRepository by lazy { BookRepository(this, database.bookDao(), settings) }
 
-    val news: NewsRepository by lazy { NewsRepository(newsDatabase.newsDao()) }
+    /**
+     * Outlives any single screen, for [NewsRepository]'s background thumbnail/full-text
+     * prefetch: that work should keep running (and its results still land in Room, updating
+     * whichever screen is open via Flow) even if the user has already navigated away from
+     * the article list that triggered it.
+     */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    val news: NewsRepository by lazy { NewsRepository(newsDatabase.newsDao(), appScope) }
 
     override fun onCreate() {
         super.onCreate()

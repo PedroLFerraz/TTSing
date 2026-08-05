@@ -41,6 +41,8 @@ data class ReaderUiState(
     val isSavingCard: Boolean = false,
     /** Article only: the full page couldn't be fetched, so this is just the feed's teaser. */
     val isTruncated: Boolean = false,
+    /** Article only: its address on the web, so the reader can offer to open it there. */
+    val articleLink: String? = null,
 )
 
 class ReaderViewModel(
@@ -129,6 +131,7 @@ class ReaderViewModel(
                         isLoading = false,
                         error = null,
                         isTruncated = body.truncated,
+                        articleLink = article.link,
                         chapterCharCounts = listOf(
                             body.blocks.filterIsInstance<Block.Text>().sumOf { it.text.length },
                         ),

@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowLeft
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowRight
 import androidx.compose.material.icons.filled.Pause
@@ -185,6 +186,11 @@ fun ReaderScreen(
                         }
                     },
                     actions = {
+                        ui.articleLink?.let { link ->
+                            IconButton(onClick = { openInBrowser(context, link) }) {
+                                Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "Open original article")
+                            }
+                        }
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Table of contents")
                         }
@@ -531,6 +537,16 @@ private fun EndOfChapterPage(palette: ReaderPalette) {
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
+    }
+}
+
+/** Opens an article's source page in whatever browser the device has. */
+private fun openInBrowser(context: android.content.Context, url: String) {
+    runCatching {
+        context.startActivity(
+            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
     }
 }
 
