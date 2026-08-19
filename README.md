@@ -5,19 +5,31 @@ text-to-speech, highlighting the current sentence and word karaoke-style and
 auto-scrolling to follow along. Built for Portuguese and English books, with
 background playback and media-notification controls.
 
+![TTSing: the library, the reader mid-sentence, the reading settings sheet, and the news list](docs/screenshots/showcase.png)
+
+## Look
+
+Black surfaces, and one yellow — `#FFD400` — reserved for whatever is live: the sentence
+being spoken, the word inside it, how far through a book you are, unread stories, and the
+play button. Nothing else is allowed to use it. Metadata is uppercase JetBrains Mono, the
+interface is Space Grotesk, and the page itself is Source Serif 4; all three are bundled as
+font resources, so a reader with no network still looks right. The screenshots above are the
+app running, not mockups.
+
 ## Features
 
 - **Library** — pick any folder of `.epub` files (Storage Access Framework); covers,
   titles, authors and reading progress are cached so the list opens instantly.
 - **Reader** — native Compose rendering of chapters (headings, paragraphs, quotes,
   inline images) laid out as **swipeable pages** (left/right), like a real e-reader, with
-  a table-of-contents drawer, adjustable font size, and light / sepia / dark themes.
+  a table-of-contents drawer, adjustable font size, and black / light / sepia / system
+  themes — black by default, since the app around the page is black whatever the system says.
   Chapter text is paginated to the screen with `TextMeasurer`; swiping past the last page
   rolls into the next chapter.
 - **Read-aloud TTS** — Android `TextToSpeech`, one utterance per sentence with a small
-  look-ahead queue for smooth speech. The sentence being read gets a soft highlight and
-  the exact word gets a strong highlight (`onRangeStart` word callbacks). Pages turn
-  automatically to keep up with the voice.
+  look-ahead queue for smooth speech. The sentence being read turns yellow and the exact
+  word inverts to black-on-yellow (`onRangeStart` word callbacks). Pages turn automatically
+  to keep up with the voice.
 - **Language picker** — books often declare the wrong `dc:language` (or none), which used to
   mean a German book read aloud in English with no way to fix it. The reader's settings sheet
   now lets you pick the reading language first, from the languages your TTS engine actually
