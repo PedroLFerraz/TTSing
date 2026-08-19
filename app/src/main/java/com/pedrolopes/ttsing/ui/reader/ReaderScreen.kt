@@ -14,9 +14,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
@@ -205,7 +208,7 @@ fun ReaderScreen(
             topBar = {
                 ReaderTopBar(
                     title = ui.title,
-                    chapterLabel = chapterLabel(ui.chapterIndex, ui.chapterTitle),
+                    chapterLabel = chapterLabel(ui.chapterIndex, ui.chapterCount, ui.chapterTitle),
                     palette = palette,
                     articleLink = ui.articleLink,
                     onBack = onBack,
@@ -432,18 +435,17 @@ private fun PagedChapter(
             }
         }
 
-        val indicator = if (pagerState.currentPage >= textPageCount) {
-            "Next chapter »"
-        } else {
-            "${(pagerState.currentPage + 1).coerceAtMost(textPageCount)} / $textPageCount"
+        // The page number lives in the bottom bar now, so this only has to announce the
+        // one thing the bar cannot: that swiping again leaves the chapter.
+        if (pagerState.currentPage >= textPageCount) {
+            MonoText(
+                text = "Next chapter »",
+                size = 9.5f,
+                tracking = 0.18f,
+                color = palette.accent,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp),
+            )
         }
-        MonoText(
-            text = indicator,
-            size = 9.5f,
-            tracking = 0.18f,
-            color = palette.secondaryText,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp),
-        )
     }
 }
 
@@ -577,9 +579,12 @@ private fun openTtsDataInstaller(context: android.content.Context) {
         .recoverCatching { context.startActivity(fallback) }
 }
 
-/** "CH 4 · A SHADOW ON THE WALL" — the mono subtitle under the book's title. */
-private fun chapterLabel(chapterIndex: Int, chapterTitle: String?): String {
-    val number = "Ch ${chapterIndex + 1}"
+/**
+ * "CH 4/12 · A SHADOW ON THE WALL" — the mono subtitle under the book's title. The count
+ * rides here because the bottom bar has only enough room for the page.
+ */
+private fun chapterLabel(chapterIndex: Int, chapterCount: Int, chapterTitle: String?): String {
+    val number = "Ch ${chapterIndex + 1}/$chapterCount"
     return if (chapterTitle.isNullOrBlank()) number else "$number · $chapterTitle"
 }
 
@@ -602,6 +607,9 @@ private fun ReaderTopBar(
         modifier = Modifier
             .background(palette.background)
             .fillMaxWidth()
+            // Scaffold insets its content but not a custom top bar, so the header has to
+            // keep clear of the status bar itself.
+            .statusBarsPadding()
             .padding(start = 18.dp, end = 10.dp, top = 8.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -757,20 +765,23 @@ private fun ReaderBottomBar(
         modifier = Modifier
             .background(palette.background)
             .fillMaxWidth()
+            .navigationBarsPadding()
             .padding(horizontal = ScreenPadding)
             .padding(top = 10.dp, bottom = 10.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 9.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.Bottom,
         ) {
             MonoText(
-                text = "Page $pageCurrent / $pageTotal  ·  ch ${chapterIndex + 1}/$chapterCount",
+                text = "Page $pageCurrent / $pageTotal",
                 size = 10f,
                 tracking = 0.16f,
                 color = palette.secondaryText,
             )
+            // A weighted gap rather than SpaceBetween: it guarantees the two labels never
+            // touch, and gives the ellipsis somewhere to happen if the times run long.
+            Spacer(Modifier.weight(1f).widthIn(min = 14.dp))
             // The time still to run is the one number worth colouring: it is what changes
             // while the voice is speaking.
             MonoText(
