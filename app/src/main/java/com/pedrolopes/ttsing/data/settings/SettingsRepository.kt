@@ -95,7 +95,9 @@ class SettingsRepository(private val context: Context) {
             fontScale = prefs[Keys.fontScale] ?: 1.0f,
             readerTheme = prefs[Keys.readerTheme]
                 ?.let { runCatching { ReaderTheme.valueOf(it) }.getOrNull() }
-                ?: ReaderTheme.SYSTEM,
+                // Black by default: the app around the page is black whatever the system
+                // says, and a white page inside it is a jolt nobody asked for.
+                ?: ReaderTheme.DARK,
             voices = prefs.stringsWithPrefix(Keys.VOICE_PREFIX),
             bookLanguages = prefs.stringsWithPrefix(Keys.BOOK_LANGUAGE_PREFIX),
             charsPerSecond = prefs[Keys.charsPerSecond] ?: AppSettings.DEFAULT_CHARS_PER_SECOND,

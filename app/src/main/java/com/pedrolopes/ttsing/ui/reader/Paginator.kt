@@ -2,7 +2,6 @@ package com.pedrolopes.ttsing.ui.reader
 
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
@@ -10,6 +9,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pedrolopes.ttsing.data.epub.Block
+import com.pedrolopes.ttsing.ui.theme.AppFonts
 
 /** A contiguous run of one text block's characters that fits on a page. */
 data class TextSlice(
@@ -37,14 +37,14 @@ data class PageInfo(
 
 // ---- Shared typography (used for BOTH measuring and rendering so pages match) ----
 
-private const val LINE_HEIGHT_EM = 1.5f
+private const val LINE_HEIGHT_EM = 1.62f
 
 fun blockFontSizeSp(kind: Block.Text.Kind): Float = when (kind) {
     Block.Text.Kind.HEADING_1 -> 26f
     Block.Text.Kind.HEADING_2 -> 22f
     Block.Text.Kind.HEADING_3 -> 19f
     Block.Text.Kind.QUOTE -> 17f
-    Block.Text.Kind.PARAGRAPH -> 18f
+    Block.Text.Kind.PARAGRAPH -> 19f
 }
 
 fun blockVerticalPadding(kind: Block.Text.Kind): Dp = when (kind) {
@@ -54,15 +54,13 @@ fun blockVerticalPadding(kind: Block.Text.Kind): Dp = when (kind) {
 
 fun blockTextStyle(kind: Block.Text.Kind, fontScale: Float): TextStyle {
     val sizeValue = blockFontSizeSp(kind) * fontScale
+    val isBody = kind == Block.Text.Kind.PARAGRAPH || kind == Block.Text.Kind.QUOTE
     return TextStyle(
         fontSize = sizeValue.sp,
         lineHeight = (sizeValue * LINE_HEIGHT_EM).sp,
-        fontWeight = if (kind == Block.Text.Kind.PARAGRAPH || kind == Block.Text.Kind.QUOTE) {
-            FontWeight.Normal
-        } else {
-            FontWeight.Bold
-        },
-        fontFamily = if (kind == Block.Text.Kind.QUOTE) FontFamily.Serif else FontFamily.Default,
+        fontWeight = if (isBody) FontWeight.Normal else FontWeight.SemiBold,
+        // The whole page is the book's own voice, headings included, so it is all serif.
+        fontFamily = AppFonts.Serif,
     )
 }
 
