@@ -106,17 +106,20 @@ fun wordmark(size: Float = 22f, color: Color = Ink.Text): TextStyle = TextStyle(
  */
 @Composable
 fun HazardStripe(modifier: Modifier = Modifier, height: Dp = 10.dp, band: Dp = 14.dp, gap: Dp = 10.dp) {
-    val period = with(androidx.compose.ui.platform.LocalDensity.current) { (band + gap).toPx() }
-    val bandPx = with(androidx.compose.ui.platform.LocalDensity.current) { band.toPx() }
-    // 115° in the mock; as a gradient that is a run of equal x and y so the stripes lean
-    // the same way whatever the band's width turns out to be.
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val period = with(density) { (band + gap).toPx() }
+    val bandPx = with(density) { band.toPx() }
+    // The gradient's axis has to be exactly one period long for the stops to land where the
+    // band and gap widths say they should — hence a unit vector scaled by the period, rather
+    // than a diagonal whose length is the period times root two. The direction is CSS's
+    // 115deg: mostly across, leaning down to the right.
     val brush = Brush.linearGradient(
         0f to Ink.Live,
         (bandPx / period) to Ink.Live,
         (bandPx / period) to Ink.Surface,
         1f to Ink.Surface,
         start = Offset.Zero,
-        end = Offset(period, period),
+        end = Offset(period * 0.906f, period * 0.423f),
         tileMode = TileMode.Repeated,
     )
     Box(modifier = modifier.fillMaxWidth().height(height).background(brush))
