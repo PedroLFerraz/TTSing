@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.TTSing" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowLightStatusBar">true</item>
+    <!-- The app is black regardless of the system's light/dark setting, so there is no
+         -night variant: the launch window must match the first frame Compose draws. -->
+    <style name="Theme.TTSing" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
     </style>
 </resources>

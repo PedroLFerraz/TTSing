@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Fetching subscribed RSS feeds and the full text of their articles. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- Defined by AnkiDroid; lets us add notes to its collection. Runtime-requested. -->
     <uses-permission android:name="com.ichi2.anki.permission.READ_WRITE_DATABASE" />
 

@@ -1,27 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The wordmark's first two letters, drawn as slab shapes rather than set in type so the mark
+  is identical at every density. Black on the yellow of @color/ic_launcher_background, and
+  kept inside the adaptive icon's 66dp safe circle.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Open book -->
     <path
-        android:fillColor="#F5EFE0"
-        android:pathData="M30,38 C36,34 46,34 52,38 L52,72 C46,68 36,68 30,72 Z" />
+        android:fillColor="#000000"
+        android:pathData="M32,40 h20 v5.5 h-7.25 v22.5 h-5.5 v-22.5 h-7.25 z" />
     <path
-        android:fillColor="#F5EFE0"
-        android:pathData="M56,38 C62,34 72,34 78,38 L78,72 C72,68 62,68 56,72 Z" />
-    <!-- Sound waves -->
-    <path
-        android:strokeColor="#E8B84B"
-        android:strokeWidth="3"
-        android:strokeLineCap="round"
-        android:fillColor="#00000000"
-        android:pathData="M82,46 C86,50 86,58 82,62" />
-    <path
-        android:strokeColor="#E8B84B"
-        android:strokeWidth="3"
-        android:strokeLineCap="round"
-        android:fillColor="#00000000"
-        android:pathData="M87,42 C93,48 93,60 87,66" />
+        android:fillColor="#000000"
+        android:pathData="M56,40 h20 v5.5 h-7.25 v22.5 h-5.5 v-22.5 h-7.25 z" />
 </vector>

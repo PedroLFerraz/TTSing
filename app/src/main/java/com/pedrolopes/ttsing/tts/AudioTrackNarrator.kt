@@ -22,9 +22,14 @@ import java.util.Locale
  * engine's own process, so Android would treat *that* app as the one playing and route
  * Bluetooth/headset media buttons there. Here the sound genuinely originates from this app.
  *
- * Word highlighting also gets better as a side effect: the engine reports each word's exact
- * audio frame via `onRangeStart`, and playback position is compared against those frames, so
- * the highlight is measured rather than estimated.
+ * Word highlighting is driven entirely by [NeuralWordTiming]'s character-proportional
+ * estimate, not by the engine's own `onRangeStart` callback. That callback is optional, and
+ * in practice inconsistent enough across engines and voices to be worse than not trusting it
+ * at all: an engine that never advances its reported frame, or reports one in the wrong
+ * unit, doesn't just desync the highlight a little — it can make it jump to the last word
+ * and sit there for the rest of the sentence. The estimate is instead built from data this
+ * class already controls (the audio's own measured duration and our own `AudioTrack`
+ * position), so its scale can never be wrong.
  */
 class AudioTrackNarrator(
     context: Context,
@@ -140,17 +145,33 @@ class AudioTrackNarrator(
             finishBook()
             return
         }
+        var consecutiveFailures = 0
         while (ref != null && coroutineIsActive()) {
             currentRef = ref
             val audio = synthesizer.synthesize(ref.text, utteranceIdFor(ref))
             if (!coroutineIsActive()) return
             if (audio == null) {
-                // Skip a sentence the engine refused rather than stalling the whole book.
+                // One refused sentence is skipped rather than stalling the whole book. A run of
+                // them means the voice itself cannot speak — a language whose data never
+                // downloaded, most often — and silently skipping every sentence looks exactly
+                // like "playback does nothing and the highlight is dead", with no way to tell
+                // why. Say so instead.
+                if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                    isSpeaking = false
+                    withMain {
+                        listener.onEngineError(
+                            "This voice can't speak the text. Its data may still need downloading — " +
+                                "try another language or voice.",
+                        )
+                    }
+                    return
+                }
                 ref = src.next(ref.position)
                 continue
             }
+            consecutiveFailures = 0
             val speaking = ref
-            val marks = audio.marks.ifEmpty { estimatedMarks(speaking, audio) }
+            val marks = estimatedMarks(speaking, audio)
             withMain { listener.onSentenceStart(speaking) }
 
             var lastRange: IntRange? = null
@@ -175,10 +196,9 @@ class AudioTrackNarrator(
     ): SynthesizedSentence.FrameMark? = marks.lastOrNull { it.frame <= frame }
 
     /**
-     * Word marks for engines that report none for `synthesizeToFile` (`onRangeStart` is
-     * optional - the platform only calls it if the engine supplies timing). Falls back to
-     * spreading the measured audio duration across the words by character position, so the
-     * highlight still tracks instead of disappearing.
+     * Spreads the sentence's measured audio duration across its words by character position.
+     * See the class doc for why this is used unconditionally rather than trusting the
+     * engine's own `onRangeStart` timing.
      */
     private fun estimatedMarks(
         ref: SentenceRef,
@@ -276,4 +296,9 @@ class AudioTrackNarrator(
 
     private fun utteranceIdFor(ref: SentenceRef): String =
         "u|${ref.position.chapterIndex}|${ref.position.blockIndex}|${ref.position.sentenceIndex}"
+
+    private companion object {
+        /** Enough to ride out one odd sentence, few enough to report a broken voice quickly. */
+        const val MAX_CONSECUTIVE_FAILURES = 3
+    }
 }

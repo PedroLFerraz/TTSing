@@ -1,15 +1,21 @@
 package com.pedrolopes.ttsing.ui.reader
 
 import android.speech.tts.Voice
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -18,13 +24,10 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -36,12 +39,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.pedrolopes.ttsing.data.settings.AppSettings
 import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.LanguageOption
 import com.pedrolopes.ttsing.tts.needsDownload
+import com.pedrolopes.ttsing.ui.common.Hairline
+import com.pedrolopes.ttsing.ui.common.MonoText
+import com.pedrolopes.ttsing.ui.common.ThinProgress
+import com.pedrolopes.ttsing.ui.theme.AppFonts
+import com.pedrolopes.ttsing.ui.theme.Ink
 import java.util.Locale
+
+/** The order the design lists themes in: the app's own first, the system's last. */
+private val ThemeOrder = listOf(ReaderTheme.DARK, ReaderTheme.LIGHT, ReaderTheme.SEPIA, ReaderTheme.SYSTEM)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,146 +87,181 @@ fun ReaderSettingsSheet(
         ?.takeIf { it.language.isNotEmpty() }
     val isOverridden = declaredLocale != null && declaredLocale.language != activeLocale.language
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Ink.Surface,
+        dragHandle = {
+            Box(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.size(width = 44.dp, height = 4.dp).background(Ink.Handle))
+            }
+        },
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(bottom = 40.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            Text("Reading settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            MonoText("Reading settings", size = 13f, tracking = 0.2f, color = Ink.Text, weight = FontWeight.Bold)
 
-            LabeledSlider("Speed", settings.speechRate, "%.1f×".format(settings.speechRate), 0.5f..2.5f, onSpeechRate)
-            LabeledSlider("Pitch", settings.pitch, "%.1f".format(settings.pitch), 0.5f..2.0f, onPitch)
-            LabeledSlider("Font size", settings.fontScale, "%.0f%%".format(settings.fontScale * 100), 0.8f..1.8f, onFontScale)
+            HardSlider("Speed", settings.speechRate, "%.1f×".format(settings.speechRate), 0.5f..2.5f, onSpeechRate)
+            HardSlider("Pitch", settings.pitch, "%.1f".format(settings.pitch), 0.5f..2.0f, onPitch)
+            HardSlider(
+                "Font size",
+                settings.fontScale,
+                "%.0f%%".format(settings.fontScale * 100),
+                0.8f..1.8f,
+                onFontScale,
+            )
 
-            Text("Theme", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ReaderTheme.entries.forEach { theme ->
-                    FilterChip(
-                        selected = settings.readerTheme == theme,
-                        onClick = { onTheme(theme) },
-                        label = { Text(theme.displayName()) },
-                    )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                MonoText("Theme", size = 11f, tracking = 0.16f)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ThemeOrder.forEach { theme ->
+                        ThemeChip(
+                            label = theme.displayName(),
+                            selected = settings.readerTheme == theme,
+                            onClick = { onTheme(theme) },
+                        )
+                    }
                 }
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+            Hairline(inset = 0.dp)
 
-            Text("Language", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(
-                text = when {
-                    isOverridden -> "Set by you. This book declares ${declaredLocale!!.displayName()}."
-                    declaredLocale != null -> "From the book's own metadata. Change it if it's wrong."
-                    else -> "This book doesn't say what language it's in."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Box {
-                VoiceRow(
-                    title = languageName,
-                    subtitle = "Tap to change the reading language",
-                    selected = true,
-                    isSpeaking = false,
-                    onClick = { languageMenuOpen = true },
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                MonoText("Language", size = 11f, tracking = 0.16f)
+                Text(
+                    text = when {
+                        isOverridden -> "Set by you. This book declares ${declaredLocale!!.displayName()}."
+                        declaredLocale != null -> "From the book's own metadata. Change it if it's wrong."
+                        else -> "This book doesn't say what language it's in."
+                    },
+                    fontFamily = AppFonts.Grotesk,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = Ink.Muted,
                 )
-                DropdownMenu(
-                    expanded = languageMenuOpen,
-                    onDismissRequest = { languageMenuOpen = false },
-                    modifier = Modifier.heightIn(max = 400.dp),
-                ) {
-                    if (availableLanguages.isEmpty()) {
-                        DropdownMenuItem(
-                            text = { Text("No languages available yet") },
-                            onClick = { languageMenuOpen = false },
-                        )
-                    }
-                    availableLanguages.forEach { option ->
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(option.locale.displayName())
-                                    if (!option.downloaded) {
+
+                Box {
+                    ChoiceRow(
+                        title = languageName,
+                        subtitle = "Tap to change the reading language",
+                        selected = true,
+                        isSpeaking = false,
+                        onClick = { languageMenuOpen = true },
+                    )
+                    DropdownMenu(
+                        expanded = languageMenuOpen,
+                        onDismissRequest = { languageMenuOpen = false },
+                        containerColor = Ink.Raised,
+                        modifier = Modifier.heightIn(max = 400.dp),
+                    ) {
+                        if (availableLanguages.isEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text("No languages available yet", color = Ink.Muted) },
+                                onClick = { languageMenuOpen = false },
+                            )
+                        }
+                        availableLanguages.forEach { option ->
+                            val current = option.locale.language == activeLocale.language
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
                                         Text(
-                                            "Downloads on first use",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            option.locale.displayName(),
+                                            fontFamily = AppFonts.Grotesk,
+                                            fontSize = 14.sp,
+                                            color = if (current) Ink.Live else Ink.Text,
+                                        )
+                                        if (!option.downloaded) {
+                                            MonoText("Downloads on first use", size = 9f, color = Ink.Dim)
+                                        }
+                                    }
+                                },
+                                leadingIcon = {
+                                    if (current) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = "Current language",
+                                            tint = Ink.Live,
+                                            modifier = Modifier.size(16.dp),
                                         )
                                     }
-                                }
-                            },
-                            leadingIcon = {
-                                if (option.locale.language == activeLocale.language) {
-                                    Icon(Icons.Filled.Check, contentDescription = "Current language")
-                                }
-                            },
+                                },
+                                onClick = {
+                                    languageMenuOpen = false
+                                    onSelectLanguage(option.locale)
+                                },
+                            )
+                        }
+                        Hairline(inset = 8.dp)
+                        DropdownMenuItem(
+                            text = { MonoText("Install voice data…", size = 11f, color = Ink.Live) },
                             onClick = {
                                 languageMenuOpen = false
-                                onSelectLanguage(option.locale)
+                                onInstallVoiceData()
                             },
                         )
                     }
-                    HorizontalDivider()
-                    DropdownMenuItem(
-                        text = { Text("Install voice data…") },
-                        onClick = {
-                            languageMenuOpen = false
-                            onInstallVoiceData()
-                        },
-                    )
                 }
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+            Hairline(inset = 0.dp)
 
-            Text("Voice — $languageName", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             val activeLabel = voices.firstOrNull { it.name == currentVoiceName }?.let { voiceTitle(it) }
                 ?: currentVoiceName
-            if (activeLabel != null) {
-                Text(
-                    "Now speaking: $activeLabel",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                MonoText("Voice — $languageName", size = 11f, tracking = 0.16f)
+                if (activeLabel != null) MonoText("Now speaking", size = 10f, tracking = 0.12f, color = Ink.Live)
             }
 
-            VoiceRow(
-                title = "Device default",
-                subtitle = defaultVoiceName
-                    ?.let { name -> voices.firstOrNull { it.name == name }?.let { voiceTitle(it) } ?: name }
-                    ?: "The engine's built-in voice for this language",
-                selected = storedVoice == null,
-                isSpeaking = storedVoice == null && currentVoiceName != null,
-                onClick = onSelectDefaultVoice,
-            )
-
-            if (voices.isEmpty()) {
-                Text(
-                    "This engine has no voices for $languageName. Install voice data in Android's " +
-                        "Text-to-speech settings, or pick another language above.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Column {
+                ChoiceRow(
+                    title = "Device default",
+                    subtitle = defaultVoiceName
+                        ?.let { name -> voices.firstOrNull { it.name == name }?.let { voiceTitle(it) } ?: name }
+                        ?: "The engine's built-in voice for this language",
+                    selected = storedVoice == null,
+                    isSpeaking = storedVoice == null && currentVoiceName != null,
+                    onClick = onSelectDefaultVoice,
                 )
-            } else {
-                voices.groupBy { regionName(it.locale) }.forEach { (region, list) ->
+
+                if (voices.isEmpty()) {
                     Text(
-                        region,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        "This engine has no voices for $languageName. Install voice data in Android's " +
+                            "Text-to-speech settings, or pick another language above.",
+                        fontFamily = AppFonts.Grotesk,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = Ink.Muted,
                         modifier = Modifier.padding(top = 10.dp),
                     )
-                    list.forEach { voice ->
-                        VoiceRow(
-                            title = voiceTitle(voice),
-                            subtitle = voice.name,
-                            selected = storedVoice == voice.name,
-                            isSpeaking = voice.name == currentVoiceName,
-                            onClick = { onSelectVoice(voice) },
+                } else {
+                    voices.groupBy { regionName(it.locale) }.forEach { (region, list) ->
+                        MonoText(
+                            region,
+                            size = 10f,
+                            tracking = 0.14f,
+                            color = Ink.Dim,
+                            modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
                         )
+                        list.forEach { voice ->
+                            ChoiceRow(
+                                title = voiceTitle(voice),
+                                subtitle = voice.name,
+                                selected = storedVoice == voice.name,
+                                isSpeaking = voice.name == currentVoiceName,
+                                onClick = { onSelectVoice(voice) },
+                            )
+                        }
                     }
                 }
             }
@@ -221,49 +269,89 @@ fun ReaderSettingsSheet(
     }
 }
 
+/**
+ * A row you pick from — voice, language. The selected one is marked with a live spine and a
+ * raised fill rather than a tick, so the current choice is legible at a glance down the list.
+ */
 @Composable
-private fun VoiceRow(
+private fun ChoiceRow(
     title: String,
     subtitle: String,
     selected: Boolean,
     isSpeaking: Boolean,
     onClick: () -> Unit,
 ) {
-    Surface(
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-        shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .background(if (selected) Ink.Well else Color.Transparent)
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-                if (selected) Icon(Icons.Filled.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
-            }
-            Column(modifier = Modifier.padding(start = 8.dp).weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-            if (isSpeaking) {
-                Icon(
-                    Icons.Filled.GraphicEq,
-                    contentDescription = "Currently speaking",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
+        // The spine runs the full height of whatever the row's text works out to.
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .background(if (selected) Ink.Live else Color.Transparent),
+        )
+        Column(modifier = Modifier.weight(1f).padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Text(
+                title,
+                fontFamily = AppFonts.Grotesk,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (selected) Ink.Text else Color(0xFFC9C9C4),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            MonoText(
+                subtitle,
+                size = 10f,
+                tracking = 0.1f,
+                color = if (selected) Ink.Muted else Ink.Dim,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+        if (isSpeaking) {
+            Icon(
+                Icons.Filled.GraphicEq,
+                contentDescription = "Currently speaking",
+                tint = Ink.Live,
+                modifier = Modifier.padding(end = 14.dp).size(18.dp),
+            )
         }
     }
 }
 
+/** Square, mono, no elevation: selected is a yellow block, everything else is an outline. */
 @Composable
-private fun LabeledSlider(
+private fun ThemeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .background(if (selected) Ink.Live else Color.Transparent)
+            .then(if (selected) Modifier else Modifier.border(1.dp, Ink.Edge))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+    ) {
+        MonoText(
+            label,
+            size = 11f,
+            tracking = 0.14f,
+            color = if (selected) Ink.Surface else Ink.Muted,
+            weight = if (selected) FontWeight.Bold else FontWeight.Normal,
+        )
+    }
+}
+
+/**
+ * Mono label on the left, live-coloured value on the right, and a flat track underneath —
+ * the design's slider. The Material slider still does the dragging and the accessibility.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HardSlider(
     label: String,
     value: Float,
     valueLabel: String,
@@ -272,10 +360,28 @@ private fun LabeledSlider(
 ) {
     Column {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(label, style = MaterialTheme.typography.labelLarge)
-            Text(valueLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            MonoText(label, size = 11f, tracking = 0.16f)
+            MonoText(valueLabel, size = 11f, tracking = 0.16f, color = Ink.Live)
         }
-        Slider(value = value, onValueChange = onValueChange, valueRange = range)
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = range,
+            colors = SliderDefaults.colors(
+                thumbColor = Ink.Live,
+                activeTrackColor = Ink.Live,
+                inactiveTrackColor = Ink.Track,
+            ),
+            thumb = { Box(modifier = Modifier.size(14.dp).background(Ink.Live)) },
+            track = {
+                ThinProgress(
+                    fraction = (value - range.start) / (range.endInclusive - range.start),
+                    color = Ink.Live,
+                    track = Ink.Track,
+                )
+            },
+            modifier = Modifier.fillMaxWidth().height(28.dp),
+        )
     }
 }
 
@@ -283,7 +389,8 @@ private fun ReaderTheme.displayName(): String = when (this) {
     ReaderTheme.SYSTEM -> "System"
     ReaderTheme.LIGHT -> "Light"
     ReaderTheme.SEPIA -> "Sepia"
-    ReaderTheme.DARK -> "Dark"
+    // "Dark" undersells it — the theme is the app's own black.
+    ReaderTheme.DARK -> "Black"
 }
 
 /** "German", "Portuguese" — capitalised for the picker and section headings. */

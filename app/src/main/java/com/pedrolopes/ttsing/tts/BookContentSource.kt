@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /**
  * Feeds sentences from an [EpubBook] to the [Narrator], loading and caching
@@ -17,9 +18,17 @@ import kotlinx.coroutines.withContext
 class BookContentSource(
     private val parser: EpubParser,
     val book: EpubBook,
-) : Narrator.ContentSource {
+) : ReadableContent {
 
-    private val locale = book.locale()
+    override val title: String get() = book.title
+
+    override val author: String? get() = book.author
+
+    override val locale: Locale = book.locale()
+
+    override val sectionCount: Int get() = book.spine.size
+
+    override suspend fun blockCount(sectionIndex: Int): Int = chapter(sectionIndex)?.blocks?.size ?: 0
     private val mutex = Mutex()
     private val cache = LinkedHashMap<Int, Chapter>()
 

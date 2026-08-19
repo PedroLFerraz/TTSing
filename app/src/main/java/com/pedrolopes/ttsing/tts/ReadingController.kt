@@ -107,11 +107,12 @@ class ReadingController(context: Context) {
         service?.stopPlayback()
     }
 
-    fun voicesForCurrentBook(): List<Voice> = service?.voicesForCurrentBook().orEmpty()
+    /** Voices for a language the caller names, so the UI never depends on service timing. */
+    fun voicesFor(locale: Locale): List<Voice> = service?.voicesFor(locale).orEmpty()
 
     fun currentVoiceName(): String? = service?.currentVoiceName()
 
-    fun defaultVoiceName(): String? = service?.defaultVoiceName()
+    fun defaultVoiceNameFor(locale: Locale): String? = service?.defaultVoiceNameFor(locale)
 
     /** Languages the TTS engine offers, downloaded ones first, for the reader's picker. */
     fun availableLanguages(): List<LanguageOption> = service?.availableLanguages().orEmpty()

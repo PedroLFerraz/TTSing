@@ -12,6 +12,8 @@ import com.pedrolopes.ttsing.data.epub.Chapter
 import com.pedrolopes.ttsing.data.epub.EpubBook
 import com.pedrolopes.ttsing.data.epub.EpubParser
 import com.pedrolopes.ttsing.data.epub.TocEntry
+import com.pedrolopes.ttsing.data.news.ArticleImageStore
+import com.pedrolopes.ttsing.data.news.NewsRepository
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
 import com.pedrolopes.ttsing.tts.BookContentSource
 import kotlinx.coroutines.Dispatchers
@@ -37,11 +39,17 @@ data class ReaderUiState(
     val chapterCharCounts: List<Int> = emptyList(),
     /** True while a card's audio is being synthesized and handed to AnkiDroid. */
     val isSavingCard: Boolean = false,
+    /** Article only: the full page couldn't be fetched, so this is just the feed's teaser. */
+    val isTruncated: Boolean = false,
+    /** Article only: its address on the web, so the reader can offer to open it there. */
+    val articleLink: String? = null,
 )
 
 class ReaderViewModel(
     private val bookId: String,
     private val repo: BookRepository,
+    private val news: NewsRepository,
+    private val articleImages: ArticleImageStore,
     private val cardAudio: CardAudio,
     private val anki: AnkiExporter,
     private val settings: SettingsRepository,
@@ -51,10 +59,20 @@ class ReaderViewModel(
     private var source: BookContentSource? = null
     private var book: EpubBook? = null
 
+    /** True when this "book" is actually a news article: one section, no chapters, no TOC. */
+    private val isArticle = NewsRepository.isArticle(bookId)
+
+    /** Set once the article's text is in memory, so [load] is idempotent like the book path. */
+    private var articleLoaded = false
+
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
 
     fun load() {
+        if (isArticle) {
+            loadArticle()
+            return
+        }
         if (book != null) return
         viewModelScope.launch {
             val savedChapter = repo.getBook(bookId)?.chapterIndex ?: 0
@@ -82,7 +100,49 @@ class ReaderViewModel(
         }
     }
 
+    /**
+     * Loads a news article as a single-section "chapter", so the reader screen, karaoke
+     * highlight and flashcard gesture all work on it unchanged. Fetching the full text can
+     * hit the network, hence the loading state.
+     */
+    private fun loadArticle() {
+        if (articleLoaded) return
+        articleLoaded = true
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(isLoading = true)
+            val article = news.article(bookId)
+            if (article == null) {
+                _ui.value = _ui.value.copy(isLoading = false, error = "This article is no longer available.")
+                return@launch
+            }
+            val locale = news.feedLocale(article.feedUrl) ?: Locale.getDefault()
+            when (val body = news.body(bookId, locale)) {
+                is NewsRepository.ArticleBody.Failed ->
+                    _ui.value = _ui.value.copy(isLoading = false, title = article.title, error = body.message)
+
+                is NewsRepository.ArticleBody.Ready -> {
+                    articleLocale = locale
+                    _ui.value = _ui.value.copy(
+                        title = article.title,
+                        chapterCount = 1,
+                        chapterIndex = 0,
+                        blocks = body.blocks,
+                        languageTag = locale.toLanguageTag(),
+                        isLoading = false,
+                        error = null,
+                        isTruncated = body.truncated,
+                        articleLink = article.link,
+                        chapterCharCounts = listOf(
+                            body.blocks.filterIsInstance<Block.Text>().sumOf { it.text.length },
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
     fun showChapter(index: Int) {
+        if (isArticle) return
         val src = source ?: return
         if (index !in 0 until (book?.spine?.size ?: 0)) return
         viewModelScope.launch {
@@ -109,13 +169,24 @@ class ReaderViewModel(
 
     fun previousChapter() = showChapter(_ui.value.chapterIndex - 1)
 
-    suspend fun imageBytes(zipPath: String): ByteArray? =
-        withContext(Dispatchers.IO) { parser?.readEntry(zipPath) }
+    /**
+     * Bytes for an image block. Book images come out of the EPUB zip; article images are
+     * absolute URLs, downloaded once and then served from disk.
+     */
+    suspend fun imageBytes(key: String): ByteArray? =
+        if (isArticle) {
+            articleImages.bytes(key)
+        } else {
+            withContext(Dispatchers.IO) { parser?.readEntry(key) }
+        }
 
     // ---- Anki cards ----
 
     /** The language the EPUB declares; the user's per-book override is applied on top. */
-    fun bookLocale(): Locale = book?.locale() ?: Locale.getDefault()
+    fun bookLocale(): Locale = articleLocale ?: book?.locale() ?: Locale.getDefault()
+
+    /** Language of the article being read, resolved from its feed. */
+    private var articleLocale: Locale? = null
 
     /**
      * Builds an empty card for the sentence containing [offsetInBlock] — the character the
@@ -193,6 +264,8 @@ class ReaderViewModel(
             return ReaderViewModel(
                 bookId = bookId,
                 repo = app.books,
+                news = app.news,
+                articleImages = ArticleImageStore(app),
                 cardAudio = CardAudio(app),
                 anki = AnkiExporter(app, app.settings),
                 settings = app.settings,

@@ -1,5 +1,6 @@
 package com.pedrolopes.ttsing.ui.reader
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -9,18 +10,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowLeft
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowRight
 import androidx.compose.material.icons.filled.Pause
@@ -30,20 +35,13 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,10 +55,18 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pedrolopes.ttsing.TTSingApp
@@ -70,8 +76,14 @@ import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.settings.AppSettings
 import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.ReadingController
+import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.LocalImage
+import com.pedrolopes.ttsing.ui.common.MonoText
+import com.pedrolopes.ttsing.ui.common.ScreenPadding
+import com.pedrolopes.ttsing.ui.common.ThinProgress
 import com.pedrolopes.ttsing.ui.common.simpleFactory
+import com.pedrolopes.ttsing.ui.theme.AppFonts
+import com.pedrolopes.ttsing.ui.theme.Ink
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -80,7 +92,7 @@ private val DefaultSettings = AppSettings(
     speechRate = 1f,
     pitch = 1f,
     fontScale = 1f,
-    readerTheme = ReaderTheme.SYSTEM,
+    readerTheme = ReaderTheme.DARK,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -143,19 +155,45 @@ fun ReaderScreen(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet {
-                Text("Contents", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp))
+            ModalDrawerSheet(drawerContainerColor = Ink.Surface) {
+                MonoText(
+                    "Contents",
+                    size = 13f,
+                    tracking = 0.2f,
+                    color = Ink.Text,
+                    weight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 24.dp, top = 28.dp, bottom = 8.dp),
+                )
+                Hairline(modifier = Modifier.padding(vertical = 10.dp), inset = 24.dp)
                 LazyColumn {
                     itemsIndexed(ui.toc) { _, entry ->
-                        NavigationDrawerItem(
-                            label = { Text(entry.title, maxLines = 2) },
-                            selected = entry.spineIndex == ui.chapterIndex,
-                            onClick = {
-                                viewModel.showChapter(entry.spineIndex)
-                                scope.launch { drawerState.close() }
-                            },
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                        )
+                        val current = entry.spineIndex == ui.chapterIndex
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.showChapter(entry.spineIndex)
+                                    scope.launch { drawerState.close() }
+                                }
+                                .padding(horizontal = 24.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 3.dp, height = 18.dp)
+                                    .background(if (current) Ink.Live else Color.Transparent),
+                            )
+                            Text(
+                                entry.title,
+                                maxLines = 2,
+                                fontFamily = AppFonts.Grotesk,
+                                fontSize = 14.sp,
+                                fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (current) Ink.Text else Ink.Muted,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 12.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -165,37 +203,15 @@ fun ReaderScreen(
             containerColor = palette.background,
             snackbarHost = { SnackbarHost(snackbarHost) },
             topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text(ui.title, maxLines = 1, style = MaterialTheme.typography.titleMedium)
-                            ui.chapterTitle?.let {
-                                Text(
-                                    it,
-                                    maxLines = 1,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Table of contents")
-                        }
-                        IconButton(onClick = { showSettings = true }) {
-                            Icon(Icons.Filled.Tune, contentDescription = "Reading settings")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = palette.background,
-                        titleContentColor = palette.text,
-                    ),
+                ReaderTopBar(
+                    title = ui.title,
+                    chapterLabel = chapterLabel(ui.chapterIndex, ui.chapterTitle),
+                    palette = palette,
+                    articleLink = ui.articleLink,
+                    onBack = onBack,
+                    onOpenLink = { link -> openInBrowser(context, link) },
+                    onOpenContents = { scope.launch { drawerState.open() } },
+                    onOpenSettings = { showSettings = true },
                 )
             },
             bottomBar = {
@@ -208,6 +224,7 @@ fun ReaderScreen(
                     bookTimeText = bookTimeText,
                     isSpeaking = isThisBook && playback.isSpeaking,
                     palette = palette,
+                    progress = if (pageInfo.total > 0) pageInfo.current.toFloat() / pageInfo.total else 0f,
                     onPrevChapter = { viewModel.previousChapter() },
                     onNextChapter = { viewModel.nextChapter() },
                     onPlayPause = { controller.togglePlayPause(bookId) },
@@ -249,8 +266,19 @@ fun ReaderScreen(
                     )
                 }
 
-                if (isThisBook && !playback.languageAvailable) {
-                    MissingVoiceBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
+                val playbackError = playback.error.takeIf { isThisBook }
+                when {
+                    // An engine failure is the most urgent thing to say: without it, a voice
+                    // that cannot speak just looks like a reader that stopped working.
+                    playbackError != null -> EngineErrorBanner(
+                        message = playbackError,
+                        onOpenSettings = { showSettings = true },
+                        modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                    )
+                    isThisBook && !playback.languageAvailable ->
+                        MissingVoiceBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
+                    ui.isTruncated ->
+                        TruncatedArticleBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
                 }
             }
         }
@@ -274,20 +302,30 @@ fun ReaderScreen(
     }
 
     if (showSettings) {
-        // Re-read on every language change so the voice list follows the picker.
-        val activeLocale = remember(showSettings, settings.bookLanguages[bookId]) {
-            controller.activeLocale()
-        } ?: settings.localeFor(bookId, ui.languageTag?.let { Locale.forLanguageTag(it) } ?: Locale.getDefault())
+        // The language is whatever the user last chose for this book, falling back to what the
+        // book declares. Derived straight from settings — which is DataStore-backed and so
+        // recomposes on change — rather than asking the service, whose copy is a plain var the
+        // UI cannot observe. Reading that var through `remember` is what previously left the
+        // picker stuck on a language the user was trying to move away from.
+        val declaredLocale = ui.languageTag
+            ?.let { Locale.forLanguageTag(it) }
+            ?.takeIf { it.language.isNotEmpty() }
+        val activeLocale = settings.localeFor(bookId, declaredLocale ?: Locale.getDefault())
         val languageCode = activeLocale.language
         ReaderSettingsSheet(
             settings = settings,
-            voices = remember(showSettings, languageCode) { controller.voicesForCurrentBook() },
-            currentVoiceName = remember(showSettings, languageCode) { controller.currentVoiceName() },
-            defaultVoiceName = remember(showSettings, languageCode) { controller.defaultVoiceName() },
+            voices = remember(languageCode, connected) { controller.voicesFor(activeLocale) },
+            currentVoiceName = remember(languageCode, connected) { controller.currentVoiceName() },
+            defaultVoiceName = remember(languageCode, connected) { controller.defaultVoiceNameFor(activeLocale) },
             activeLocale = activeLocale,
             declaredLanguageTag = ui.languageTag,
-            availableLanguages = remember(showSettings) { controller.availableLanguages() },
-            onSelectLanguage = { locale -> controller.selectLanguage(locale.toLanguageTag()) },
+            availableLanguages = remember(connected) { controller.availableLanguages() },
+            onSelectLanguage = { locale ->
+                // Persist first: settings drive the UI, so the picker updates even if the
+                // service is not bound yet.
+                scope.launch { app.settings.setBookLanguage(bookId, locale.toLanguageTag()) }
+                controller.selectLanguage(locale.toLanguageTag())
+            },
             onInstallVoiceData = { openTtsDataInstaller(context) },
             onDismiss = { showSettings = false },
             onSpeechRate = { rate ->
@@ -399,9 +437,10 @@ private fun PagedChapter(
         } else {
             "${(pagerState.currentPage + 1).coerceAtMost(textPageCount)} / $textPageCount"
         }
-        Text(
+        MonoText(
             text = indicator,
-            style = MaterialTheme.typography.labelSmall,
+            size = 9.5f,
+            tracking = 0.18f,
             color = palette.secondaryText,
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp),
         )
@@ -437,6 +476,7 @@ private fun PageView(
                         sentenceRange = sLocal,
                         wordRange = wLocal,
                         sentenceColor = palette.sentenceHighlight,
+                        sentenceTextColor = palette.sentenceText,
                         wordColor = palette.wordHighlight,
                         wordTextColor = palette.wordText,
                     )
@@ -502,14 +542,25 @@ private fun PageView(
 private fun EndOfChapterPage(palette: ReaderPalette) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("End of chapter", style = MaterialTheme.typography.titleMedium, color = palette.text)
+            MonoText("End of chapter", size = 12f, tracking = 0.2f, color = palette.accent)
             Text(
                 "Keep swiping for the next chapter",
-                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = AppFonts.Grotesk,
+                fontSize = 14.sp,
                 color = palette.secondaryText,
-                modifier = Modifier.padding(top = 4.dp),
+                modifier = Modifier.padding(top = 10.dp),
             )
         }
+    }
+}
+
+/** Opens an article's source page in whatever browser the device has. */
+private fun openInBrowser(context: android.content.Context, url: String) {
+    runCatching {
+        context.startActivity(
+            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
     }
 }
 
@@ -526,13 +577,155 @@ private fun openTtsDataInstaller(context: android.content.Context) {
         .recoverCatching { context.startActivity(fallback) }
 }
 
+/** "CH 4 · A SHADOW ON THE WALL" — the mono subtitle under the book's title. */
+private fun chapterLabel(chapterIndex: Int, chapterTitle: String?): String {
+    val number = "Ch ${chapterIndex + 1}"
+    return if (chapterTitle.isNullOrBlank()) number else "$number · $chapterTitle"
+}
+
+/**
+ * The reader's own header: title in the interface face, chapter in mono underneath, and the
+ * three ways out of the page (contents, settings, the original article) as muted glyphs.
+ */
+@Composable
+private fun ReaderTopBar(
+    title: String,
+    chapterLabel: String,
+    palette: ReaderPalette,
+    articleLink: String?,
+    onBack: () -> Unit,
+    onOpenLink: (String) -> Unit,
+    onOpenContents: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .background(palette.background)
+            .fillMaxWidth()
+            .padding(start = 18.dp, end = 10.dp, top = 8.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp).clickable(onClick = onBack),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back",
+                tint = palette.text,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f).padding(start = 6.dp)) {
+            Text(
+                text = title,
+                fontFamily = AppFonts.Grotesk,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.text,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+            MonoText(
+                text = chapterLabel,
+                size = 10f,
+                tracking = 0.16f,
+                color = palette.secondaryText,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+        articleLink?.let { link ->
+            ReaderAction(Icons.AutoMirrored.Filled.OpenInNew, "Open original article", palette) { onOpenLink(link) }
+        }
+        ReaderAction(Icons.AutoMirrored.Filled.List, "Table of contents", palette, onClick = onOpenContents)
+        ReaderAction(Icons.Filled.Tune, "Reading settings", palette, onClick = onOpenSettings)
+    }
+}
+
+@Composable
+private fun ReaderAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    palette: ReaderPalette,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier.size(42.dp).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = contentDescription, tint = palette.secondaryText, modifier = Modifier.size(20.dp))
+    }
+}
+
+/**
+ * Every message that overlays the page looks the same: a black block with a live-coloured
+ * spine. Black regardless of the reader's theme, because it is chrome, not page.
+ */
+@Composable
+private fun ReaderBanner(
+    label: String,
+    message: String,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .background(Ink.Raised)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+    ) {
+        Box(modifier = Modifier.width(3.dp).fillMaxHeight().background(Ink.Live))
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+            MonoText(label, size = 10f, tracking = 0.18f, color = Ink.Live, weight = FontWeight.Bold)
+            Text(
+                message,
+                fontFamily = AppFonts.Grotesk,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                color = Ink.Muted,
+                modifier = Modifier.padding(top = 5.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Shown when the speech engine itself failed. Tapping opens the reading settings, since the
+ * fix is almost always picking a different language or voice.
+ */
+@Composable
+private fun EngineErrorBanner(
+    message: String,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ReaderBanner(
+        label = "Voice failed",
+        message = "$message\nTap to open reading settings.",
+        modifier = modifier,
+        onClick = onOpenSettings,
+    )
+}
+
+/** Shown when the article's page couldn't be reached, so only the feed's teaser is available. */
+@Composable
+private fun TruncatedArticleBanner(modifier: Modifier = Modifier) {
+    ReaderBanner(
+        label = "Summary only",
+        message = "The full article couldn't be downloaded — this is the feed's own summary.",
+        modifier = modifier,
+    )
+}
+
 @Composable
 private fun MissingVoiceBanner(modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    Surface(
-        color = MaterialTheme.colorScheme.errorContainer,
-        shape = RoundedCornerShape(8.dp),
-        modifier = modifier.fillMaxWidth().clickable {
+    ReaderBanner(
+        label = "No voice installed",
+        message = "There's no voice for this book's language. Tap to open Text-to-speech settings.",
+        modifier = modifier,
+        onClick = {
             runCatching {
                 context.startActivity(
                     android.content.Intent("com.android.settings.TTS_SETTINGS")
@@ -540,14 +733,7 @@ private fun MissingVoiceBanner(modifier: Modifier = Modifier) {
                 )
             }
         },
-    ) {
-        Text(
-            "The voice for this book's language isn't installed. Tap to open Text-to-speech settings.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onErrorContainer,
-            modifier = Modifier.padding(12.dp),
-        )
-    }
+    )
 }
 
 @Composable
@@ -560,62 +746,120 @@ private fun ReaderBottomBar(
     bookTimeText: String?,
     isSpeaking: Boolean,
     palette: ReaderPalette,
+    progress: Float,
     onPrevChapter: () -> Unit,
     onNextChapter: () -> Unit,
     onPlayPause: () -> Unit,
     onNextSentence: () -> Unit,
     onPrevSentence: () -> Unit,
 ) {
-    Surface(color = palette.background, tonalElevation = 3.dp) {
-        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                IconButton(onClick = onPrevChapter, enabled = chapterIndex > 0) {
-                    Icon(Icons.Filled.KeyboardDoubleArrowLeft, contentDescription = "Previous chapter", tint = palette.text)
-                }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "Chapter ${chapterIndex + 1} of $chapterCount  ·  page $pageCurrent/$pageTotal",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = palette.secondaryText,
-                    )
-                    Text(
-                        text = buildString {
-                            append("$chapterTimeText left in chapter")
-                            if (bookTimeText != null) append("  ·  $bookTimeText left in book")
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = palette.secondaryText,
-                    )
-                }
-                IconButton(onClick = onNextChapter, enabled = chapterIndex < chapterCount - 1) {
-                    Icon(Icons.Filled.KeyboardDoubleArrowRight, contentDescription = "Next chapter", tint = palette.text)
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onPrevSentence) {
-                    Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous sentence", tint = palette.text, modifier = Modifier.size(32.dp))
-                }
-                Spacer(Modifier.size(24.dp))
-                FilledIconButton(onClick = onPlayPause, modifier = Modifier.size(60.dp)) {
-                    Icon(
-                        if (isSpeaking) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (isSpeaking) "Pause" else "Play",
-                        modifier = Modifier.size(34.dp),
-                    )
-                }
-                Spacer(Modifier.size(24.dp))
-                IconButton(onClick = onNextSentence) {
-                    Icon(Icons.Filled.SkipNext, contentDescription = "Next sentence", tint = palette.text, modifier = Modifier.size(32.dp))
-                }
-            }
+    Column(
+        modifier = Modifier
+            .background(palette.background)
+            .fillMaxWidth()
+            .padding(horizontal = ScreenPadding)
+            .padding(top = 10.dp, bottom = 10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 9.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            MonoText(
+                text = "Page $pageCurrent / $pageTotal  ·  ch ${chapterIndex + 1}/$chapterCount",
+                size = 10f,
+                tracking = 0.16f,
+                color = palette.secondaryText,
+            )
+            // The time still to run is the one number worth colouring: it is what changes
+            // while the voice is speaking.
+            MonoText(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = palette.accent)) { append(chapterTimeText.uppercase()) }
+                    append(" LEFT")
+                    if (bookTimeText != null) append("  ·  ${bookTimeText.uppercase()}")
+                },
+                size = 10f,
+                tracking = 0.16f,
+                color = palette.secondaryText,
+            )
         }
+        ThinProgress(
+            fraction = progress,
+            color = palette.accent,
+            track = palette.hairline,
+            modifier = Modifier.padding(bottom = 16.dp),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TransportIcon(
+                icon = Icons.Filled.KeyboardDoubleArrowLeft,
+                contentDescription = "Previous chapter",
+                tint = palette.secondaryText,
+                enabled = chapterIndex > 0,
+                onClick = onPrevChapter,
+            )
+            TransportIcon(
+                icon = Icons.Filled.SkipPrevious,
+                contentDescription = "Previous sentence",
+                tint = palette.text,
+                size = 26.dp,
+                onClick = onPrevSentence,
+            )
+            Box(
+                modifier = Modifier
+                    .size(68.dp)
+                    .clip(CircleShape)
+                    .background(palette.accent)
+                    .clickable(onClick = onPlayPause),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    if (isSpeaking) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (isSpeaking) "Pause" else "Play",
+                    tint = palette.background,
+                    modifier = Modifier.size(32.dp),
+                )
+            }
+            TransportIcon(
+                icon = Icons.Filled.SkipNext,
+                contentDescription = "Next sentence",
+                tint = palette.text,
+                size = 26.dp,
+                onClick = onNextSentence,
+            )
+            TransportIcon(
+                icon = Icons.Filled.KeyboardDoubleArrowRight,
+                contentDescription = "Next chapter",
+                tint = palette.secondaryText,
+                enabled = chapterIndex < chapterCount - 1,
+                onClick = onNextChapter,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TransportIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    tint: Color,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    size: Dp = 24.dp,
+) {
+    Box(
+        modifier = Modifier.size(48.dp).clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = if (enabled) tint else tint.copy(alpha = 0.3f),
+            modifier = Modifier.size(size),
+        )
     }
 }
