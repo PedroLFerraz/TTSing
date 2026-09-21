@@ -1,11 +1,11 @@
 # TTSing
 
-An Android app (Kotlin + Jetpack Compose) that reads your EPUB library aloud with
+An Android app (Kotlin + Jetpack Compose) that reads your EPUB and PDF library aloud with
 text-to-speech, highlighting the current sentence and word karaoke-style and
 auto-scrolling to follow along. Built for Portuguese and English books, with
 background playback and media-notification controls.
 
-![TTSing: the library, the reader mid-sentence, the reading settings sheet, and the news list](docs/screenshots/showcase.png)
+![TTSing: the library, the reader mid-sentence, a PDF being read, the reading settings sheet, and the news list](docs/screenshots/showcase.png)
 
 ## Look
 
@@ -18,14 +18,23 @@ app running, not mockups.
 
 ## Features
 
-- **Library** — pick any folder of `.epub` files (Storage Access Framework); covers,
-  titles, authors and reading progress are cached so the list opens instantly.
+- **Library** — pick any folder of `.epub` and `.pdf` files (Storage Access Framework);
+  covers, titles, authors and reading progress are cached so the list opens instantly.
+  Progress is measured in characters, so a book full of tiny cover and title-page items
+  doesn't look further along than it is.
 - **Reader** — native Compose rendering of chapters (headings, paragraphs, quotes,
   inline images) laid out as **swipeable pages** (left/right), like a real e-reader, with
   a table-of-contents drawer, adjustable font size, and black / light / sepia / system
   themes — black by default, since the app around the page is black whatever the system says.
-  Chapter text is paginated to the screen with `TextMeasurer`; swiping past the last page
-  rolls into the next chapter.
+  The book reads as **one continuous run of pages**: the last page of a chapter is followed
+  straight by the first page of the next, in both directions, and blank spine items are
+  skipped. Chapters stay as navigation — the contents drawer, « », and ticks on the progress
+  bar — never as a wall while reading.
+- **KOReader-style footer** — the page of the *whole book* (`PAGE 60 / 2571`) and its
+  percentage, the clock, a progress bar across the book with a tick at each chapter start,
+  then the time left in the chapter and in the book. Page counts come from paginating every
+  chapter exactly as the pager does, in the background, and are cached per screen size and
+  font size; the font slider moves in 5% steps so each size is one cached layout.
 - **Read-aloud TTS** — Android `TextToSpeech`, one utterance per sentence with a small
   look-ahead queue for smooth speech. The sentence being read turns yellow and the exact
   word inverts to black-on-yellow (`onRangeStart` word callbacks). Pages turn automatically
@@ -39,9 +48,12 @@ app running, not mockups.
   (US / GB / …), the currently-speaking voice is marked, each shows quality and
   offline/online, and a "Device default" option returns to the engine's built-in voice.
   Speed goes up to **2.5×**.
-- **Time to finish** — the bottom bar shows time left in the chapter and in the book. The
-  estimate uses the app's *measured* speaking speed (characters/second, smoothed over real
-  sentences and normalised to rate 1.0), so it adapts to your device, voice and speed.
+- **Time to finish** — time left in the chapter and in the book, from the app's *measured*
+  speaking speed, kept per voice and normalised to rate 1.0. It is total characters over
+  total listening time (pauses included), with a three-hour memory — not an average of each
+  sentence's speed, which is what used to make a 22-hour figure swing by hours between
+  sentences. On screen it only rises on a real change, so a slow passage can't make it climb
+  while you read forward.
 - **Messy-EPUB clean-up** — footnote call-outs, note bodies and page-break markers are
   stripped before rendering, so the voice doesn't read "palavra um" for a footnote number.
   Conservative by design: a well-formed book is left untouched.
@@ -49,6 +61,13 @@ app running, not mockups.
   `<meta>` claims `iso-8859-1` (obeying the declaration turns every `’` into `â€™`, on screen
   *and* in the voice), and `linear="no"` spine items, which are skipped so a book doesn't
   open on a blank cover page.
+- **PDFs** — read as reflowed text rather than page images, so font size, themes,
+  tap-to-read and the highlighting all work as they do for an EPUB. Running headers and page
+  numbers are dropped, lines are joined back into paragraphs, words hyphenated across a line
+  break are mended, a sentence cut by a page or column break is rejoined, and larger type
+  becomes headings. Sections follow the PDF's bookmarks, or runs of ten pages when it has
+  none. The cover is the first page, rendered. Figures are not carried over, and scanned PDFs
+  with no text layer say so rather than showing empty pages (there is no OCR).
 - **Tap to start** — tap any paragraph to begin reading from there (from the sentence you
   actually touched, not the top of the page).
 - **News feeds** — the RSS icon in the library opens straight onto the latest stories across
@@ -121,9 +140,15 @@ press play to see the sentence/word highlighting and auto-scroll.
 ## Architecture
 
 ```
+data/book/    BookDocument — an open book of either format: sections of blocks, a TOC,
+              images. EpubDocument wraps the EPUB parser; everything downstream uses this.
 data/epub/    EpubParser (ZIP + OPF + nav/NCX), ChapterLoader (XHTML → blocks via Jsoup),
               BreakIterator sentence segmentation. Pure JVM, unit-tested.
-data/db/      Room cache of book metadata + reading position.
+data/pdf/     PdfDocument (PDFBox-Android: positioned lines, bookmarks, metadata; first-page
+              cover via PdfRenderer), PdfReflow (lines → paragraphs and headings, headers
+              and page numbers dropped — pure JVM, unit-tested), PdfMetadata.
+data/db/      Room cache of book metadata, reading position and per-layout page counts.
+              Migrated, not dropped, on schema changes — reading positions live here.
 data/news/    RssParser (RSS 2.0 + Atom), ArticleExtractor (readability-style scoring to pull
               the article body out of a news page), HttpFetcher, NewsRepository. Its own Room
               database (`ttsing-news.db`) with real migrations — feed subscriptions are user
@@ -131,7 +156,8 @@ data/news/    RssParser (RSS 2.0 + Atom), ArticleExtractor (readability-style sc
 data/settings DataStore: folder URI, speed, pitch, font size, theme, voice per language
               (`voice_<lang>`), language override per book (`booklang_<id>`).
 data/         BookRepository — SAF folder scan, cover extraction, position persistence.
-tts/          SpeechEngine (sentence queue + word callbacks), BookContentSource
+tts/          SpeakingSpeed (measured chars/second, ratio of sums, per voice),
+              SpeechEngine (sentence queue + word callbacks), BookContentSource
               (sentence stream across block/chapter boundaries), ReadingService
               (foreground media service, MediaSession, notification, audio focus),
               ReadingController (binds the UI to the service).
@@ -139,8 +165,8 @@ anki/         CardDraft (sentence + target word → Anki HTML), CardAudio (its o
               TextToSpeech for synthesizeToFile, so playback is never interrupted),
               AnkiExporter (AnkiDroid AddContentApi: deck, note type, media, note).
 ui/library    Folder picker + cover grid.
-ui/reader     Chapter rendering, karaoke highlight, transport bar, TOC, settings sheet,
-              flashcard sheet.
+ui/reader     Continuous pager over a window of chapters, karaoke highlight, whole-book
+              page counts (BookPages), the footer, TOC, settings sheet, flashcard sheet.
 ```
 
 A reading position is `(chapterIndex, blockIndex, sentenceIndex)`; TTS utterance IDs encode
@@ -150,5 +176,7 @@ it, so every speech callback maps directly to what to highlight and where to scr
 
 Pure-JVM unit tests under `app/src/test` cover EPUB parsing (EPUB 2 NCX + EPUB 3 nav,
 percent-encoded hrefs, cover detection), the XHTML→blocks conversion, Portuguese/English
-sentence segmentation, and end-to-end parsing of the real sample EPUBs. Run with
-`.\gradlew.bat test`.
+sentence segmentation, end-to-end parsing of the real sample EPUBs, PDF reflow (headers
+and page numbers, de-hyphenation, paragraph and page breaks, headings), whole-book page
+arithmetic, and the speaking-speed estimate — including a replay of sentences logged on a
+device, against the old average and the new one. Run with `.\gradlew.bat test`.
