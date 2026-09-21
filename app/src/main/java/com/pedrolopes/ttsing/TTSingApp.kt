@@ -15,8 +15,10 @@ class TTSingApp : Application() {
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(this, AppDatabase::class.java, "ttsing.db")
-            // The DB is a rebuildable cache of the books folder, so a schema bump can
-            // simply re-scan rather than carry migrations.
+            // Book metadata is a rebuildable cache of the books folder, but reading positions
+            // live here too, so known upgrades migrate. The destructive fallback stays only for
+            // version gaps no migration covers.
+            .addMigrations(com.pedrolopes.ttsing.data.db.MIGRATION_2_3)
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
     }
@@ -48,6 +50,8 @@ class TTSingApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // PDFBox needs its bundled font and glyph resources registered before any PDF opens.
+        com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(this)
     }
 
     companion object {

@@ -1,43 +1,37 @@
 package com.pedrolopes.ttsing.tts
 
+import com.pedrolopes.ttsing.data.book.BookDocument
 import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.Chapter
-import com.pedrolopes.ttsing.data.epub.EpubBook
-import com.pedrolopes.ttsing.data.epub.EpubParser
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
- * Feeds sentences from an [EpubBook] to the [Narrator], loading and caching
- * chapters on demand and transparently crossing block/chapter boundaries.
+ * Feeds sentences from a [BookDocument] — EPUB or PDF — to the [Narrator], loading and
+ * caching sections on demand and transparently crossing block/section boundaries.
  */
 class BookContentSource(
-    private val parser: EpubParser,
-    val book: EpubBook,
+    private val document: BookDocument,
 ) : ReadableContent {
 
-    override val title: String get() = book.title
+    override val title: String get() = document.title
 
-    override val author: String? get() = book.author
+    override val author: String? get() = document.author
 
-    override val locale: Locale = book.locale()
+    override val locale: Locale = document.locale()
 
-    override val sectionCount: Int get() = book.spine.size
+    override val sectionCount: Int get() = document.sectionCount
 
     override suspend fun blockCount(sectionIndex: Int): Int = chapter(sectionIndex)?.blocks?.size ?: 0
     private val mutex = Mutex()
     private val cache = LinkedHashMap<Int, Chapter>()
 
     suspend fun chapter(index: Int): Chapter? {
-        if (index !in book.spine.indices) return null
+        if (index !in 0 until document.sectionCount) return null
         return mutex.withLock {
-            cache[index] ?: withContext(Dispatchers.IO) {
-                parser.loadChapter(book, index, locale)
-            }.also {
+            cache[index] ?: document.loadSection(index, locale).also {
                 cache[index] = it
                 while (cache.size > MAX_CACHED) cache.remove(cache.keys.first())
             }
@@ -48,7 +42,7 @@ class BookContentSource(
         var chapterIndex = position.chapterIndex.coerceAtLeast(0)
         var blockIndex = position.blockIndex.coerceAtLeast(0)
         var sentenceIndex = position.sentenceIndex.coerceAtLeast(0)
-        while (chapterIndex < book.spine.size) {
+        while (chapterIndex < document.sectionCount) {
             val chapter = chapter(chapterIndex) ?: return null
             while (blockIndex < chapter.blocks.size) {
                 val block = chapter.blocks[blockIndex]

@@ -21,4 +21,10 @@ data class BookEntity(
     val sentenceIndex: Int = 0,
     val progressPercent: Float = 0f,
     val lastOpenedAt: Long = 0,
+    /** [com.pedrolopes.ttsing.data.book.BookFormat] name; decides how the file is opened. */
+    val format: String = "EPUB",
+    /** Pages per section at [pageLayoutKey]'s screen size and font scale, comma-separated. */
+    val pageCounts: String? = null,
+    /** The layout [pageCounts] were measured for; any other layout recounts. */
+    val pageLayoutKey: String? = null,
 )

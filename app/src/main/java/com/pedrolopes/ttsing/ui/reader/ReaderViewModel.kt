@@ -7,10 +7,9 @@ import com.pedrolopes.ttsing.anki.AnkiExporter
 import com.pedrolopes.ttsing.anki.CardAudio
 import com.pedrolopes.ttsing.anki.CardDraft
 import com.pedrolopes.ttsing.data.BookRepository
+import com.pedrolopes.ttsing.data.book.BookDocument
 import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.Chapter
-import com.pedrolopes.ttsing.data.epub.EpubBook
-import com.pedrolopes.ttsing.data.epub.EpubParser
 import com.pedrolopes.ttsing.data.epub.TocEntry
 import com.pedrolopes.ttsing.data.news.ArticleImageStore
 import com.pedrolopes.ttsing.data.news.NewsRepository
@@ -55,9 +54,8 @@ class ReaderViewModel(
     private val settings: SettingsRepository,
 ) : ViewModel() {
 
-    private var parser: EpubParser? = null
+    private var document: BookDocument? = null
     private var source: BookContentSource? = null
-    private var book: EpubBook? = null
 
     /** True when this "book" is actually a news article: one section, no chapters, no TOC. */
     private val isArticle = NewsRepository.isArticle(bookId)
@@ -73,24 +71,27 @@ class ReaderViewModel(
             loadArticle()
             return
         }
-        if (book != null) return
+        if (document != null) return
         viewModelScope.launch {
             val savedChapter = repo.getBook(bookId)?.chapterIndex ?: 0
-            val opened = runCatching { repo.openEpub(bookId) }.getOrNull()
+            val opened = runCatching { repo.openBook(bookId) }.getOrNull()
             if (opened == null) {
                 _ui.value = _ui.value.copy(isLoading = false, error = "Could not open this book.")
                 return@launch
             }
-            parser = opened.first
-            book = opened.second
-            source = BookContentSource(opened.first, opened.second)
+            document = opened
             _ui.value = _ui.value.copy(
-                title = opened.second.title,
-                toc = opened.second.toc,
-                chapterCount = opened.second.spine.size,
-                languageTag = opened.second.language,
+                title = opened.title,
+                toc = opened.toc,
+                chapterCount = opened.sectionCount,
+                languageTag = opened.language,
             )
-            showChapter(savedChapter.coerceIn(0, opened.second.spine.size - 1))
+            opened.unreadableReason?.let { reason ->
+                _ui.value = _ui.value.copy(isLoading = false, error = reason)
+                return@launch
+            }
+            source = BookContentSource(opened)
+            showChapter(savedChapter.coerceIn(0, opened.sectionCount - 1))
         }
         // Character counts drive the time estimates; computing them walks the whole book,
         // so do it off the critical path and cache it in the database.
@@ -144,7 +145,7 @@ class ReaderViewModel(
     fun showChapter(index: Int) {
         if (isArticle) return
         val src = source ?: return
-        if (index !in 0 until (book?.spine?.size ?: 0)) return
+        if (index !in 0 until (document?.sectionCount ?: 0)) return
         viewModelScope.launch {
             _ui.value = _ui.value.copy(isLoading = true)
             val chapter: Chapter? = runCatching { src.chapter(index) }.getOrNull()
@@ -177,13 +178,13 @@ class ReaderViewModel(
         if (isArticle) {
             articleImages.bytes(key)
         } else {
-            withContext(Dispatchers.IO) { parser?.readEntry(key) }
+            document?.readImage(key)
         }
 
     // ---- Anki cards ----
 
     /** The language the EPUB declares; the user's per-book override is applied on top. */
-    fun bookLocale(): Locale = articleLocale ?: book?.locale() ?: Locale.getDefault()
+    fun bookLocale(): Locale = articleLocale ?: document?.locale() ?: Locale.getDefault()
 
     /** Language of the article being read, resolved from its feed. */
     private var articleLocale: Locale? = null
@@ -251,8 +252,8 @@ class ReaderViewModel(
     }
 
     override fun onCleared() {
-        parser?.close()
-        parser = null
+        document?.close()
+        document = null
         source = null
         cardAudio.shutdown()
         super.onCleared()

@@ -28,7 +28,8 @@ import androidx.lifecycle.lifecycleScope
 import com.pedrolopes.ttsing.MainActivity
 import com.pedrolopes.ttsing.R
 import com.pedrolopes.ttsing.TTSingApp
-import com.pedrolopes.ttsing.data.epub.EpubParser
+import com.pedrolopes.ttsing.data.book.BookDocument
+import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.news.NewsRepository
 import kotlinx.coroutines.Job
@@ -54,7 +55,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     private val binder = LocalBinder()
 
     private lateinit var engine: Narrator
-    private var parser: EpubParser? = null
+    private var document: BookDocument? = null
     private var content: ReadableContent? = null
     private var openMutex = Mutex()
 
@@ -279,8 +280,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             return engine.currentRef?.position ?: _state.value.position
         }
         persistPosition()
-        parser?.close()
-        parser = null
+        document?.close()
+        document = null
         content = null
         activeLocale = null
 
@@ -318,12 +319,17 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             _state.value = PlaybackState(error = "Book not found")
             return null
         }
-        val opened = runCatching { app.books.openEpub(bookId) }.getOrNull() ?: run {
+        val opened = runCatching { app.books.openBook(bookId) }.getOrNull() ?: run {
             _state.value = PlaybackState(error = "Could not open book file")
             return null
         }
-        parser = opened.first
-        return BookContentSource(opened.first, opened.second) to
+        opened.unreadableReason?.let { reason ->
+            opened.close()
+            _state.value = PlaybackState(error = reason)
+            return null
+        }
+        document = opened
+        return BookContentSource(opened) to
             ReadingPosition(entity.chapterIndex, entity.blockIndex, entity.sentenceIndex)
     }
 
@@ -590,12 +596,28 @@ class ReadingService : LifecycleService(), Narrator.Listener {
                 app.news.savePosition(bookId, s.position.blockIndex, s.position.sentenceIndex)
                 return@launch
             }
-            val blocks = source.blockCount(s.position.chapterIndex).coerceAtLeast(1)
-            val sectionCount = source.sectionCount.coerceAtLeast(1)
-            val withinSection = s.position.blockIndex.toFloat() / blocks
-            val progress = (s.position.chapterIndex + withinSection) / sectionCount
+            val progress = charProgress(bookId, source, s.position) ?: run {
+                // Before the book's character counts exist: the old section-based guess.
+                val blocks = source.blockCount(s.position.chapterIndex).coerceAtLeast(1)
+                val sectionCount = source.sectionCount.coerceAtLeast(1)
+                (s.position.chapterIndex + s.position.blockIndex.toFloat() / blocks) / sectionCount
+            }
             app.books.savePosition(bookId, s.position, progress)
         }
+    }
+
+    /**
+     * How far through the book [position] is by characters, which is what the library's bar
+     * should show: counting sections instead made a book with many tiny spine items (a
+     * cover, a title page, a dedication) look far further along than it was.
+     */
+    private suspend fun charProgress(bookId: String, source: ReadableContent, position: ReadingPosition): Float? {
+        val counts = app.books.cachedChapterCharCounts(bookId) ?: return null
+        val total = counts.sum().takeIf { it > 0 } ?: return null
+        val blocks = (source as? BookContentSource)?.chapter(position.chapterIndex)?.blocks ?: return null
+        val before = counts.take(position.chapterIndex).sum() +
+            blocks.take(position.blockIndex).filterIsInstance<Block.Text>().sumOf { it.text.length }
+        return before.toFloat() / total
     }
 
     private fun acquireWakeLock() {
@@ -614,7 +636,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     override fun onDestroy() {
         persistPosition()
         engine.shutdown()
-        parser?.close()
+        document?.close()
         mediaSession?.release()
         focusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
         runCatching { unregisterReceiver(becomingNoisyReceiver) }

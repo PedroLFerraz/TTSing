@@ -26,6 +26,9 @@ interface BookDao {
     @Query("UPDATE books SET chapterChars = :chapterChars WHERE id = :id")
     suspend fun updateChapterChars(id: String, chapterChars: String)
 
+    @Query("UPDATE books SET pageCounts = :pageCounts, pageLayoutKey = :layoutKey WHERE id = :id")
+    suspend fun updatePageCounts(id: String, pageCounts: String, layoutKey: String)
+
     @Query(
         """UPDATE books SET chapterIndex = :chapter, blockIndex = :block, sentenceIndex = :sentence,
            progressPercent = :progress, lastOpenedAt = :openedAt WHERE id = :id""",
