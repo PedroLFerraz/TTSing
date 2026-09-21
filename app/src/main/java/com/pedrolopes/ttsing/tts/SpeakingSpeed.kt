@@ -14,8 +14,7 @@ import kotlin.math.pow
  * This keeps the ratio of sums instead — total characters over total time — which weights
  * each sentence by how long it took, i.e. by how much it actually contributes to how long the
  * book will take. Both totals decay with *listening time* (not with sentence count), so the
- * figure settles and then barely moves, but still follows a real change such as a new voice
- * over the next half hour of listening.
+ * figure settles and then barely moves, while a new voice gets a measurement of its own.
  *
  * Pauses between sentences are counted on purpose: they are part of how long the book takes.
  */
@@ -54,22 +53,38 @@ class SpeakingSpeed(
         const val PRIOR_CPS = 15f
 
         /**
-         * The prior is worth one minute of listening: enough that the first few sentences
-         * can't send the estimate somewhere absurd, little enough that a few minutes of real
-         * speech outweigh it.
+         * The prior is worth twenty minutes of listening. A one-minute prior was tried first
+         * and on a real book it was not enough: a title page read as "W. H. D." measures two
+         * characters in 700 ms, and each such fragment moved a 22-hour estimate by a quarter
+         * of an hour. At twenty minutes one sentence moves it by a fraction of a percent.
          */
-        const val PRIOR_MILLIS = 60_000.0
+        const val PRIOR_MILLIS = 20 * 60_000.0
         const val PRIOR_CHARS = PRIOR_CPS * PRIOR_MILLIS / 1000.0
 
-        /** Twenty minutes of listening halves the weight of everything heard before it. */
-        const val DEFAULT_HALF_LIFE_MILLIS = 20 * 60_000.0
+        /** A fresh measurement starting from [cps] — this device's last known speed — as prior. */
+        fun seededAt(cps: Float): SpeakingSpeed {
+            val prior = cps.takeIf { it in 1f..200f } ?: PRIOR_CPS
+            return SpeakingSpeed(prior * PRIOR_MILLIS / 1000.0, PRIOR_MILLIS)
+        }
 
-        /** Parses [encode]'s output; anything unreadable falls back to the prior. */
-        fun decode(value: String?): SpeakingSpeed {
-            val parts = value?.split(',') ?: return SpeakingSpeed()
+        /**
+         * Three hours of listening halve the weight of everything heard before. A long memory,
+         * because speeds are kept per voice — a new voice starts its own measurement rather
+         * than waiting for this one to adapt — so all the decay has to follow is slow drift.
+         * A twenty-minute half-life was tried and let three minutes of a copyright page (read
+         * digit by digit, so genuinely slow) move a 23-hour estimate by forty minutes.
+         */
+        const val DEFAULT_HALF_LIFE_MILLIS = 3 * 60 * 60_000.0
+
+        /** Parses [encode]'s output; anything unreadable starts over from [fallbackCps]. */
+        fun decode(value: String?, fallbackCps: Float = PRIOR_CPS): SpeakingSpeed {
+            val parts = value?.split(',') ?: return seededAt(fallbackCps)
             val chars = parts.getOrNull(0)?.toDoubleOrNull()
             val millis = parts.getOrNull(1)?.toDoubleOrNull()
-            if (chars == null || millis == null || chars <= 0.0 || millis <= 0.0) return SpeakingSpeed()
+            if (chars == null || millis == null || chars <= 0.0 || millis <= 0.0) return seededAt(fallbackCps)
+            // Never less sure than the prior: a speed saved after a few sentences keeps its
+            // rate but is weighted as ten minutes' worth, or it would jump like a fresh one.
+            if (millis < PRIOR_MILLIS) return SpeakingSpeed(chars / millis * PRIOR_MILLIS, PRIOR_MILLIS)
             return SpeakingSpeed(chars, millis)
         }
     }

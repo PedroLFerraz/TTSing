@@ -401,7 +401,6 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
         speed.add(previousChars, elapsedMs, currentRate)
         _state.value = _state.value.copy(charsPerSecond = speed.charsPerSecond)
-        android.util.Log.d(SPEED_TAG, "cps=%.3f after %dch/%dms".format(speed.charsPerSecond, previousChars, elapsedMs))
 
         listenedSincePersistMs += elapsedMs
         if (listenedSincePersistMs >= SPEED_PERSIST_EVERY_MS) {
@@ -416,7 +415,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         if (key == speedVoiceKey) return
         if (speedVoiceKey != null) persistSpeed()
         speedVoiceKey = key
-        speed = SpeakingSpeed.decode(app.settings.settings.first().speeds[key])
+        val stored = app.settings.settings.first()
+        // A voice heard for the first time starts from this device's last measured speed.
+        speed = SpeakingSpeed.decode(stored.speeds[key], fallbackCps = stored.charsPerSecond)
         previousSentenceStartedAt = null
         _state.value = _state.value.copy(charsPerSecond = speed.charsPerSecond)
     }
@@ -660,7 +661,6 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         const val WAKE_LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
         /** Accumulators are written after this much listening, and on pause and voice change. */
         const val SPEED_PERSIST_EVERY_MS = 30_000L
-        const val SPEED_TAG = "TTSingSpeed"
 
         fun playIntent(context: Context, bookId: String, position: ReadingPosition?): Intent =
             Intent(context, ReadingService::class.java).apply {

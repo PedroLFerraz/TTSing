@@ -73,12 +73,50 @@ class SpeakingSpeedTest {
     }
 
     @Test
-    fun `the prior is the default speed and is soon outweighed`() {
+    fun `the prior is the default speed and is outweighed as listening accumulates`() {
         val speed = SpeakingSpeed()
         assertEquals(SpeakingSpeed.PRIOR_CPS, speed.charsPerSecond, 0.001f)
-        // Five minutes of a voice at exactly 10 cps.
-        repeat(100) { speed.add(charsSpoken = 30, elapsedMillis = 3_000, rate = 1f) }
-        assertEquals(10f, speed.charsPerSecond, 1.2f)
+        // Two hours of a voice at exactly 10 cps — a third of the way from the prior after
+        // half an hour, most of the way after two. Deliberately unhurried: see PRIOR_MILLIS.
+        repeat(600) { speed.add(charsSpoken = 30, elapsedMillis = 3_000, rate = 1f) }
+        assertTrue(speed.charsPerSecond < 12.5f)
+        repeat(1800) { speed.add(charsSpoken = 30, elapsedMillis = 3_000, rate = 1f) }
+        assertEquals(10f, speed.charsPerSecond, 0.8f)
+    }
+
+    @Test
+    fun `a speed saved after only a few sentences keeps its rate but not its jumpiness`() {
+        // 40 seconds of listening at 14 cps, saved under the old one-minute prior.
+        val light = SpeakingSpeed.decode("${14.0 * 40},40000.0")
+        assertEquals(14f, light.charsPerSecond, 0.001f)
+        assertEquals(SpeakingSpeed.PRIOR_MILLIS, light.millis, 0.001)
+    }
+
+    @Test
+    fun `a fresh voice starts from the device's last speed, not the generic one`() {
+        assertEquals(12.5f, SpeakingSpeed.seededAt(12.5f).charsPerSecond, 0.001f)
+        assertEquals(12.5f, SpeakingSpeed.decode(null, fallbackCps = 12.5f).charsPerSecond, 0.001f)
+        // Nonsense stored speeds fall back to the generic prior.
+        assertEquals(SpeakingSpeed.PRIOR_CPS, SpeakingSpeed.seededAt(0f).charsPerSecond, 0.001f)
+    }
+
+    @Test
+    fun `the title-page fragments that moved the estimate on the device no longer do`() {
+        // Logged on the emulator reading Plato's title page and introduction, straight after
+        // the voice's speed was first created. With the one-minute prior these moved the speed
+        // by about 1% a sentence — some 13 minutes on a 22-hour book, each time.
+        val logged = listOf(
+            83 to 4745L, 24 to 2035L, 84 to 5304L, 16 to 1603L, 2 to 698L,
+            2 to 679L, 5 to 922L, 37 to 2520L, 10 to 2132L, 276 to 20762L,
+        )
+        val speed = SpeakingSpeed.seededAt(15f)
+        val values = listOf(speed.charsPerSecond) + logged.map { (chars, ms) ->
+            speed.add(chars, ms, rate = 1f)
+            speed.charsPerSecond
+        }
+        println("fresh-voice max sentence-to-sentence swing: ${maxSwing(values)}")
+        // Under half a percent: about six minutes on 22 hours, inside the display's hysteresis.
+        assertTrue("fresh swing ${maxSwing(values)}", maxSwing(values) < 0.005f)
     }
 
     @Test
