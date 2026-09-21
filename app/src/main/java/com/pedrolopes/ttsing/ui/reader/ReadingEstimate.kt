@@ -44,10 +44,17 @@ object ReadingEstimate {
         return (chars / effective).roundToInt()
     }
 
-    /** "3 h 20 min", "12 min", "< 1 min". */
+    /**
+     * "3 h 20 min", "12 min", "< 1 min".
+     *
+     * Past an hour the figure is rounded to 5 minutes. Precision beyond that is false —
+     * nobody plans around "4 h 17 min" versus "4 h 18" — and it is what made the book total
+     * tick on every page turn even when the underlying speed was steady.
+     */
     fun formatDuration(seconds: Int): String {
         if (seconds < 60) return "< 1 min"
-        val totalMinutes = seconds / 60
+        val exactMinutes = seconds / 60
+        val totalMinutes = if (exactMinutes >= 60) ((exactMinutes + 2) / 5) * 5 else exactMinutes
         val hours = totalMinutes / 60
         val minutes = totalMinutes % 60
         return when {

@@ -68,4 +68,16 @@ class ReadingEstimateTest {
         assertEquals("2 h", ReadingEstimate.formatDuration(2 * 3600))
         assertEquals("3 h 20 min", ReadingEstimate.formatDuration(3 * 3600 + 20 * 60))
     }
+
+    @Test
+    fun `past an hour, rounds to five minutes`() {
+        assertEquals("59 min", ReadingEstimate.formatDuration(59 * 60))
+        assertEquals("3 h 20 min", ReadingEstimate.formatDuration(3 * 3600 + 22 * 60))
+        assertEquals("3 h 25 min", ReadingEstimate.formatDuration(3 * 3600 + 23 * 60))
+        assertEquals("2 h", ReadingEstimate.formatDuration(3600 + 58 * 60))
+        // Every minute from 5 h 08 to 5 h 12 reads the same, so on a long book the figure
+        // changes once per five minutes of reading rather than on every page turn.
+        val window = (8..12).map { ReadingEstimate.formatDuration(5 * 3600 + it * 60) }.toSet()
+        assertEquals(setOf("5 h 10 min"), window)
+    }
 }

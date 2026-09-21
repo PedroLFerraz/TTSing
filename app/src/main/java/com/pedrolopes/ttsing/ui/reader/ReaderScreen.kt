@@ -142,14 +142,17 @@ fun ReaderScreen(
     val fromBlock = if (trackPlayback) playback.position.blockIndex else pageInfo.firstBlockIndex
     val fromOffset = if (trackPlayback) (playback.sentenceRange?.first ?: 0) else pageInfo.firstOffset
     val remainingChapterChars = ReadingEstimate.remainingCharsInChapter(ui.blocks, fromBlock, fromOffset)
+    // The service's live figure when it has one; the persisted one is written behind and
+    // would make the estimate jump in steps.
+    val charsPerSecond = playback.charsPerSecond.takeIf { isThisBook } ?: settings.charsPerSecond
     val chapterTimeText = ReadingEstimate.formatDuration(
-        ReadingEstimate.secondsFor(remainingChapterChars, settings.charsPerSecond, settings.speechRate),
+        ReadingEstimate.secondsFor(remainingChapterChars, charsPerSecond, settings.speechRate),
     )
     val bookTimeText = ui.chapterCharCounts.takeIf { it.isNotEmpty() }?.let { counts ->
         ReadingEstimate.formatDuration(
             ReadingEstimate.secondsFor(
                 ReadingEstimate.remainingCharsInBook(remainingChapterChars, counts, ui.chapterIndex),
-                settings.charsPerSecond,
+                charsPerSecond,
                 settings.speechRate,
             ),
         )
