@@ -1,6 +1,13 @@
 package com.pedrolopes.ttsing.ui.reader
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
+import androidx.compose.runtime.key
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.platform.LocalFontFamilyResolver
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -51,6 +58,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,6 +97,7 @@ import com.pedrolopes.ttsing.ui.theme.AppFonts
 import com.pedrolopes.ttsing.ui.theme.Ink
 import kotlinx.coroutines.launch
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private val DefaultSettings = AppSettings(
     libraryFolderUri = null,
@@ -96,6 +105,16 @@ private val DefaultSettings = AppSettings(
     pitch = 1f,
     fontScale = 1f,
     readerTheme = ReaderTheme.DARK,
+)
+
+/** The page on screen, as the pager reports it: where it is in its chapter, and where it starts. */
+private data class VisiblePage(
+    val chapterIndex: Int,
+    val pageInChapter: Int,
+    val pagesInChapter: Int,
+    /** First text on the page — the reading position when the voice isn't playing. */
+    val firstBlockIndex: Int,
+    val firstOffset: Int,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -116,10 +135,19 @@ fun ReaderScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showSettings by remember { mutableStateOf(false) }
-    var pageInfo by remember { mutableStateOf(PageInfo()) }
+    var visible by remember { mutableStateOf<VisiblePage?>(null) }
     var cardDraft by remember { mutableStateOf<CardDraft?>(null) }
     val snackbarHost = remember { SnackbarHostState() }
     val drawerState = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
+
+    // Counting pages happens off the main thread, so it gets its own measurer: the one the
+    // composition uses keeps a cache that is not safe to share across threads.
+    val fontResolver = LocalFontFamilyResolver.current
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    val countingMeasurer = remember(fontResolver, density, layoutDirection) {
+        TextMeasurer(fontResolver, density, layoutDirection, cacheSize = 0)
+    }
 
     LaunchedEffect(Unit) { viewModel.load() }
     LaunchedEffect(connected) { if (connected) controller.prepare(bookId) }
@@ -130,32 +158,56 @@ fun ReaderScreen(
         if (isThisBook) viewModel.syncToChapter(playback.position.chapterIndex)
     }
 
-    val activeBlockIndex = if (isThisBook && playback.position.chapterIndex == ui.chapterIndex) {
-        playback.position.blockIndex
-    } else {
-        null
-    }
+    val visibleChapter = visible?.chapterIndex ?: ui.anchorChapter
+    val visibleTitle = ui.window.firstOrNull { it.index == visibleChapter }?.title
 
-    // Time to finish: measured from where the voice is when playing, otherwise from the
-    // top of the visible page.
-    val trackPlayback = isThisBook && playback.isSpeaking && activeBlockIndex != null
-    val fromBlock = if (trackPlayback) playback.position.blockIndex else pageInfo.firstBlockIndex
-    val fromOffset = if (trackPlayback) (playback.sentenceRange?.first ?: 0) else pageInfo.firstOffset
-    val remainingChapterChars = ReadingEstimate.remainingCharsInChapter(ui.blocks, fromBlock, fromOffset)
+    // ---- where the reader is, for the footer ----
+
+    // Stored counts for the book, with the chapter on screen corrected to what the pager
+    // actually laid out. A single-section article needs no counting: its pages are all here.
+    val pageCounts: List<Int>? = ui.pageCounts
+        ?.let { counts ->
+            counts.toMutableList().also { m ->
+                visible?.let { v -> if (v.chapterIndex in m.indices) m[v.chapterIndex] = v.pagesInChapter }
+            }
+        }
+        ?: visible?.takeIf { ui.chapterCount == 1 }?.let { listOf(it.pagesInChapter) }
+
+    // Time to finish: from where the voice is when it's playing, otherwise from the top of
+    // the visible page.
+    val voiceChapter = playback.position.chapterIndex
+    val trackPlayback = isThisBook && playback.isSpeaking && ui.window.any { it.index == voiceChapter }
+    val fromChapter = if (trackPlayback) voiceChapter else visibleChapter
+    val fromBlocks = ui.window.firstOrNull { it.index == fromChapter }?.blocks.orEmpty()
+    val fromBlock = if (trackPlayback) playback.position.blockIndex else (visible?.firstBlockIndex ?: 0)
+    val fromOffset = if (trackPlayback) (playback.sentenceRange?.first ?: 0) else (visible?.firstOffset ?: 0)
+    val remainingChapterChars = ReadingEstimate.remainingCharsInChapter(fromBlocks, fromBlock, fromOffset)
     // The service's live figure when it has one; the persisted one is written behind and
     // would make the estimate jump in steps.
     val charsPerSecond = playback.charsPerSecond.takeIf { isThisBook } ?: settings.charsPerSecond
-    val chapterTimeText = ReadingEstimate.formatDuration(
-        ReadingEstimate.secondsFor(remainingChapterChars, charsPerSecond, settings.speechRate),
+    val chapterSeconds = ReadingEstimate.secondsFor(remainingChapterChars, charsPerSecond, settings.speechRate)
+    val chapterTimeText = ReadingEstimate.formatDuration(rememberSteadySeconds(chapterSeconds) ?: chapterSeconds)
+    val charCounts = ui.chapterCharCounts
+    val remainingBookChars = charCounts.takeIf { it.isNotEmpty() }
+        ?.let { ReadingEstimate.remainingCharsInBook(remainingChapterChars, it, fromChapter) }
+    val bookSeconds = rememberSteadySeconds(
+        remainingBookChars?.let { ReadingEstimate.secondsFor(it, charsPerSecond, settings.speechRate) },
     )
-    val bookTimeText = ui.chapterCharCounts.takeIf { it.isNotEmpty() }?.let { counts ->
-        ReadingEstimate.formatDuration(
-            ReadingEstimate.secondsFor(
-                ReadingEstimate.remainingCharsInBook(remainingChapterChars, counts, ui.chapterIndex),
-                charsPerSecond,
-                settings.speechRate,
-            ),
-        )
+    val bookTimeText = bookSeconds?.let(ReadingEstimate::formatDuration)
+
+    val pageInChapter = visible?.pageInChapter ?: 0
+    val progress = when {
+        pageCounts != null -> BookPages.fraction(pageCounts, visibleChapter, pageInChapter)
+        remainingBookChars != null && charCounts.sum() > 0 -> 1f - remainingBookChars.toFloat() / charCounts.sum()
+        else -> 0f
+    }
+    val pageLabel = when {
+        pageCounts != null ->
+            "Page ${BookPages.bookPage(pageCounts, visibleChapter, pageInChapter)} / ${BookPages.total(pageCounts)}"
+        else -> "Counting pages"
+    }
+    val ticks = remember(pageCounts, ui.toc) {
+        pageCounts?.let { counts -> BookPages.chapterTicks(counts, ui.toc.map { it.spineIndex }) }.orEmpty()
     }
 
     ModalNavigationDrawer(
@@ -173,7 +225,7 @@ fun ReaderScreen(
                 Hairline(modifier = Modifier.padding(vertical = 10.dp), inset = 24.dp)
                 LazyColumn {
                     itemsIndexed(ui.toc) { _, entry ->
-                        val current = entry.spineIndex == ui.chapterIndex
+                        val current = entry.spineIndex == visibleChapter
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -211,7 +263,7 @@ fun ReaderScreen(
             topBar = {
                 ReaderTopBar(
                     title = ui.title,
-                    chapterLabel = chapterLabel(ui.chapterIndex, ui.chapterCount, ui.chapterTitle),
+                    chapterLabel = chapterLabel(visibleChapter, ui.chapterCount, visibleTitle),
                     palette = palette,
                     articleLink = ui.articleLink,
                     onBack = onBack,
@@ -221,18 +273,21 @@ fun ReaderScreen(
                 )
             },
             bottomBar = {
-                ReaderBottomBar(
-                    chapterIndex = ui.chapterIndex,
-                    chapterCount = ui.chapterCount,
-                    pageCurrent = pageInfo.current,
-                    pageTotal = pageInfo.total,
+                ReaderFooter(
+                    // A book that could not be opened has no pages to count or time to run.
+                    showPosition = ui.error == null && ui.window.isNotEmpty(),
+                    pageLabel = pageLabel,
+                    percent = (progress * 100).toInt(),
+                    progress = progress,
+                    ticks = ticks,
                     chapterTimeText = chapterTimeText,
                     bookTimeText = bookTimeText,
+                    canGoBack = ui.window.firstOrNull()?.index?.let { it < visibleChapter } ?: false,
+                    canGoForward = ui.window.lastOrNull()?.index?.let { it > visibleChapter } ?: false,
                     isSpeaking = isThisBook && playback.isSpeaking,
                     palette = palette,
-                    progress = if (pageInfo.total > 0) pageInfo.current.toFloat() / pageInfo.total else 0f,
-                    onPrevChapter = { viewModel.previousChapter() },
-                    onNextChapter = { viewModel.nextChapter() },
+                    onPrevChapter = { viewModel.stepChapter(visibleChapter, forward = false) },
+                    onNextChapter = { viewModel.stepChapter(visibleChapter, forward = true) },
                     onPlayPause = { controller.togglePlayPause(bookId) },
                     onNextSentence = { controller.next() },
                     onPrevSentence = { controller.previous() },
@@ -241,34 +296,38 @@ fun ReaderScreen(
         ) { padding ->
             Box(modifier = Modifier.fillMaxSize().padding(padding)) {
                 when {
-                    ui.isLoading && ui.blocks.isEmpty() ->
-                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                     ui.error != null ->
                         Text(
                             ui.error!!,
                             color = palette.text,
-                            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                            fontFamily = AppFonts.Grotesk,
+                            fontSize = 16.sp,
+                            lineHeight = 24.sp,
+                            modifier = Modifier.align(Alignment.Center).padding(32.dp),
                             textAlign = TextAlign.Center,
                         )
-                    else -> PagedChapter(
-                        blocks = ui.blocks,
-                        chapterIndex = ui.chapterIndex,
-                        hasNextChapter = ui.chapterIndex < ui.chapterCount - 1,
+                    ui.window.isEmpty() ->
+                        CircularProgressIndicator(color = palette.accent, modifier = Modifier.align(Alignment.Center))
+                    else -> PagedBook(
+                        window = ui.window,
+                        jump = ui.jump,
                         fontScale = settings.fontScale,
                         palette = palette,
-                        activeBlockIndex = activeBlockIndex,
+                        voiceChapter = voiceChapter.takeIf { isThisBook },
+                        activeBlockIndex = playback.position.blockIndex.takeIf { isThisBook },
                         // Follow the spoken WORD, so a sentence spanning a page boundary
                         // flips the page exactly when the highlight crosses it.
                         activeOffset = playback.wordRange?.first ?: playback.sentenceRange?.first,
                         sentenceRange = playback.sentenceRange,
                         wordRange = playback.wordRange,
                         onTapStart = { position -> controller.play(bookId, position) },
-                        onMakeCard = { blockIndex, offset ->
-                            cardDraft = viewModel.draftFor(blockIndex, offset)
+                        onMakeCard = { chapter, blockIndex, offset ->
+                            cardDraft = viewModel.draftFor(chapter, blockIndex, offset)
                         },
-                        onRequestNextChapter = { viewModel.nextChapter() },
                         loadImage = viewModel::imageBytes,
-                        onPageInfo = { info -> pageInfo = info },
+                        onGeometry = { geometry -> viewModel.ensurePageCounts(geometry, countingMeasurer, density) },
+                        onVisiblePage = { page -> visible = page },
+                        onSettledChapter = viewModel::onVisibleChapter,
                     )
                 }
 
@@ -276,7 +335,7 @@ fun ReaderScreen(
                 when {
                     // An engine failure is the most urgent thing to say: without it, a voice
                     // that cannot speak just looks like a reader that stopped working.
-                    playbackError != null -> EngineErrorBanner(
+                    playbackError != null && ui.error == null -> EngineErrorBanner(
                         message = playbackError,
                         onOpenSettings = { showSettings = true },
                         modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
@@ -342,7 +401,10 @@ fun ReaderScreen(
                 scope.launch { app.settings.setPitch(pitch) }
                 controller.applySpeechSettings(settings.speechRate, pitch)
             },
-            onFontScale = { scale -> scope.launch { app.settings.setFontScale(scale) } },
+            onFontScale = { scale ->
+                // Snapped to exact 5% steps, so the same size is always the same layout key.
+                scope.launch { app.settings.setFontScale((scale * 20).roundToInt() / 20f) }
+            },
             onTheme = { theme -> scope.launch { app.settings.setReaderTheme(theme) } },
             onSelectDefaultVoice = {
                 scope.launch { app.settings.setVoice(languageCode, null) }
@@ -356,101 +418,185 @@ fun ReaderScreen(
     }
 }
 
+/**
+ * [seconds], held steady: the value on screen only moves when a fresh estimate is clearly
+ * different (see [ReadingEstimate.steady]).
+ */
 @Composable
-private fun PagedChapter(
-    blocks: List<Block>,
-    chapterIndex: Int,
-    hasNextChapter: Boolean,
+private fun rememberSteadySeconds(seconds: Int?): Int? {
+    val shown = remember { SteadyHolder() }
+    if (seconds == null) return null
+    shown.value = ReadingEstimate.steady(shown.value, seconds)
+    return shown.value
+}
+
+/** Bookkeeping for [rememberSteadySeconds]; plain, so updating it never recomposes. */
+private class SteadyHolder {
+    var value: Int? = null
+}
+
+/** One page of the continuous book: which chapter it belongs to, and what is on it. */
+private data class BookPage(
+    val chapter: LoadedChapter,
+    val pageInChapter: Int,
+    val pagesInChapter: Int,
+    val content: ReaderPage,
+) {
+    /** Stable across window changes, which is what keeps the page on screen while it moves. */
+    val key: String get() = "${chapter.index}:$pageInChapter"
+}
+
+/**
+ * The book as one run of pages. The pager spans the chapters in [window] back to back, so
+ * swiping off a chapter's last page lands on the next chapter's first; when the settled page
+ * is in a neighbour, [onSettledChapter] lets the window recentre on it. Pages are keyed by
+ * chapter and page number, so the pager keeps the same page on screen while the list shifts
+ * around it.
+ */
+@Composable
+private fun PagedBook(
+    window: List<LoadedChapter>,
+    jump: JumpRequest?,
     fontScale: Float,
     palette: ReaderPalette,
+    voiceChapter: Int?,
     activeBlockIndex: Int?,
     activeOffset: Int?,
     sentenceRange: IntRange?,
     wordRange: IntRange?,
     onTapStart: (ReadingPosition) -> Unit,
-    onMakeCard: (blockIndex: Int, offsetInBlock: Int) -> Unit,
-    onRequestNextChapter: () -> Unit,
+    onMakeCard: (chapterIndex: Int, blockIndex: Int, offsetInBlock: Int) -> Unit,
     loadImage: suspend (String) -> ByteArray?,
-    onPageInfo: (PageInfo) -> Unit,
+    onGeometry: (PageGeometry) -> Unit,
+    onVisiblePage: (VisiblePage) -> Unit,
+    onSettledChapter: (Int) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val measurer = rememberTextMeasurer()
-        val hPadPx = with(density) { 48.dp.toPx() }.toInt()
-        val vReservePx = with(density) { (32.dp + 30.dp).toPx() }.toInt() // vertical padding + indicator
-        val widthPx = (constraints.maxWidth - hPadPx).coerceAtLeast(1)
-        val heightPx = (constraints.maxHeight - vReservePx).coerceAtLeast(1)
+        val widthPx = (constraints.maxWidth - with(density) { PageHorizontalPadding.toPx() * 2 }).toInt().coerceAtLeast(1)
+        val heightPx = (constraints.maxHeight - with(density) { (PageVerticalPadding * 2 + PageBottomSlack).toPx() })
+            .toInt().coerceAtLeast(1)
+        val geometry = PageGeometry(widthPx, heightPx, fontScale, density.density)
+        LaunchedEffect(geometry) { onGeometry(geometry) }
 
-        val pages = remember(blocks, widthPx, heightPx, fontScale) {
-            paginateChapter(blocks, widthPx, heightPx, measurer, density, fontScale)
-        }
-        val textPageCount = pages.size
-        val pageCount = textPageCount + if (hasNextChapter) 1 else 0
-        val pagerState = rememberPagerState(pageCount = { pageCount })
-
-        val targetPage = if (activeBlockIndex != null) {
-            pageIndexForOffset(pages, activeBlockIndex, activeOffset ?: 0)
-        } else {
-            null
-        }
-
-        LaunchedEffect(chapterIndex, textPageCount) {
-            val initial = (targetPage ?: 0).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-            pagerState.scrollToPage(initial)
-        }
-        LaunchedEffect(targetPage) {
-            val t = targetPage ?: return@LaunchedEffect
-            if (t != pagerState.currentPage) pagerState.animateScrollToPage(t)
-        }
-        LaunchedEffect(pagerState.currentPage, textPageCount, pages) {
-            val visible = pagerState.currentPage.coerceIn(0, textPageCount - 1)
-            val firstText = pages.getOrNull(visible)?.firstNotNullOfOrNull { it as? PageElement.TextEl }
-            onPageInfo(
-                PageInfo(
-                    current = (pagerState.currentPage + 1).coerceAtMost(textPageCount),
-                    total = textPageCount,
-                    firstBlockIndex = firstText?.slice?.blockIndex ?: 0,
-                    firstOffset = firstText?.slice?.start ?: 0,
-                ),
-            )
-        }
-        LaunchedEffect(pagerState.settledPage) {
-            if (hasNextChapter && pagerState.settledPage >= textPageCount) onRequestNextChapter()
+        // Each chapter is paginated once per layout and reused as the window slides along.
+        val paginated = remember(widthPx, heightPx, fontScale) { HashMap<Int, List<ReaderPage>>() }
+        val pages = remember(window, widthPx, heightPx, fontScale) {
+            window.flatMap { chapter ->
+                val chapterPages = paginated.getOrPut(chapter.index) {
+                    paginateChapter(chapter.blocks, widthPx, heightPx, measurer, density, fontScale)
+                }
+                chapterPages.mapIndexed { i, content -> BookPage(chapter, i, chapterPages.size, content) }
+            }
         }
 
-        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { pageIndex ->
-            if (pageIndex >= textPageCount) {
-                EndOfChapterPage(palette)
+        // A jump (opening the book, the contents, « ») builds a fresh pager already on the
+        // right page, rather than scrolling an old one there and flashing what was in between.
+        key(jump?.id) {
+            val startPage = remember(jump?.id) {
+                jump?.let { target -> indexOfBlock(pages, target.chapterIndex, target.blockIndex, 0) } ?: 0
+            }
+            val pagerState = rememberPagerState(initialPage = startPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))) {
+                pages.size
+            }
+
+            // The pager positions by index, and recentring the window renumbers every page. So
+            // when the list changes, put back whichever page was on screen, by its key, in the
+            // same frame — otherwise moving into the next chapter jumps to whatever page now
+            // sits at the old index.
+            val shown = remember { PagesOnScreen() }
+            if (shown.pages !== pages) {
+                val keyOnScreen = shown.pages?.getOrNull(pagerState.currentPage)?.key
+                shown.pages = pages
+                val index = keyOnScreen?.let { key -> pages.indexOfFirst { it.key == key } } ?: -1
+                if (index >= 0 && index != pagerState.currentPage) pagerState.requestScrollToPage(index)
+            }
+            val currentPages by rememberUpdatedState(pages)
+
+            // The voice's page, by key. Reading along turns to it when the voice *moves* — not
+            // when its page merely reappears in a recentred window, which would drag a reader
+            // who had swiped ahead back to where the voice was parked.
+            val voicePageKey = if (voiceChapter != null && activeBlockIndex != null) {
+                indexOfBlock(pages, voiceChapter, activeBlockIndex, activeOffset ?: 0)?.let { pages[it].key }
             } else {
+                null
+            }
+            LaunchedEffect(voicePageKey) {
+                if (voicePageKey == null || voicePageKey == shown.lastVoiceKey) return@LaunchedEffect
+                val firstSighting = shown.lastVoiceKey == null
+                shown.lastVoiceKey = voicePageKey
+                // On opening, the jump already put the reader where the voice is parked.
+                if (firstSighting) return@LaunchedEffect
+                val target = currentPages.indexOfFirst { it.key == voicePageKey }.takeIf { it >= 0 } ?: return@LaunchedEffect
+                if (target != pagerState.currentPage) pagerState.animateScrollToPage(target)
+            }
+
+            LaunchedEffect(pagerState.currentPage, pages) {
+                val page = pages.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
+                val firstText = page.content.firstNotNullOfOrNull { it as? PageElement.TextEl }
+                onVisiblePage(
+                    VisiblePage(
+                        chapterIndex = page.chapter.index,
+                        pageInChapter = page.pageInChapter,
+                        pagesInChapter = page.pagesInChapter,
+                        firstBlockIndex = firstText?.slice?.blockIndex ?: 0,
+                        firstOffset = firstText?.slice?.start ?: 0,
+                    ),
+                )
+            }
+            // Only a page the reader settled on moves the window — deliberately not keyed on the
+            // page list, whose changes are the window's own doing.
+            LaunchedEffect(pagerState.settledPage) {
+                currentPages.getOrNull(pagerState.settledPage)?.let { onSettledChapter(it.chapter.index) }
+            }
+
+            HorizontalPager(
+                state = pagerState,
+                key = { index -> pages.getOrNull(index)?.key ?: "gap:$index" },
+                modifier = Modifier.fillMaxSize(),
+            ) { index ->
+                val page = pages.getOrNull(index) ?: return@HorizontalPager
+                val isVoiceChapter = page.chapter.index == voiceChapter
                 PageView(
-                    page = pages[pageIndex],
-                    blocks = blocks,
-                    chapterIndex = chapterIndex,
+                    page = page.content,
+                    blocks = page.chapter.blocks,
+                    chapterIndex = page.chapter.index,
                     fontScale = fontScale,
                     palette = palette,
-                    activeBlockIndex = activeBlockIndex,
-                    sentenceRange = sentenceRange,
-                    wordRange = wordRange,
+                    activeBlockIndex = activeBlockIndex.takeIf { isVoiceChapter },
+                    sentenceRange = sentenceRange.takeIf { isVoiceChapter },
+                    wordRange = wordRange.takeIf { isVoiceChapter },
                     onTapStart = onTapStart,
-                    onMakeCard = onMakeCard,
+                    onMakeCard = { blockIndex, offset -> onMakeCard(page.chapter.index, blockIndex, offset) },
                     loadImage = loadImage,
                 )
             }
         }
-
-        // The page number lives in the bottom bar now, so this only has to announce the
-        // one thing the bar cannot: that swiping again leaves the chapter.
-        if (pagerState.currentPage >= textPageCount) {
-            MonoText(
-                text = "Next chapter »",
-                size = 9.5f,
-                tracking = 0.18f,
-                color = palette.accent,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp),
-            )
-        }
     }
 }
+
+/**
+ * What the pager last had on screen. A plain holder rather than state: it is bookkeeping for
+ * keeping the page steady across window changes, and must not itself cause recomposition.
+ */
+private class PagesOnScreen {
+    var pages: List<BookPage>? = null
+    var lastVoiceKey: String? = null
+}
+
+/** Index in [pages] of the page showing [offset] of block [blockIndex] in [chapterIndex]. */
+private fun indexOfBlock(pages: List<BookPage>, chapterIndex: Int, blockIndex: Int, offset: Int): Int? {
+    val start = pages.indexOfFirst { it.chapter.index == chapterIndex }.takeIf { it >= 0 } ?: return null
+    val chapterPages = pages.filter { it.chapter.index == chapterIndex }.map { it.content }
+    return start + (pageIndexForOffset(chapterPages, blockIndex, offset) ?: 0)
+}
+
+private val PageHorizontalPadding = 24.dp
+private val PageVerticalPadding = 16.dp
+
+/** A little room under the last line, so descenders never meet the footer. */
+private val PageBottomSlack = 8.dp
 
 @Composable
 private fun PageView(
@@ -466,7 +612,9 @@ private fun PageView(
     onMakeCard: (blockIndex: Int, offsetInBlock: Int) -> Unit,
     loadImage: suspend (String) -> ByteArray?,
 ) {
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(horizontal = PageHorizontalPadding, vertical = PageVerticalPadding),
+    ) {
         page.forEach { element ->
             when (element) {
                 is PageElement.TextEl -> {
@@ -500,7 +648,7 @@ private fun PageView(
                                 if (slice.kind == Block.Text.Kind.QUOTE) Modifier.padding(start = 12.dp) else Modifier,
                             )
                             // Innermost, so pointer coordinates line up with the glyphs.
-                            .pointerInput(slice, full) {
+                            .pointerInput(slice, full, chapterIndex) {
                                 fun offsetInBlock(point: Offset): Int? =
                                     layout?.getOffsetForPosition(point)?.plus(slice.start)
 
@@ -543,21 +691,6 @@ private fun PageView(
     }
 }
 
-@Composable
-private fun EndOfChapterPage(palette: ReaderPalette) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            MonoText("End of chapter", size = 12f, tracking = 0.2f, color = palette.accent)
-            Text(
-                "Keep swiping for the next chapter",
-                fontFamily = AppFonts.Grotesk,
-                fontSize = 14.sp,
-                color = palette.secondaryText,
-                modifier = Modifier.padding(top = 10.dp),
-            )
-        }
-    }
-}
 
 /** Opens an article's source page in whatever browser the device has. */
 private fun openInBrowser(context: android.content.Context, url: String) {
@@ -586,7 +719,9 @@ private fun openTtsDataInstaller(context: android.content.Context) {
  * "CH 4/12 · A SHADOW ON THE WALL" — the mono subtitle under the book's title. The count
  * rides here because the bottom bar has only enough room for the page.
  */
-private fun chapterLabel(chapterIndex: Int, chapterCount: Int, chapterTitle: String?): String {
+private fun chapterLabel(chapterIndex: Int, chapterCount: Int, chapterTitle: String?): String? {
+    // A news article is one section; "CH 1/1" under its title would say nothing.
+    if (chapterCount <= 1) return null
     val number = "Ch ${chapterIndex + 1}/$chapterCount"
     return if (chapterTitle.isNullOrBlank()) number else "$number · $chapterTitle"
 }
@@ -598,7 +733,7 @@ private fun chapterLabel(chapterIndex: Int, chapterCount: Int, chapterTitle: Str
 @Composable
 private fun ReaderTopBar(
     title: String,
-    chapterLabel: String,
+    chapterLabel: String?,
     palette: ReaderPalette,
     articleLink: String?,
     onBack: () -> Unit,
@@ -637,13 +772,15 @@ private fun ReaderTopBar(
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
-            MonoText(
-                text = chapterLabel,
-                size = 10f,
-                tracking = 0.16f,
-                color = palette.secondaryText,
-                modifier = Modifier.padding(top = 3.dp),
-            )
+            chapterLabel?.let { label ->
+                MonoText(
+                    text = label,
+                    size = 10f,
+                    tracking = 0.16f,
+                    color = palette.secondaryText,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
         }
         articleLink?.let { link ->
             ReaderAction(Icons.AutoMirrored.Filled.OpenInNew, "Open original article", palette) { onOpenLink(link) }
@@ -747,17 +884,24 @@ private fun MissingVoiceBanner(modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * KOReader's footer, in this app's clothes: where you are in the *book* — page of pages,
+ * percentage, a progress bar with a tick where each chapter starts — then how long is left,
+ * and the clock; the transport controls sit underneath.
+ */
 @Composable
-private fun ReaderBottomBar(
-    chapterIndex: Int,
-    chapterCount: Int,
-    pageCurrent: Int,
-    pageTotal: Int,
+private fun ReaderFooter(
+    showPosition: Boolean,
+    pageLabel: String,
+    percent: Int,
+    progress: Float,
+    ticks: List<Float>,
     chapterTimeText: String,
     bookTimeText: String?,
+    canGoBack: Boolean,
+    canGoForward: Boolean,
     isSpeaking: Boolean,
     palette: ReaderPalette,
-    progress: Float,
     onPrevChapter: () -> Unit,
     onNextChapter: () -> Unit,
     onPlayPause: () -> Unit,
@@ -770,40 +914,56 @@ private fun ReaderBottomBar(
             .fillMaxWidth()
             .navigationBarsPadding()
             .padding(horizontal = ScreenPadding)
-            .padding(top = 10.dp, bottom = 10.dp),
+            .padding(top = 8.dp, bottom = 10.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 9.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            MonoText(
-                text = "Page $pageCurrent / $pageTotal",
-                size = 10f,
-                tracking = 0.16f,
-                color = palette.secondaryText,
+        if (showPosition) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 7.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                MonoText(
+                    text = "$pageLabel · $percent%",
+                    size = 10f,
+                    tracking = 0.16f,
+                    color = palette.secondaryText,
+                )
+                Spacer(Modifier.weight(1f).widthIn(min = 14.dp))
+                MonoText(text = rememberClock(), size = 10f, tracking = 0.16f, color = palette.secondaryText)
+            }
+            BookProgressBar(
+                progress = progress,
+                ticks = ticks,
+                color = palette.accent,
+                track = palette.hairline,
+                tickColor = palette.secondaryText,
+                modifier = Modifier.padding(bottom = 7.dp),
             )
-            // A weighted gap rather than SpaceBetween: it guarantees the two labels never
-            // touch, and gives the ellipsis somewhere to happen if the times run long.
-            Spacer(Modifier.weight(1f).widthIn(min = 14.dp))
-            // The time still to run is the one number worth colouring: it is what changes
-            // while the voice is speaking.
-            MonoText(
-                text = buildAnnotatedString {
-                    withStyle(SpanStyle(color = palette.accent)) { append(chapterTimeText.uppercase()) }
-                    append(" LEFT")
-                    if (bookTimeText != null) append("  ·  ${bookTimeText.uppercase()}")
-                },
-                size = 10f,
-                tracking = 0.16f,
-                color = palette.secondaryText,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                // The chapter's time left is the one figure worth colouring: it is what moves
+                // while the voice is speaking.
+                MonoText(
+                    text = buildAnnotatedString {
+                        withStyle(SpanStyle(color = palette.accent)) { append(chapterTimeText.uppercase()) }
+                        append(" LEFT IN CHAPTER")
+                    },
+                    size = 10f,
+                    tracking = 0.16f,
+                    color = palette.secondaryText,
+                )
+                Spacer(Modifier.weight(1f).widthIn(min = 14.dp))
+                if (bookTimeText != null) {
+                    MonoText(
+                        text = "$bookTimeText in book",
+                        size = 10f,
+                        tracking = 0.16f,
+                        color = palette.secondaryText,
+                    )
+                }
+            }
         }
-        ThinProgress(
-            fraction = progress,
-            color = palette.accent,
-            track = palette.hairline,
-            modifier = Modifier.padding(bottom = 16.dp),
-        )
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -813,7 +973,7 @@ private fun ReaderBottomBar(
                 icon = Icons.Filled.KeyboardDoubleArrowLeft,
                 contentDescription = "Previous chapter",
                 tint = palette.secondaryText,
-                enabled = chapterIndex > 0,
+                enabled = canGoBack,
                 onClick = onPrevChapter,
             )
             TransportIcon(
@@ -849,12 +1009,54 @@ private fun ReaderBottomBar(
                 icon = Icons.Filled.KeyboardDoubleArrowRight,
                 contentDescription = "Next chapter",
                 tint = palette.secondaryText,
-                enabled = chapterIndex < chapterCount - 1,
+                enabled = canGoForward,
                 onClick = onNextChapter,
             )
         }
     }
 }
+
+/**
+ * The book's progress: a thin bar, filled to [progress], with a short mark at each chapter
+ * start so you can see how far the current chapter has to run.
+ */
+@Composable
+private fun BookProgressBar(
+    progress: Float,
+    ticks: List<Float>,
+    color: Color,
+    track: Color,
+    tickColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier.fillMaxWidth().height(9.dp)) {
+        val barHeight = 3.dp.toPx()
+        val top = (size.height - barHeight) / 2
+        drawRect(track, topLeft = Offset(0f, top), size = Size(size.width, barHeight))
+        drawRect(color, topLeft = Offset(0f, top), size = Size(size.width * progress.coerceIn(0f, 1f), barHeight))
+        val tickWidth = 1.dp.toPx()
+        ticks.forEach { fraction ->
+            val x = size.width * fraction
+            drawRect(tickColor, topLeft = Offset(x - tickWidth / 2, 0f), size = Size(tickWidth, size.height))
+        }
+    }
+}
+
+/** The time, updated on the minute, in the device's own 12/24-hour format. */
+@Composable
+private fun rememberClock(): String {
+    val context = LocalContext.current
+    val format = remember(context) { android.text.format.DateFormat.getTimeFormat(context) }
+    val time by produceState(initialValue = format.format(java.util.Date())) {
+        while (true) {
+            value = format.format(java.util.Date())
+            val now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(60_000 - now % 60_000 + 50)
+        }
+    }
+    return time
+}
+
 
 @Composable
 private fun TransportIcon(

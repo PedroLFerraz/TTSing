@@ -26,15 +26,6 @@ sealed interface PageElement {
 
 typealias ReaderPage = List<PageElement>
 
-/** What the reader is currently showing, reported up for the status bar and estimates. */
-data class PageInfo(
-    val current: Int = 1,
-    val total: Int = 1,
-    /** First text block visible on this page — the reading position when not playing. */
-    val firstBlockIndex: Int = 0,
-    val firstOffset: Int = 0,
-)
-
 // ---- Shared typography (used for BOTH measuring and rendering so pages match) ----
 
 private const val LINE_HEIGHT_EM = 1.62f
