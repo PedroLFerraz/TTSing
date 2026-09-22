@@ -103,6 +103,14 @@ class SentencePlayer {
                 }
                 offset += written
             }
+            // A streaming AudioTrack does not start until its buffer has filled. A sentence
+            // shorter than the buffer — "Não.", "Yes." — never filled it, so it never started:
+            // the drain below timed out on a head that stayed at 0 and the sentence was
+            // silently thrown away. How short "too short" is depends on the phone's minimum
+            // buffer, which is why it could not be heard on some devices and was fine on
+            // others. Topping the stream up with silence gets it started; the drain still waits
+            // only for the sentence's own frames and stops there, so the silence is never heard.
+            if (completed) completed = padToStart(audioTrack, pcm.size, encoding, sentence.channelCount)
             // Wait for the queued audio to actually reach the speaker BEFORE stopping:
             // AudioTrack.stop() resets playbackHeadPosition to zero, so polling it after
             // stopping waits on a counter that never advances again.
@@ -126,6 +134,33 @@ class SentencePlayer {
         // flush() discards what's buffered, which also unblocks a write() waiting for space.
         runCatching { current.flush() }
         runCatching { current.stop() }
+    }
+
+    /**
+     * Writes silence after a sentence of [writtenBytes] until the track's buffer is full, so a
+     * sentence shorter than the buffer still starts playing. Returns false if interrupted.
+     */
+    private suspend fun padToStart(audioTrack: AudioTrack, writtenBytes: Int, encoding: Int, channelCount: Int): Boolean {
+        val bytesPerSample = when (encoding) {
+            AudioFormat.ENCODING_PCM_8BIT -> 1
+            AudioFormat.ENCODING_PCM_FLOAT -> 4
+            else -> 2
+        }
+        val frameBytes = bytesPerSample * channelCount.coerceIn(1, 2)
+        val bufferBytes = audioTrack.bufferSizeInFrames * frameBytes
+        var remaining = bufferBytes - writtenBytes
+        if (remaining <= 0) return true
+        remaining -= remaining % frameBytes
+        // Silence is zero for 16-bit and float PCM; 8-bit PCM is unsigned, centred on 0x80.
+        val silence = ByteArray(minOf(WRITE_CHUNK_BYTES, remaining + frameBytes) / frameBytes * frameBytes)
+        if (encoding == AudioFormat.ENCODING_PCM_8BIT) silence.fill(0x80.toByte())
+        while (remaining > 0) {
+            if (!currentCoroutineContext().isActive || audioTrack.playState != AudioTrack.PLAYSTATE_PLAYING) return false
+            val written = audioTrack.write(silence, 0, minOf(silence.size, remaining))
+            if (written <= 0) return false
+            remaining -= written
+        }
+        return true
     }
 
     /**
