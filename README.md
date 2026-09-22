@@ -38,7 +38,9 @@ app running, not mockups.
 - **Read-aloud TTS** — Android `TextToSpeech`, one utterance per sentence with a small
   look-ahead queue for smooth speech. The sentence being read turns yellow and the exact
   word inverts to black-on-yellow (`onRangeStart` word callbacks). Pages turn automatically
-  to keep up with the voice.
+  to keep up with the voice. Sentences end where sentences end: not after "Dr.", "Sra.",
+  "pág.", an initial ("W. H. Auden") or a Roman numeral ("Livro IV."), while real one-word
+  sentences ("Não.") are kept — and heard, however short they are.
 - **Language picker** — books often declare the wrong `dc:language` (or none), which used to
   mean a German book read aloud in English with no way to fix it. The reader's settings sheet
   now lets you pick the reading language first, from the languages your TTS engine actually
@@ -48,12 +50,12 @@ app running, not mockups.
   (US / GB / …), the currently-speaking voice is marked, each shows quality and
   offline/online, and a "Device default" option returns to the engine's built-in voice.
   Speed goes up to **2.5×**.
-- **Time to finish** — time left in the chapter and in the book, from the app's *measured*
-  speaking speed, kept per voice and normalised to rate 1.0. It is total characters over
-  total listening time (pauses included), with a three-hour memory — not an average of each
-  sentence's speed, which is what used to make a 22-hour figure swing by hours between
-  sentences. On screen it only rises on a real change, so a slow passage can't make it climb
-  while you read forward.
+- **Time to finish** — worked out the way KOReader does it: pages left × this book's seconds
+  per page. The pace is learned from listening to *this* book (normalised to rate 1.0 and
+  saved with it), starting from the voice's measured speed until there's enough of the book
+  to go on. It's to the minute, and the book's total is the chapter's time plus a fixed figure
+  for the chapters after it, so each minute off the chapter is exactly one minute off the book.
+  The pace is taken afresh at each chapter, never mid-chapter, so the figures don't wander.
 - **Messy-EPUB clean-up** — footnote call-outs, note bodies and page-break markers are
   stripped before rendering, so the voice doesn't read "palavra um" for a footnote number.
   Conservative by design: a well-formed book is left untouched.
@@ -69,7 +71,10 @@ app running, not mockups.
   from its own rectangle of the page by the platform renderer, so it looks exactly as it does
   in the PDF, and a picture that sits in the middle of a paragraph waits for that paragraph to
   end rather than splitting a sentence. Bullets, rules, small icons and page backgrounds are
-  left out. Sections follow the PDF's bookmarks, or runs of ten pages when it has none. The
+  left out; a cover picture is kept. Figure captions stand as their own line, footnotes are
+  read after the paragraph that cites them (their numbers taken out of the text), and
+  typeset hyphens are mended like ordinary ones. Sections follow the PDF's bookmarks —
+  chapters inside parts, not whole parts — or runs of ten pages when it has none. The
   cover is the first page, rendered. Scanned PDFs with no text layer say so rather than
   showing empty pages (there is no OCR).
 - **Tap to start** — tap any paragraph to begin reading from there (from the sentence you
