@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pedrolopes.ttsing.data.book.BookFormat
 import com.pedrolopes.ttsing.data.db.BookEntity
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.HeaderIcon
@@ -89,7 +90,7 @@ fun LibraryScreen(
                 !state.hasFolder -> EmptyLibrary(
                     modifier = Modifier.weight(1f),
                     headline = "No library yet",
-                    message = "Point TTSing at the folder that holds your EPUB files. It reads them " +
+                    message = "Point TTSing at the folder that holds your EPUB and PDF files. It reads them " +
                         "where they are — nothing is copied or uploaded.",
                     buttonText = "Choose folder",
                     onClick = { folderPicker.launch(null) },
@@ -97,25 +98,21 @@ fun LibraryScreen(
                 state.books.isEmpty() && !state.isScanning -> EmptyLibrary(
                     modifier = Modifier.weight(1f),
                     headline = "Nothing to read here",
-                    message = "No EPUB files were found in the folder you chose. Pick another one and " +
+                    message = "No EPUB or PDF files were found in the folder you chose. Pick another one and " +
                         "TTSing will scan it again.",
                     buttonText = "Choose a different folder",
                     onClick = { folderPicker.launch(null) },
                 )
                 else -> {
                     val inProgress = state.books.count { it.progressPercent > 0f }
+                    // While a scan runs, "Scanning" takes the place of "Library" and is the live
+                    // word; appended at the end it ran off the line and left a stray dot.
                     val parts = listOfNotNull(
-                        "Library",
+                        if (state.isScanning) "Scanning" else "Library",
                         "${state.books.size} ${if (state.books.size == 1) "book" else "books"}",
                         "$inProgress in progress".takeIf { inProgress > 0 },
-                        "Scanning".takeIf { state.isScanning },
                     )
-                    // The size of the library is the live number, unless a scan is running —
-                    // then that is the thing actually changing.
-                    StatusStrip(
-                        parts = parts,
-                        highlightIndex = if (state.isScanning) parts.lastIndex else 1,
-                    )
+                    StatusStrip(parts = parts, highlightIndex = if (state.isScanning) 0 else 1)
                     Hairline()
                     BookGrid(
                         books = state.books,
@@ -169,6 +166,22 @@ private fun BookCard(book: BookEntity, onClick: () -> Unit) {
                 )
             } else {
                 TypographicCover(title = book.title, author = book.author)
+            }
+            // PDFs are reflowed rather than shown as pages; the tag says which kind this is,
+            // since a rendered first page otherwise looks just like an EPUB's cover.
+            if (BookFormat.fromStored(book.format) == BookFormat.PDF) {
+                MonoText(
+                    text = "PDF",
+                    size = 9f,
+                    tracking = 0.16f,
+                    color = Ink.Surface,
+                    weight = FontWeight.Bold,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .background(Ink.Live)
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                )
             }
         }
         Text(

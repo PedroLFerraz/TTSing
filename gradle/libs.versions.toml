@@ -16,6 +16,7 @@ jsoup = "1.21.1"
 coroutines = "1.10.2"
 ankidroidApi = "api-v1.1.0"
 sherpaOnnx = "1.13.4"
+pdfboxAndroid = "2.0.27.0"
 junit = "4.13.2"
 
 [libraries]
@@ -42,6 +43,7 @@ jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 ankidroid-api = { group = "com.github.ankidroid", name = "Anki-Android", version.ref = "ankidroidApi" }
 sherpa-onnx = { group = "com.github.k2-fsa", name = "sherpa-onnx", version.ref = "sherpaOnnx" }
+pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfboxAndroid" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

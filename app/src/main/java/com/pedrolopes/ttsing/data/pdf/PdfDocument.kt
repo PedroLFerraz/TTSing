@@ -1,0 +1,407 @@
+package com.pedrolopes.ttsing.data.pdf
+
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
+import com.pedrolopes.ttsing.data.book.BookDocument
+import com.pedrolopes.ttsing.data.epub.Chapter
+import com.pedrolopes.ttsing.data.epub.TocEntry
+import com.tom_roush.pdfbox.contentstream.PDFStreamEngine
+import com.tom_roush.pdfbox.contentstream.operator.DrawObject
+import com.tom_roush.pdfbox.contentstream.operator.Operator
+import com.tom_roush.pdfbox.contentstream.operator.state.Concatenate
+import com.tom_roush.pdfbox.contentstream.operator.state.Restore
+import com.tom_roush.pdfbox.contentstream.operator.state.Save
+import com.tom_roush.pdfbox.contentstream.operator.state.SetGraphicsStateParameters
+import com.tom_roush.pdfbox.contentstream.operator.state.SetMatrix
+import com.tom_roush.pdfbox.cos.COSBase
+import com.tom_roush.pdfbox.cos.COSName
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject
+import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
+import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.text.TextPosition
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.Writer
+import java.util.Locale
+
+/**
+ * A PDF as a [BookDocument], read as reflowed text: PDFBox pulls out every line with its
+ * position and size, and [PdfReflow] turns those back into paragraphs and headings, so a PDF
+ * gets the same font size, themes, tap-to-read and highlighting as an EPUB.
+ *
+ * Sections follow the PDF's own bookmarks when it has them; otherwise they are runs of
+ * [PAGES_PER_SECTION] pages. Each section is extracted only when first asked for, so opening a
+ * long PDF does not wait for all of it.
+ *
+ * Pictures come back as image blocks between paragraphs: PDFBox says where each one is drawn,
+ * and the platform renderer draws that rectangle of the page when the reader asks for it — so
+ * a figure looks exactly as it does in the PDF, masks and all, whatever format it is stored in.
+ *
+ * PDFBox is not thread-safe, so every call into it holds [lock]; the renderer has its own.
+ */
+class PdfDocument private constructor(
+    private val file: File,
+    private val pdf: PDDocument,
+    override val title: String,
+    override val author: String?,
+    override val language: String?,
+    private val sections: List<Section>,
+    override val unreadableReason: String?,
+) : BookDocument {
+
+    private data class Section(val title: String, val firstPage: Int, val endPage: Int)
+
+    private val lock = Any()
+
+    /** Running headers/footers and body text size across the whole book, sampled once. */
+    private var bookSample: BookSample? = null
+
+    private class BookSample(val furniture: Set<String>, val bodySize: Float?)
+
+    override val sectionCount: Int get() = sections.size
+
+    override val toc: List<TocEntry> = sections.mapIndexed { index, section -> TocEntry(section.title, index) }
+
+    override suspend fun loadSection(index: Int, locale: Locale): Chapter = withContext(Dispatchers.IO) {
+        val section = sections.getOrNull(index)
+            ?: throw IllegalArgumentException("Section $index out of range")
+        val blocks = synchronized(lock) {
+            val pages = extract(pdf, section.firstPage, section.endPage, withImages = true)
+            val book = sample()
+            // The book's running headers, plus anything that repeats within this section only
+            // (a chapter title used as its own running header).
+            val furniture = book.furniture + PdfReflow.detectFurniture(pages)
+            PdfReflow.toBlocks(pages, furniture, locale, book.bodySize)
+        }
+        Chapter(index, section.title, blocks)
+    }
+
+    // ---- figures ----
+
+    private val renderLock = Any()
+    private var renderer: PdfRenderer? = null
+    private var rendererFile: ParcelFileDescriptor? = null
+
+    /** The last few figures drawn, so paging back and forth doesn't redraw them. */
+    private val rendered = object : LinkedHashMap<String, ByteArray>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>) = size > 12
+    }
+
+    override suspend fun readImage(key: String): ByteArray? = withContext(Dispatchers.IO) {
+        val figure = FigureKey.parse(key) ?: return@withContext null
+        synchronized(renderLock) {
+            rendered[key]?.let { return@withContext it }
+            renderFigure(figure)?.also { rendered[key] = it }
+        }
+    }
+
+    /** Draws just [figure]'s rectangle of its page, at a size that stays sharp on a phone. */
+    private fun renderFigure(figure: FigureKey): ByteArray? = runCatching {
+        val pages = renderer ?: run {
+            val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            rendererFile = fd
+            PdfRenderer(fd).also { renderer = it }
+        }
+        if (figure.page !in 0 until pages.pageCount) return null
+        pages.openPage(figure.page).use { page ->
+            val scale = (FIGURE_WIDTH_PX / figure.width).coerceIn(1f, 4f)
+            val widthPx = (figure.width * scale).toInt().coerceAtLeast(1)
+            val heightPx = (figure.height * scale).toInt().coerceAtLeast(1)
+            val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(Color.WHITE)
+            val transform = android.graphics.Matrix().apply {
+                setTranslate(-figure.left, -figure.top)
+                postScale(scale, scale)
+            }
+            page.render(bitmap, null, transform, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            ByteArrayOutputStream().use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                bitmap.recycle()
+                out.toByteArray()
+            }
+        }
+    }.getOrNull()
+
+    override fun close() {
+        synchronized(lock) { pdf.close() }
+        synchronized(renderLock) {
+            runCatching { renderer?.close() }
+            runCatching { rendererFile?.close() }
+            renderer = null
+            rendererFile = null
+        }
+    }
+
+    private fun sample(): BookSample {
+        bookSample?.let { return it }
+        val count = pdf.numberOfPages
+        val step = maxOf(1, count / SAMPLE_PAGES)
+        val pages = (0 until count step step).take(SAMPLE_PAGES).flatMap { extract(pdf, it, it + 1) }
+        return BookSample(PdfReflow.detectFurniture(pages), PdfReflow.bodyFontSize(pages))
+            .also { bookSample = it }
+    }
+
+    companion object {
+        const val PAGES_PER_SECTION = 10
+        private const val SAMPLE_PAGES = 40
+
+        /** Fewer non-space characters than this per page, on average, means no text layer. */
+        private const val SCANNED_CHARS_PER_PAGE = 20
+
+        /** Opens [file]; [fallbackTitle] is used when the PDF's metadata has no title. */
+        fun open(file: File, fallbackTitle: String): PdfDocument {
+            val pdf = PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly())
+            try {
+                val info = pdf.documentInformation
+                val title = PdfMetadata.title(info?.title, fallbackTitle)
+                val author = PdfMetadata.author(info?.author)
+                val language = pdf.documentCatalog?.language?.trim()?.takeIf { it.isNotEmpty() }
+                val sections = outlineSections(pdf) ?: pageRunSections(pdf.numberOfPages)
+                return PdfDocument(file, pdf, title, author, language, sections, scannedReason(pdf))
+            } catch (e: Exception) {
+                pdf.close()
+                throw e
+            }
+        }
+
+        /**
+         * Renders the first page as a cover image, with the platform renderer rather than
+         * PDFBox: it is fast, and exactly what the page looks like.
+         */
+        fun renderCover(file: File, widthPx: Int = 600): ByteArray? = runCatching {
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+                PdfRenderer(fd).use { renderer ->
+                    if (renderer.pageCount == 0) return null
+                    renderer.openPage(0).use { page ->
+                        val heightPx = (widthPx.toFloat() * page.height / page.width).toInt().coerceAtLeast(1)
+                        val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
+                        // PDF pages are transparent where nothing is drawn; paper is white.
+                        bitmap.eraseColor(Color.WHITE)
+                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        ByteArrayOutputStream().use { out ->
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                            bitmap.recycle()
+                            out.toByteArray()
+                        }
+                    }
+                }
+            }
+        }.getOrNull()
+
+        /** Top-level bookmarks as sections, or null when there are too few to be useful. */
+        private fun outlineSections(pdf: PDDocument): List<Section>? {
+            val outline = pdf.documentCatalog?.documentOutline ?: return null
+            val marks = outline.children().mapNotNull { item ->
+                val page = runCatching { item.findDestinationPage(pdf) }.getOrNull() ?: return@mapNotNull null
+                val index = pdf.pages.indexOf(page)
+                if (index < 0) null else (item.title?.trim().orEmpty()) to index
+            }
+                .sortedBy { it.second }
+                .distinctBy { it.second }
+            if (marks.size < 2) return null
+
+            val starts = if (marks.first().second > 0) listOf("Start" to 0) + marks else marks
+            return starts.mapIndexed { i, (title, first) ->
+                val end = starts.getOrNull(i + 1)?.second ?: pdf.numberOfPages
+                Section(title.ifEmpty { "Section ${i + 1}" }, first, end)
+            }.filter { it.endPage > it.firstPage }
+        }
+
+        private fun pageRunSections(pageCount: Int): List<Section> =
+            (0 until maxOf(pageCount, 1) step PAGES_PER_SECTION).map { first ->
+                val end = minOf(first + PAGES_PER_SECTION, pageCount)
+                val title = if (end - first <= 1) "Page ${first + 1}" else "Pages ${first + 1}–$end"
+                Section(title, first, maxOf(end, first + 1))
+            }
+
+        private fun scannedReason(pdf: PDDocument): String? {
+            val checked = minOf(pdf.numberOfPages, 5)
+            if (checked == 0) return "This PDF has no pages."
+            val chars = extract(pdf, 0, checked).sumOf { page -> page.lines.sumOf { line -> line.text.count { !it.isWhitespace() } } }
+            return if (chars < checked * SCANNED_CHARS_PER_PAGE) {
+                "This PDF is scanned pages with no text layer, so there is nothing to read aloud."
+            } else {
+                null
+            }
+        }
+
+        /** Figures are drawn about this wide: sharp on a phone, light enough to keep a few. */
+        private const val FIGURE_WIDTH_PX = 1200f
+
+        /** Positioned lines for pages [first, end), and with [withImages] where pictures sit. */
+        private fun extract(pdf: PDDocument, first: Int, end: Int, withImages: Boolean = false): List<PdfPage> {
+            if (end <= first) return emptyList()
+            val collector = LineCollector()
+            collector.startPage = first + 1
+            collector.endPage = end
+            collector.writeText(pdf, NullWriter)
+            if (!withImages) return collector.pages
+            return collector.pages.map { page ->
+                val images = runCatching { ImageLocator(page.index).locate(pdf.getPage(page.index)) }
+                    .getOrDefault(emptyList())
+                page.copy(images = images)
+            }
+        }
+    }
+
+    /**
+     * Collects each line PDFBox finds, with where it sits and how big it is, instead of the
+     * flat string [PDFTextStripper] normally produces. Content order rather than sorting by
+     * position, because producers write columns in reading order and sorting interleaves them.
+     */
+    private class LineCollector : PDFTextStripper() {
+        val pages = mutableListOf<PdfPage>()
+        private var lines = mutableListOf<PdfLine>()
+        private var text = StringBuilder()
+        private var lineX = 0f
+        private var lineY = 0f
+        private var lineRight = 0f
+        private val sizes = mutableListOf<Float>()
+        private var pageWidth = 0f
+        private var pageHeight = 0f
+
+        init {
+            sortByPosition = false
+            suppressDuplicateOverlappingText = true
+        }
+
+        override fun startPage(page: PDPage) {
+            super.startPage(page)
+            lines = mutableListOf()
+            resetLine()
+            val box = page.cropBox
+            val sideways = page.rotation % 180 != 0
+            pageWidth = if (sideways) box.height else box.width
+            pageHeight = if (sideways) box.width else box.height
+        }
+
+        override fun writeString(string: String, textPositions: MutableList<TextPosition>) {
+            if (textPositions.isEmpty() || string.isEmpty()) return
+            val first = textPositions.first()
+            val last = textPositions.last()
+            if (text.isEmpty()) {
+                lineX = first.xDirAdj
+                lineY = first.yDirAdj
+            }
+            text.append(string)
+            lineRight = maxOf(lineRight, last.xDirAdj + last.widthDirAdj)
+            textPositions.forEach { position ->
+                val size = position.fontSizeInPt.takeIf { it > 1f } ?: position.heightDir
+                if (size > 0f) sizes.add(size)
+            }
+        }
+
+        override fun writeWordSeparator() {
+            if (text.isNotEmpty() && !text.last().isWhitespace()) text.append(' ')
+        }
+
+        override fun writeLineSeparator() = finishLine()
+
+        override fun endPage(page: PDPage) {
+            finishLine()
+            pages.add(PdfPage(currentPageNo - 1, pageWidth, pageHeight, lines))
+            super.endPage(page)
+        }
+
+        private fun finishLine() {
+            val content = text.toString().trim()
+            if (content.isNotEmpty()) {
+                val size = sizes.sorted().let { if (it.isEmpty()) 0f else it[it.size / 2] }
+                lines.add(PdfLine(content, lineX, lineY, lineRight, size))
+            }
+            resetLine()
+        }
+
+        private fun resetLine() {
+            text = StringBuilder()
+            lineRight = 0f
+            sizes.clear()
+        }
+    }
+
+    /**
+     * A figure's page and rectangle, in top-down points from the page's top-left corner —
+     * all the renderer needs, so the key can travel through the reader as a plain string.
+     */
+    private data class FigureKey(val page: Int, val left: Float, val top: Float, val width: Float, val height: Float) {
+        fun encode(): String = "$PREFIX$page:$left:$top:$width:$height"
+
+        companion object {
+            private const val PREFIX = "pdf-figure:"
+
+            fun parse(key: String): FigureKey? {
+                if (!key.startsWith(PREFIX)) return null
+                val parts = key.removePrefix(PREFIX).split(':')
+                if (parts.size != 5) return null
+                val page = parts[0].toIntOrNull() ?: return null
+                val numbers = parts.drop(1).map { it.toFloatOrNull() ?: return null }
+                return FigureKey(page, numbers[0], numbers[1], numbers[2], numbers[3])
+            }
+        }
+    }
+
+    /**
+     * Walks a page's drawing instructions and notes where each picture lands. A picture is
+     * drawn as a unit square stretched by the current transformation, so its rectangle on the
+     * page is that square's four corners after the transform; pictures inside form objects
+     * are followed in.
+     */
+    private class ImageLocator(private val pageIndex: Int) : PDFStreamEngine() {
+        private val found = mutableListOf<PdfImage>()
+        private var cropLeft = 0f
+        private var cropTop = 0f
+
+        init {
+            addOperator(Concatenate())
+            addOperator(DrawObject())
+            addOperator(SetGraphicsStateParameters())
+            addOperator(Save())
+            addOperator(Restore())
+            addOperator(SetMatrix())
+        }
+
+        fun locate(page: PDPage): List<PdfImage> {
+            val crop = page.cropBox
+            cropLeft = crop.lowerLeftX
+            cropTop = crop.upperRightY
+            processPage(page)
+            return found
+        }
+
+        override fun processOperator(operator: Operator, operands: MutableList<COSBase>) {
+            if (operator.name != "Do") {
+                super.processOperator(operator, operands)
+                return
+            }
+            val name = operands.firstOrNull() as? COSName ?: return
+            when (val xObject = resources?.getXObject(name)) {
+                is PDImageXObject -> {
+                    val m = graphicsState.currentTransformationMatrix
+                    val xs = listOf(0f, m.scaleX, m.shearX, m.scaleX + m.shearX).map { it + m.translateX }
+                    val ys = listOf(0f, m.shearY, m.scaleY, m.shearY + m.scaleY).map { it + m.translateY }
+                    val left = xs.min() - cropLeft
+                    val top = cropTop - ys.max()
+                    val width = xs.max() - xs.min()
+                    val height = ys.max() - ys.min()
+                    val key = FigureKey(pageIndex, left, top, width, height).encode()
+                    found.add(PdfImage(key, left, top, width, height))
+                }
+                is PDFormXObject -> showForm(xObject)
+                else -> Unit
+            }
+        }
+    }
+
+    private object NullWriter : Writer() {
+        override fun write(cbuf: CharArray, off: Int, len: Int) = Unit
+        override fun flush() = Unit
+        override fun close() = Unit
+    }
+}

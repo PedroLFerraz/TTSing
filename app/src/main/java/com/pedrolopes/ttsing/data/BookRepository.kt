@@ -3,12 +3,15 @@ package com.pedrolopes.ttsing.data
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import com.pedrolopes.ttsing.data.book.BookDocument
+import com.pedrolopes.ttsing.data.book.BookFormat
+import com.pedrolopes.ttsing.data.book.EpubDocument
 import com.pedrolopes.ttsing.data.db.BookDao
 import com.pedrolopes.ttsing.data.db.BookEntity
 import com.pedrolopes.ttsing.data.epub.Block
-import com.pedrolopes.ttsing.data.epub.EpubBook
 import com.pedrolopes.ttsing.data.epub.EpubParser
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
+import com.pedrolopes.ttsing.data.pdf.PdfDocument
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -39,28 +42,77 @@ class BookRepository(
 
         for (doc in tree.listFiles()) {
             val name = doc.name ?: continue
-            if (!doc.isFile || !name.endsWith(".epub", ignoreCase = true)) continue
+            if (!doc.isFile) continue
+            val format = BookFormat.forFileName(name) ?: continue
             val id = sha1(doc.uri.toString())
             seenIds.add(id)
             val known = existing[id]
             if (known != null && known.fileSize == doc.length() && known.lastModified == doc.lastModified()) {
                 continue
             }
-            runCatching { indexBook(id, doc, known) }
+            // A changed file must not be read from the stale cached copy.
+            if (known != null) cachedFile(id, format).delete()
+            runCatching {
+                when (format) {
+                    BookFormat.EPUB -> indexEpub(id, doc, known)
+                    BookFormat.PDF -> indexPdf(id, doc, name, known)
+                }
+            }
         }
 
         val gone = existing.keys - seenIds
         if (gone.isNotEmpty()) {
             dao.delete(gone.toList())
             for (id in gone) {
-                File(booksCacheDir, "$id.epub").delete()
+                BookFormat.entries.forEach { cachedFile(id, it).delete() }
                 existing[id]?.coverFile?.let { File(it).delete() }
             }
         }
     }
 
-    private suspend fun indexBook(id: String, doc: DocumentFile, known: BookEntity?) {
-        val cached = ensureCachedFile(id, doc.uri)
+    private suspend fun indexPdf(id: String, doc: DocumentFile, fileName: String, known: BookEntity?) {
+        val cached = ensureCachedFile(id, doc.uri, BookFormat.PDF)
+        PdfDocument.open(cached, titleFromFileName(fileName)).use { pdf ->
+            val coverFile = PdfDocument.renderCover(cached)?.let { bytes ->
+                File(coversDir, "$id.img").apply { writeBytes(bytes) }.absolutePath
+            }
+            dao.upsert(
+                entityFor(id, doc, known, pdf, coverFile, BookFormat.PDF),
+            )
+        }
+    }
+
+    /** "the_dispossessed-le_guin.pdf" → "the dispossessed-le guin", for PDFs with no title. */
+    private fun titleFromFileName(name: String): String =
+        name.substringBeforeLast('.').replace('_', ' ').trim().ifEmpty { name }
+
+    private fun entityFor(
+        id: String,
+        doc: DocumentFile,
+        known: BookEntity?,
+        book: BookDocument,
+        coverFile: String?,
+        format: BookFormat,
+    ) = BookEntity(
+        id = id,
+        uri = doc.uri.toString(),
+        title = book.title,
+        author = book.author,
+        language = book.language,
+        coverFile = coverFile,
+        fileSize = doc.length(),
+        lastModified = doc.lastModified(),
+        spineCount = book.sectionCount,
+        chapterIndex = known?.chapterIndex ?: 0,
+        blockIndex = known?.blockIndex ?: 0,
+        sentenceIndex = known?.sentenceIndex ?: 0,
+        progressPercent = known?.progressPercent ?: 0f,
+        lastOpenedAt = known?.lastOpenedAt ?: 0,
+        format = format.name,
+    )
+
+    private suspend fun indexEpub(id: String, doc: DocumentFile, known: BookEntity?) {
+        val cached = ensureCachedFile(id, doc.uri, BookFormat.EPUB)
         EpubParser(cached).use { parser ->
             val epub = parser.parseBook()
             val coverFile = epub.coverPath?.let { coverPath ->
@@ -84,17 +136,34 @@ class BookRepository(
                     sentenceIndex = known?.sentenceIndex ?: 0,
                     progressPercent = known?.progressPercent ?: 0f,
                     lastOpenedAt = known?.lastOpenedAt ?: 0,
+                    format = BookFormat.EPUB.name,
                 ),
             )
         }
     }
 
-    /** Opens the EPUB for reading; caller is responsible for closing the parser. */
-    suspend fun openEpub(id: String): Pair<EpubParser, EpubBook>? = withContext(Dispatchers.IO) {
+    /** Opens a book for reading, whatever its format; the caller closes it. */
+    suspend fun openBook(id: String): BookDocument? = withContext(Dispatchers.IO) {
         val entity = dao.get(id) ?: return@withContext null
-        val file = ensureCachedFile(id, Uri.parse(entity.uri))
-        val parser = EpubParser(file)
-        parser to parser.parseBook()
+        val format = BookFormat.fromStored(entity.format)
+        val file = ensureCachedFile(id, Uri.parse(entity.uri), format)
+        when (format) {
+            BookFormat.EPUB -> EpubParser(file).let { parser ->
+                runCatching { EpubDocument(parser, parser.parseBook()) }
+                    .onFailure { parser.close() }
+                    .getOrThrow()
+            }
+            BookFormat.PDF -> PdfDocument.open(file, entity.title)
+        }
+    }
+
+    /** The cached per-chapter character counts, or null if nobody has computed them yet. */
+    suspend fun cachedChapterCharCounts(id: String): List<Int>? {
+        val entity = dao.get(id) ?: return null
+        return entity.chapterChars
+            ?.split(',')
+            ?.mapNotNull { it.toIntOrNull() }
+            ?.takeIf { it.size == entity.spineCount }
     }
 
     /**
@@ -102,25 +171,18 @@ class BookRepository(
      * walking the whole spine, then cached in the database.
      */
     suspend fun chapterCharCounts(id: String): List<Int> = withContext(Dispatchers.IO) {
-        val entity = dao.get(id) ?: return@withContext emptyList()
-        entity.chapterChars
-            ?.split(',')
-            ?.mapNotNull { it.toIntOrNull() }
-            ?.takeIf { it.size == entity.spineCount }
-            ?.let { return@withContext it }
+        cachedChapterCharCounts(id)?.let { return@withContext it }
 
-        val file = ensureCachedFile(id, Uri.parse(entity.uri))
-        val counts = EpubParser(file).use { parser ->
-            val book = parser.parseBook()
-            book.spine.indices.map { index ->
+        val counts = openBook(id)?.use { book ->
+            (0 until book.sectionCount).map { index ->
                 runCatching {
-                    parser.loadChapter(book, index)
+                    book.loadSection(index)
                         .blocks
                         .filterIsInstance<Block.Text>()
                         .sumOf { it.text.length }
                 }.getOrDefault(0)
             }
-        }
+        } ?: return@withContext emptyList()
         dao.updateChapterChars(id, counts.joinToString(","))
         counts
     }
@@ -136,8 +198,27 @@ class BookRepository(
         )
     }
 
-    private fun ensureCachedFile(id: String, uri: Uri): File {
-        val file = File(booksCacheDir, "$id.epub")
+    /**
+     * Book pages per section for [layoutKey], if they were counted for exactly that screen
+     * size and font scale; null means they need counting.
+     */
+    suspend fun pageCounts(id: String, layoutKey: String): List<Int>? {
+        val entity = dao.get(id) ?: return null
+        if (entity.pageLayoutKey != layoutKey) return null
+        return entity.pageCounts
+            ?.split(',')
+            ?.mapNotNull { it.toIntOrNull() }
+            ?.takeIf { it.size == entity.spineCount }
+    }
+
+    suspend fun savePageCounts(id: String, layoutKey: String, counts: List<Int>) {
+        dao.updatePageCounts(id, counts.joinToString(","), layoutKey)
+    }
+
+    private fun cachedFile(id: String, format: BookFormat) = File(booksCacheDir, "$id.${format.extension}")
+
+    private fun ensureCachedFile(id: String, uri: Uri, format: BookFormat): File {
+        val file = cachedFile(id, format)
         if (file.length() > 0L) return file
         context.contentResolver.openInputStream(uri)?.use { input ->
             file.outputStream().use { output -> input.copyTo(output) }

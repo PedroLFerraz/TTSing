@@ -16,4 +16,10 @@ data class PlaybackState(
     val wordRange: IntRange? = null,
     val languageAvailable: Boolean = true,
     val error: String? = null,
+    /**
+     * The service's live speaking speed (chars/second at rate 1.0) for the voice in use, or
+     * null before a book is open. Read this rather than the persisted setting: the setting is
+     * written behind and would make the estimate step.
+     */
+    val charsPerSecond: Float? = null,
 )

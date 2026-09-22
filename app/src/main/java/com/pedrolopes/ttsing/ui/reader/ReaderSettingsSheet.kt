@@ -109,12 +109,15 @@ fun ReaderSettingsSheet(
 
             HardSlider("Speed", settings.speechRate, "%.1f×".format(settings.speechRate), 0.5f..2.5f, onSpeechRate)
             HardSlider("Pitch", settings.pitch, "%.1f".format(settings.pitch), 0.5f..2.0f, onPitch)
+            // In 5% steps: every font size is its own page layout, counted across the whole
+            // book, so a continuous slider would recount it for every hair of movement.
             HardSlider(
                 "Font size",
                 settings.fontScale,
                 "%.0f%%".format(settings.fontScale * 100),
                 0.8f..1.8f,
                 onFontScale,
+                steps = 19,
             )
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -357,6 +360,7 @@ private fun HardSlider(
     valueLabel: String,
     range: ClosedFloatingPointRange<Float>,
     onValueChange: (Float) -> Unit,
+    steps: Int = 0,
 ) {
     Column {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -367,6 +371,7 @@ private fun HardSlider(
             value = value,
             onValueChange = onValueChange,
             valueRange = range,
+            steps = steps,
             colors = SliderDefaults.colors(
                 thumbColor = Ink.Live,
                 activeTrackColor = Ink.Live,

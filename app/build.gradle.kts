@@ -74,6 +74,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.ankidroid.api)
     implementation(libs.sherpa.onnx)
+    implementation(libs.pdfbox.android)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)

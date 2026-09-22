@@ -28,7 +28,8 @@ import androidx.lifecycle.lifecycleScope
 import com.pedrolopes.ttsing.MainActivity
 import com.pedrolopes.ttsing.R
 import com.pedrolopes.ttsing.TTSingApp
-import com.pedrolopes.ttsing.data.epub.EpubParser
+import com.pedrolopes.ttsing.data.book.BookDocument
+import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.news.NewsRepository
 import kotlinx.coroutines.Job
@@ -54,7 +55,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     private val binder = LocalBinder()
 
     private lateinit var engine: Narrator
-    private var parser: EpubParser? = null
+    private var document: BookDocument? = null
     private var content: ReadableContent? = null
     private var openMutex = Mutex()
 
@@ -76,8 +77,10 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     // Speaking-speed measurement (drives time-to-finish estimates).
     private var previousSentenceStartedAt: Long? = null
     private var previousSentenceChars = 0
-    private var measuredCharsPerSecond: Float? = null
-    private var speedSamples = 0
+    private var speed = SpeakingSpeed()
+    /** Which voice [speed] belongs to — speeds are kept per voice, since voices differ most. */
+    private var speedVoiceKey: String? = null
+    private var listenedSincePersistMs = 0L
     private var currentRate = 1f
 
     private val app: TTSingApp get() = application as TTSingApp
@@ -187,6 +190,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     fun pause() {
         engine.pause()
         previousSentenceStartedAt = null // a paused gap is not reading time
+        persistSpeed()
         resumeOnFocusGain = false
         _state.value = _state.value.copy(isSpeaking = false, wordRange = null)
         updateSessionAndNotification()
@@ -201,10 +205,12 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     }
 
     fun skipSentence(forward: Boolean) {
+        previousSentenceStartedAt = null // a skipped sentence was never spoken in full
         if (forward) engine.skipToNext() else engine.skipToPrev()
     }
 
     fun moveTo(position: ReadingPosition) {
+        previousSentenceStartedAt = null
         engine.moveTo(position)
     }
 
@@ -241,6 +247,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             activeLocale = locale
             val available = engine.configureLanguage(locale, app.settings.settings.first().voiceFor(locale.language))
             _state.value = _state.value.copy(languageAvailable = available, error = null)
+            loadSpeedForCurrentVoice()
             if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
         }
     }
@@ -257,6 +264,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     fun selectVoice(voiceName: String?) {
         lifecycleScope.launch {
             engine.configureLanguage(activeLocale(), voiceName)
+            loadSpeedForCurrentVoice()
             if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
         }
     }
@@ -272,8 +280,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             return engine.currentRef?.position ?: _state.value.position
         }
         persistPosition()
-        parser?.close()
-        parser = null
+        document?.close()
+        document = null
         content = null
         activeLocale = null
 
@@ -284,12 +292,12 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
         val settings = app.settings.settings.first()
         currentRate = settings.speechRate
-        measuredCharsPerSecond = settings.charsPerSecond
         engine.setSpeechRate(settings.speechRate)
         engine.setPitch(settings.pitch)
         val locale = settings.localeFor(bookId, source.locale)
         activeLocale = locale
         val languageOk = engine.configureLanguage(locale, settings.voiceFor(locale.language))
+        loadSpeedForCurrentVoice()
 
         _state.value = PlaybackState(
             bookId = bookId,
@@ -299,6 +307,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             isSpeaking = false,
             position = restored,
             languageAvailable = languageOk,
+            charsPerSecond = speed.charsPerSecond,
         )
         engine.moveTo(restored)
         updateMetadata()
@@ -310,12 +319,17 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             _state.value = PlaybackState(error = "Book not found")
             return null
         }
-        val opened = runCatching { app.books.openEpub(bookId) }.getOrNull() ?: run {
+        val opened = runCatching { app.books.openBook(bookId) }.getOrNull() ?: run {
             _state.value = PlaybackState(error = "Could not open book file")
             return null
         }
-        parser = opened.first
-        return BookContentSource(opened.first, opened.second) to
+        opened.unreadableReason?.let { reason ->
+            opened.close()
+            _state.value = PlaybackState(error = reason)
+            return null
+        }
+        document = opened
+        return BookContentSource(opened) to
             ReadingPosition(entity.chapterIndex, entity.blockIndex, entity.sentenceIndex)
     }
 
@@ -366,11 +380,12 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     }
 
     /**
-     * Times how long each sentence actually took and keeps a smoothed characters-per-second
-     * figure (normalised to rate 1.0) so time-to-finish estimates match this device/voice.
+     * Times how long each sentence actually took, from its start to the next one's, and feeds
+     * it to [speed] — see [SpeakingSpeed] for why this is a ratio of sums rather than an
+     * average of per-sentence speeds.
      */
     private fun recordSpeakingSpeed(ref: SentenceRef) {
-        val now = System.currentTimeMillis()
+        val now = android.os.SystemClock.elapsedRealtime()
         val startedAt = previousSentenceStartedAt
         val previousChars = previousSentenceChars
         previousSentenceStartedAt = now
@@ -378,19 +393,40 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
         if (startedAt == null || previousChars <= 0) return
         val elapsedMs = now - startedAt
-        // Ignore pauses/seeks and implausibly fast callbacks.
-        if (elapsedMs < 200 || elapsedMs > 60_000) return
+        // Guards against anything that is not one sentence of continuous speech: a callback
+        // arriving implausibly fast, or a gap long enough that something else happened.
+        if (elapsedMs < 150 || elapsedMs > 60_000) return
+        val sample = previousChars * 1000f / elapsedMs / currentRate.coerceAtLeast(0.1f)
+        if (sample < 1f || sample > 200f) return
 
-        val rate = currentRate.coerceAtLeast(0.1f)
-        val sample = (previousChars * 1000f / elapsedMs) / rate
-        if (sample <= 1f || sample > 200f) return
+        speed.add(previousChars, elapsedMs, currentRate)
+        _state.value = _state.value.copy(charsPerSecond = speed.charsPerSecond)
 
-        val smoothed = measuredCharsPerSecond?.let { it * (1 - SPEED_SMOOTHING) + sample * SPEED_SMOOTHING }
-            ?: sample
-        measuredCharsPerSecond = smoothed
-        if (++speedSamples % SPEED_PERSIST_EVERY == 0) {
-            lifecycleScope.launch { app.settings.setCharsPerSecond(smoothed) }
+        listenedSincePersistMs += elapsedMs
+        if (listenedSincePersistMs >= SPEED_PERSIST_EVERY_MS) {
+            listenedSincePersistMs = 0
+            persistSpeed()
         }
+    }
+
+    /** Swaps [speed] for the stored accumulators of whichever voice is now speaking. */
+    private suspend fun loadSpeedForCurrentVoice() {
+        val key = engine.currentVoiceName() ?: "default:${activeLocale().language}"
+        if (key == speedVoiceKey) return
+        if (speedVoiceKey != null) persistSpeed()
+        speedVoiceKey = key
+        val stored = app.settings.settings.first()
+        // A voice heard for the first time starts from this device's last measured speed.
+        speed = SpeakingSpeed.decode(stored.speeds[key], fallbackCps = stored.charsPerSecond)
+        previousSentenceStartedAt = null
+        _state.value = _state.value.copy(charsPerSecond = speed.charsPerSecond)
+    }
+
+    private fun persistSpeed() {
+        val key = speedVoiceKey ?: return
+        val encoded = speed.encode()
+        val cps = speed.charsPerSecond
+        lifecycleScope.launch { app.settings.setSpeed(key, encoded, cps) }
     }
 
     override fun onWordRange(ref: SentenceRef, rangeInBlock: IntRange) {
@@ -561,12 +597,28 @@ class ReadingService : LifecycleService(), Narrator.Listener {
                 app.news.savePosition(bookId, s.position.blockIndex, s.position.sentenceIndex)
                 return@launch
             }
-            val blocks = source.blockCount(s.position.chapterIndex).coerceAtLeast(1)
-            val sectionCount = source.sectionCount.coerceAtLeast(1)
-            val withinSection = s.position.blockIndex.toFloat() / blocks
-            val progress = (s.position.chapterIndex + withinSection) / sectionCount
+            val progress = charProgress(bookId, source, s.position) ?: run {
+                // Before the book's character counts exist: the old section-based guess.
+                val blocks = source.blockCount(s.position.chapterIndex).coerceAtLeast(1)
+                val sectionCount = source.sectionCount.coerceAtLeast(1)
+                (s.position.chapterIndex + s.position.blockIndex.toFloat() / blocks) / sectionCount
+            }
             app.books.savePosition(bookId, s.position, progress)
         }
+    }
+
+    /**
+     * How far through the book [position] is by characters, which is what the library's bar
+     * should show: counting sections instead made a book with many tiny spine items (a
+     * cover, a title page, a dedication) look far further along than it was.
+     */
+    private suspend fun charProgress(bookId: String, source: ReadableContent, position: ReadingPosition): Float? {
+        val counts = app.books.cachedChapterCharCounts(bookId) ?: return null
+        val total = counts.sum().takeIf { it > 0 } ?: return null
+        val blocks = (source as? BookContentSource)?.chapter(position.chapterIndex)?.blocks ?: return null
+        val before = counts.take(position.chapterIndex).sum() +
+            blocks.take(position.blockIndex).filterIsInstance<Block.Text>().sumOf { it.text.length }
+        return before.toFloat() / total
     }
 
     private fun acquireWakeLock() {
@@ -585,7 +637,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     override fun onDestroy() {
         persistPosition()
         engine.shutdown()
-        parser?.close()
+        document?.close()
         mediaSession?.release()
         focusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
         runCatching { unregisterReceiver(becomingNoisyReceiver) }
@@ -607,8 +659,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         const val EXTRA_SENTENCE = "sentence"
         const val SAVE_EVERY_SENTENCES = 5
         const val WAKE_LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
-        const val SPEED_SMOOTHING = 0.2f
-        const val SPEED_PERSIST_EVERY = 10
+        /** Accumulators are written after this much listening, and on pause and voice change. */
+        const val SPEED_PERSIST_EVERY_MS = 30_000L
 
         fun playIntent(context: Context, bookId: String, position: ReadingPosition?): Intent =
             Intent(context, ReadingService::class.java).apply {

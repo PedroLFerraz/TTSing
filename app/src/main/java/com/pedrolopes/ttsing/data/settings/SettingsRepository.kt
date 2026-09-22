@@ -39,8 +39,13 @@ data class AppSettings(
     val voices: Map<String, String> = emptyMap(),
     /** Per-book language override (book id → BCP-47 tag), for books whose `dc:language` is wrong. */
     val bookLanguages: Map<String, String> = emptyMap(),
-    /** Measured speaking speed in characters/second at rate 1.0, used for time estimates. */
+    /**
+     * Last measured speaking speed in characters/second at rate 1.0 — what the reader shows
+     * before the service is running. The service's live figure takes over once it is.
+     */
     val charsPerSecond: Float = DEFAULT_CHARS_PER_SECOND,
+    /** Per-voice speed accumulators ([com.pedrolopes.ttsing.tts.SpeakingSpeed.encode]). */
+    val speeds: Map<String, String> = emptyMap(),
     /** Cached AnkiDroid ids for the TTSing deck and note type; null until first card. */
     val ankiDeckId: Long? = null,
     val ankiModelId: Long? = null,
@@ -80,6 +85,9 @@ class SettingsRepository(private val context: Context) {
         /** Language overrides are stored one key per book, e.g. `booklang_<sha1>`. */
         const val BOOK_LANGUAGE_PREFIX = "booklang_"
 
+        /** Per-voice speaking-speed accumulators, keyed by voice name. */
+        const val SPEED_PREFIX = "speed_"
+
         fun voice(languageCode: String) = stringPreferencesKey("$VOICE_PREFIX$languageCode")
 
         fun bookLanguage(bookId: String) = stringPreferencesKey("$BOOK_LANGUAGE_PREFIX$bookId")
@@ -101,6 +109,7 @@ class SettingsRepository(private val context: Context) {
             voices = prefs.stringsWithPrefix(Keys.VOICE_PREFIX),
             bookLanguages = prefs.stringsWithPrefix(Keys.BOOK_LANGUAGE_PREFIX),
             charsPerSecond = prefs[Keys.charsPerSecond] ?: AppSettings.DEFAULT_CHARS_PER_SECOND,
+            speeds = prefs.stringsWithPrefix(Keys.SPEED_PREFIX),
             ankiDeckId = prefs[Keys.ankiDeckId],
             ankiModelId = prefs[Keys.ankiModelId],
         )
@@ -114,9 +123,15 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    /** Persists the measured speaking speed (characters/second normalised to rate 1.0). */
-    suspend fun setCharsPerSecond(value: Float) {
-        context.dataStore.edit { it[Keys.charsPerSecond] = value }
+    /**
+     * Persists one voice's speed accumulators, plus the resulting figure as the global
+     * "last known" speed the reader falls back to when nothing is playing.
+     */
+    suspend fun setSpeed(voiceKey: String, encoded: String, charsPerSecond: Float) {
+        context.dataStore.edit {
+            it[stringPreferencesKey(Keys.SPEED_PREFIX + voiceKey)] = encoded
+            it[Keys.charsPerSecond] = charsPerSecond
+        }
     }
 
     suspend fun setLibraryFolder(uri: String) {

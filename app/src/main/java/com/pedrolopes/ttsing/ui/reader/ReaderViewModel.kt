@@ -1,5 +1,7 @@
 package com.pedrolopes.ttsing.ui.reader
 
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.unit.Density
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pedrolopes.ttsing.TTSingApp
@@ -7,36 +9,60 @@ import com.pedrolopes.ttsing.anki.AnkiExporter
 import com.pedrolopes.ttsing.anki.CardAudio
 import com.pedrolopes.ttsing.anki.CardDraft
 import com.pedrolopes.ttsing.data.BookRepository
+import com.pedrolopes.ttsing.data.book.BookDocument
 import com.pedrolopes.ttsing.data.epub.Block
-import com.pedrolopes.ttsing.data.epub.Chapter
-import com.pedrolopes.ttsing.data.epub.EpubBook
-import com.pedrolopes.ttsing.data.epub.EpubParser
 import com.pedrolopes.ttsing.data.epub.TocEntry
 import com.pedrolopes.ttsing.data.news.ArticleImageStore
 import com.pedrolopes.ttsing.data.news.NewsRepository
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
 import com.pedrolopes.ttsing.tts.BookContentSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.Locale
+
+/** One chapter's blocks, as the reader holds them. */
+data class LoadedChapter(
+    val index: Int,
+    val title: String?,
+    val blocks: List<Block>,
+)
+
+/**
+ * A one-off instruction to move the pager — opening the book, a table-of-contents jump, the
+ * « » buttons. Reading along never produces one; the pager just turns. [id] makes two jumps to
+ * the same place distinct.
+ */
+data class JumpRequest(val chapterIndex: Int, val blockIndex: Int, val id: Long)
 
 data class ReaderUiState(
     val title: String = "",
     val toc: List<TocEntry> = emptyList(),
-    val chapterIndex: Int = 0,
     val chapterCount: Int = 0,
-    val chapterTitle: String? = null,
-    val blocks: List<Block> = emptyList(),
+    /**
+     * The chapters the pager currently spans: the one being read and its nearest readable
+     * neighbours on either side. Swiping into a neighbour recentres the window on it, so the
+     * book reads as one continuous run of pages rather than as separate chapters.
+     */
+    val window: List<LoadedChapter> = emptyList(),
+    /** The chapter [window] is centred on. */
+    val anchorChapter: Int = 0,
+    val jump: JumpRequest? = null,
     val isLoading: Boolean = true,
     val languageTag: String? = null,
     val error: String? = null,
     /** Character count per chapter, for time-to-finish estimates; empty until computed. */
     val chapterCharCounts: List<Int> = emptyList(),
+    /** Pages per chapter at the current layout; null while they are being counted. */
+    val pageCounts: List<Int>? = null,
     /** True while a card's audio is being synthesized and handed to AnkiDroid. */
     val isSavingCard: Boolean = false,
     /** Article only: the full page couldn't be fetched, so this is just the feed's teaser. */
@@ -55,9 +81,8 @@ class ReaderViewModel(
     private val settings: SettingsRepository,
 ) : ViewModel() {
 
-    private var parser: EpubParser? = null
+    private var document: BookDocument? = null
     private var source: BookContentSource? = null
-    private var book: EpubBook? = null
 
     /** True when this "book" is actually a news article: one section, no chapters, no TOC. */
     private val isArticle = NewsRepository.isArticle(bookId)
@@ -68,29 +93,43 @@ class ReaderViewModel(
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
 
+    /** Recently loaded chapters, so recentring the window on a neighbour is instant. */
+    private val chapters = object : LinkedHashMap<Int, LoadedChapter>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, LoadedChapter>) = size > MAX_CACHED_CHAPTERS
+    }
+    private val windowLock = Mutex()
+    private var nextJumpId = 1L
+
+    private var pageCountJob: Job? = null
+    private var pageCountKey: String? = null
+
     fun load() {
         if (isArticle) {
             loadArticle()
             return
         }
-        if (book != null) return
+        if (document != null) return
         viewModelScope.launch {
-            val savedChapter = repo.getBook(bookId)?.chapterIndex ?: 0
-            val opened = runCatching { repo.openEpub(bookId) }.getOrNull()
+            val saved = repo.getBook(bookId)
+            val opened = runCatching { repo.openBook(bookId) }.getOrNull()
             if (opened == null) {
                 _ui.value = _ui.value.copy(isLoading = false, error = "Could not open this book.")
                 return@launch
             }
-            parser = opened.first
-            book = opened.second
-            source = BookContentSource(opened.first, opened.second)
+            document = opened
             _ui.value = _ui.value.copy(
-                title = opened.second.title,
-                toc = opened.second.toc,
-                chapterCount = opened.second.spine.size,
-                languageTag = opened.second.language,
+                title = opened.title,
+                toc = opened.toc,
+                chapterCount = opened.sectionCount,
+                languageTag = opened.language,
             )
-            showChapter(savedChapter.coerceIn(0, opened.second.spine.size - 1))
+            opened.unreadableReason?.let { reason ->
+                _ui.value = _ui.value.copy(isLoading = false, error = reason)
+                return@launch
+            }
+            source = BookContentSource(opened)
+            val chapter = (saved?.chapterIndex ?: 0).coerceIn(0, opened.sectionCount - 1)
+            recenter(chapter, jumpToBlock = saved?.blockIndex ?: 0)
         }
         // Character counts drive the time estimates; computing them walks the whole book,
         // so do it off the critical path and cache it in the database.
@@ -125,8 +164,8 @@ class ReaderViewModel(
                     _ui.value = _ui.value.copy(
                         title = article.title,
                         chapterCount = 1,
-                        chapterIndex = 0,
-                        blocks = body.blocks,
+                        window = listOf(LoadedChapter(0, null, body.blocks)),
+                        anchorChapter = 0,
                         languageTag = locale.toLanguageTag(),
                         isLoading = false,
                         error = null,
@@ -141,49 +180,144 @@ class ReaderViewModel(
         }
     }
 
+    // ---- the window of chapters ----
+
+    /** Table of contents: go to the start of [index]. */
     fun showChapter(index: Int) {
         if (isArticle) return
-        val src = source ?: return
-        if (index !in 0 until (book?.spine?.size ?: 0)) return
+        viewModelScope.launch { recenter(index, jumpToBlock = 0) }
+    }
+
+    /** « and »: the chapter after or before [visibleChapter], skipping any with nothing in it. */
+    fun stepChapter(visibleChapter: Int, forward: Boolean) {
+        if (isArticle) return
         viewModelScope.launch {
-            _ui.value = _ui.value.copy(isLoading = true)
-            val chapter: Chapter? = runCatching { src.chapter(index) }.getOrNull()
-            _ui.value = _ui.value.copy(
-                chapterIndex = index,
-                chapterTitle = chapter?.title,
-                blocks = chapter?.blocks.orEmpty(),
-                isLoading = false,
-                error = if (chapter == null) "Could not load this chapter." else null,
-            )
+            val target = readableFrom(visibleChapter + if (forward) 1 else -1, if (forward) 1 else -1)
+                ?: return@launch
+            recenter(target.index, jumpToBlock = 0)
         }
     }
-
-    /** Ensures the displayed chapter matches the chapter TTS is currently reading. */
-    fun syncToChapter(chapterIndex: Int) {
-        if (chapterIndex != _ui.value.chapterIndex && !_ui.value.isLoading) {
-            showChapter(chapterIndex)
-        }
-    }
-
-    fun nextChapter() = showChapter(_ui.value.chapterIndex + 1)
-
-    fun previousChapter() = showChapter(_ui.value.chapterIndex - 1)
 
     /**
-     * Bytes for an image block. Book images come out of the EPUB zip; article images are
+     * The page the reader settled on is in [chapterIndex]. If that is a neighbour, the window
+     * moves to centre on it — the pager keeps the same page on screen throughout, because
+     * pages are keyed by chapter and page number.
+     */
+    fun onVisibleChapter(chapterIndex: Int) {
+        if (isArticle || chapterIndex == _ui.value.anchorChapter) return
+        viewModelScope.launch { recenter(chapterIndex, jumpToBlock = null) }
+    }
+
+    /** The voice moved on; make sure its chapter is in the window so the page can follow. */
+    fun syncToChapter(chapterIndex: Int) {
+        if (isArticle || _ui.value.window.any { it.index == chapterIndex }) return
+        viewModelScope.launch { recenter(chapterIndex, jumpToBlock = null) }
+    }
+
+    fun consumeJump(id: Long) {
+        if (_ui.value.jump?.id == id) _ui.value = _ui.value.copy(jump = null)
+    }
+
+    private suspend fun recenter(requested: Int, jumpToBlock: Int?) = windowLock.withLock {
+        val count = document?.sectionCount ?: return
+        val start = requested.coerceIn(0, count - 1)
+        // Land on something readable: forwards first, as a reader moving through the book would.
+        val current = readableFrom(start, 1) ?: readableFrom(start, -1) ?: loadChapter(start)
+        if (current == null) {
+            _ui.value = _ui.value.copy(isLoading = false, error = "Could not load this chapter.")
+            return
+        }
+        val previous = readableFrom(current.index - 1, -1)
+        val next = readableFrom(current.index + 1, 1)
+        _ui.value = _ui.value.copy(
+            window = listOfNotNull(previous, current, next),
+            anchorChapter = current.index,
+            isLoading = false,
+            error = null,
+            jump = if (jumpToBlock != null) {
+                JumpRequest(current.index, if (current.index == start) jumpToBlock else 0, nextJumpId++)
+            } else {
+                _ui.value.jump
+            },
+        )
+    }
+
+    /** The first chapter from [start] stepping by [step] that has anything to show. */
+    private suspend fun readableFrom(start: Int, step: Int): LoadedChapter? {
+        val count = document?.sectionCount ?: return null
+        var index = start
+        var looked = 0
+        while (index in 0 until count && looked < MAX_EMPTY_SKIP) {
+            val chapter = loadChapter(index)
+            if (chapter != null && chapter.blocks.hasReadableContent()) return chapter
+            index += step
+            looked++
+        }
+        return null
+    }
+
+    private suspend fun loadChapter(index: Int): LoadedChapter? {
+        chapters[index]?.let { return it }
+        val chapter = runCatching { source?.chapter(index) }.getOrNull() ?: return null
+        return LoadedChapter(index, chapter.title, chapter.blocks).also { chapters[index] = it }
+    }
+
+    // ---- whole-book page counts ----
+
+    /**
+     * Counts every chapter's pages at [geometry], the same way the pager paginates, so the
+     * footer can number pages across the whole book. Cached per layout in the database; a
+     * rotation or font-size change starts a fresh count and abandons the stale one.
+     */
+    fun ensurePageCounts(geometry: PageGeometry, measurer: TextMeasurer, density: Density) {
+        if (isArticle || document == null) return
+        val key = geometry.key
+        if (key == pageCountKey) return
+        pageCountKey = key
+        pageCountJob?.cancel()
+        _ui.value = _ui.value.copy(pageCounts = null)
+        pageCountJob = viewModelScope.launch {
+            repo.pageCounts(bookId, key)?.let { cached ->
+                _ui.value = _ui.value.copy(pageCounts = cached)
+                return@launch
+            }
+            // A separate instance, so counting never contends with the pages on screen.
+            val counts = repo.openBook(bookId)?.use { book ->
+                withContext(Dispatchers.Default) {
+                    (0 until book.sectionCount).map { index ->
+                        ensureActive()
+                        val blocks = runCatching { book.loadSection(index).blocks }.getOrDefault(emptyList())
+                        if (!blocks.hasReadableContent()) {
+                            0
+                        } else {
+                            paginateChapter(
+                                blocks,
+                                geometry.widthPx,
+                                geometry.heightPx,
+                                measurer,
+                                density,
+                                geometry.fontScale,
+                            ).size
+                        }
+                    }
+                }
+            } ?: return@launch
+            repo.savePageCounts(bookId, key, counts)
+            if (pageCountKey == key) _ui.value = _ui.value.copy(pageCounts = counts)
+        }
+    }
+
+    /**
+     * Bytes for an image block. Book images come out of the book file; article images are
      * absolute URLs, downloaded once and then served from disk.
      */
     suspend fun imageBytes(key: String): ByteArray? =
-        if (isArticle) {
-            articleImages.bytes(key)
-        } else {
-            withContext(Dispatchers.IO) { parser?.readEntry(key) }
-        }
+        if (isArticle) articleImages.bytes(key) else document?.readImage(key)
 
     // ---- Anki cards ----
 
-    /** The language the EPUB declares; the user's per-book override is applied on top. */
-    fun bookLocale(): Locale = articleLocale ?: book?.locale() ?: Locale.getDefault()
+    /** The language the book declares; the user's per-book override is applied on top. */
+    fun bookLocale(): Locale = articleLocale ?: document?.locale() ?: Locale.getDefault()
 
     /** Language of the article being read, resolved from its feed. */
     private var articleLocale: Locale? = null
@@ -192,8 +326,9 @@ class ReaderViewModel(
      * Builds an empty card for the sentence containing [offsetInBlock] — the character the
      * user long-pressed. Returns null if that block has no speakable text.
      */
-    fun draftFor(blockIndex: Int, offsetInBlock: Int): CardDraft? {
-        val block = _ui.value.blocks.getOrNull(blockIndex) as? Block.Text ?: return null
+    fun draftFor(chapterIndex: Int, blockIndex: Int, offsetInBlock: Int): CardDraft? {
+        val blocks = _ui.value.window.firstOrNull { it.index == chapterIndex }?.blocks ?: return null
+        val block = blocks.getOrNull(blockIndex) as? Block.Text ?: return null
         val span = block.sentences.getOrNull(block.sentenceIndexAt(offsetInBlock)) ?: return null
         return CardDraft(
             sentence = block.text.substring(span.start, span.end),
@@ -251,14 +386,18 @@ class ReaderViewModel(
     }
 
     override fun onCleared() {
-        parser?.close()
-        parser = null
+        document?.close()
+        document = null
         source = null
         cardAudio.shutdown()
         super.onCleared()
     }
 
     companion object {
+        /** Blank spine items skipped in a row before giving up looking for text. */
+        private const val MAX_EMPTY_SKIP = 40
+        private const val MAX_CACHED_CHAPTERS = 8
+
         fun create(bookId: String): ReaderViewModel {
             val app = TTSingApp.instance
             return ReaderViewModel(
