@@ -30,5 +30,6 @@ class PdfMetadataTest {
             assertNull(it.toString(), PdfMetadata.author(it))
         }
         assertEquals("Ursula K. Le Guin", PdfMetadata.author("Ursula K. Le Guin"))
+        assertEquals("Camille Fournier, Ian Nowland", PdfMetadata.author("Camille Fournier;Ian Nowland"))
     }
 }

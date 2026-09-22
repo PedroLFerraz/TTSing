@@ -33,7 +33,8 @@ object PdfMetadata {
             cleaned.isEmpty() -> null
             cleaned.contains("://") || cleaned.startsWith("www.", ignoreCase = true) -> null
             cleaned.lowercase() in placeholderAuthors -> null
-            else -> cleaned
+            // Several authors are often stored as "Camille Fournier;Ian Nowland".
+            else -> cleaned.split(';').map { it.trim() }.filter { it.isNotEmpty() }.joinToString(", ")
         }
     }
 }

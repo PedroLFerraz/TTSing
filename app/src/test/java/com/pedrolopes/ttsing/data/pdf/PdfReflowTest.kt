@@ -285,7 +285,8 @@ class PdfReflowTest {
 
     @Test
     fun `bullets, rules and backgrounds are not figures`() {
-        val text = (0 until 10).map { line("Body line $it over a tinted page background here", 100f + it * 14f) }
+        // A full page of body text, as a real page over a tint would have.
+        val text = (0 until 40).map { line("Body line $it over a tinted page background here", 100f + it * 14f) }
         val p = pageWith(
             0,
             text,
@@ -304,5 +305,117 @@ class PdfReflowTest {
     fun `a full-page illustration with no text over it is kept`() {
         val plate = pageWith(0, emptyList(), listOf(figure("plate", top = 0f, left = 0f, width = width, height = height)))
         assertEquals(listOf("plate"), PdfReflow.figuresOn(plate).map { it.key })
+    }
+
+    // ---- found in a real O'Reilly PDF ----
+
+    @Test
+    fun `a typeset hyphen at the break is mended like an ordinary one`() {
+        val p = page(
+            0,
+            line("The later chapters are writ‐", 100f),
+            line("ten with the assumption that you have one.", 114f, end = 400f),
+        )
+        assertEquals(
+            listOf("The later chapters are written with the assumption that you have one."),
+            texts(PdfReflow.toBlocks(listOf(p), emptySet(), Locale.ENGLISH)),
+        )
+    }
+
+    @Test
+    fun `a two-line title set with wide leading stays one title`() {
+        val p = page(
+            0,
+            line("Why Platform Engineering Is", 100f, size = 20f, end = 400f),
+            line("Becoming Essential", 128f, size = 20f, end = 300f),
+            line("Body text begins here and runs on across the line.", 170f),
+        )
+        val blocks = PdfReflow.toBlocks(listOf(p), emptySet(), Locale.ENGLISH, bodySize = body)
+            .filterIsInstance<Block.Text>()
+        assertEquals("Why Platform Engineering Is Becoming Essential", blocks.first().text)
+        assertEquals(2, blocks.size)
+    }
+
+    @Test
+    fun `an epigraph set in from the margin is one paragraph, not one per line`() {
+        val inset = left + 30f
+        val p = page(
+            0,
+            line("She swallowed the cat to catch the bird, she", 100f, x = inset),
+            line("swallowed the bird to catch the spider, she swal-", 114f, x = inset),
+            line("lowed the spider to catch the fly.", 128f, x = inset, end = 330f),
+        )
+        assertEquals(
+            listOf("She swallowed the cat to catch the bird, she swallowed the bird to catch the spider, she swallowed the spider to catch the fly."),
+            texts(PdfReflow.toBlocks(listOf(p), emptySet(), Locale.ENGLISH, bodySize = body)),
+        )
+    }
+
+    @Test
+    fun `a cover picture with its title printed over it is kept`() {
+        val title = listOf(
+            line("Platform", 120f, size = 40f, end = 400f),
+            line("Engineering", 170f, size = 40f, end = 450f),
+            line("A Guide for Technical, Product,", 210f, size = 16f, end = 380f),
+            line("and People Leaders", 230f, size = 16f, end = 300f),
+            line("Camille Fournier", 700f, size = 12f, end = 540f),
+            line("& Ian Nowland", 716f, size = 12f, end = 540f),
+        )
+        val cover = PdfPage(0, width, height, title, listOf(PdfImage("cover", 0f, 0f, width, height)))
+        assertEquals(listOf("cover"), PdfReflow.figuresOn(cover).map { it.key })
+    }
+
+    /** What the reader gets, in order: text as it reads, pictures as "[key]". */
+    private fun flow(blocks: List<Block>) = blocks.map {
+        when (it) {
+            is Block.Text -> it.text
+            is Block.Image -> "[${it.zipPath}]"
+        }
+    }
+
+    @Test
+    fun `footnotes drawn first neither pull the figure up nor break into the text`() {
+        // As an O'Reilly page is drawn: the footnote first, then the body, then the caption.
+        val p = pageWith(
+            0,
+            listOf(
+                line("4 This is literally what they were called.", 700f, size = 8f, end = 300f),
+                line("building blocks that are not integrated with one", 100f),
+                line("another.4 To function, they need glue. The type of", 114f),
+                line("architecture seen in Figure 1-1.", 128f, end = 300f),
+                line("Figure 1-1. The over-general swamp, held together by glue", 400f, end = 400f),
+            ),
+            listOf(figure("fig", top = 150f)),
+        )
+        val next = page(1, line("The problem with the swamp is how hard it is to change.", 60f, end = 400f))
+        assertEquals(
+            listOf(
+                "building blocks that are not integrated with one another. To function, they need glue. " +
+                    "The type of architecture seen in Figure 1-1.",
+                "[fig]",
+                "Figure 1-1. The over-general swamp, held together by glue",
+                "4 This is literally what they were called.",
+                "The problem with the swamp is how hard it is to change.",
+            ),
+            flow(PdfReflow.toBlocks(listOf(p, next), emptySet(), Locale.ENGLISH, body)),
+        )
+    }
+
+    @Test
+    fun `small type at the foot that is not a numbered note stays text`() {
+        val p = page(
+            0,
+            line("A sentence of body text that ends here.", 100f, end = 400f),
+            line("Printed in the USA.", 700f, size = 8f, end = 200f),
+        )
+        assertTrue(PdfReflow.footnotesOn(p.lines, p, body).isEmpty())
+    }
+
+    @Test
+    fun `only the page's own note numbers are taken out of the text`() {
+        assertEquals(
+            "another. To function, Web 2 and 1984.",
+            PdfReflow.stripNoteMarkers("another.4 To function, Web 2 and 1984.", setOf("4", "2")),
+        )
     }
 }

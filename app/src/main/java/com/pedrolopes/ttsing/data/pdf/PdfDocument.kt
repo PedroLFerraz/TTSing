@@ -198,13 +198,21 @@ class PdfDocument private constructor(
         /** Top-level bookmarks as sections, or null when there are too few to be useful. */
         private fun outlineSections(pdf: PDDocument): List<Section>? {
             val outline = pdf.documentCatalog?.documentOutline ?: return null
-            val marks = outline.children().mapNotNull { item ->
-                val page = runCatching { item.findDestinationPage(pdf) }.getOrNull() ?: return@mapNotNull null
+            fun mark(item: com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem): Pair<String, Int>? {
+                val page = runCatching { item.findDestinationPage(pdf) }.getOrNull() ?: return null
                 val index = pdf.pages.indexOf(page)
-                if (index < 0) null else (item.title?.trim().orEmpty()) to index
+                return if (index < 0) null else (item.title?.trim().orEmpty()) to index
+            }
+            // A book's top level is often its Parts, each a hundred pages; its chapters are the
+            // next level down. So a top-level entry with children gives way to them: the part
+            // keeps only its own opening pages, and each chapter is a section.
+            val marks = outline.children().flatMap { item ->
+                listOfNotNull(mark(item)) + item.children().mapNotNull { mark(it) }
             }
                 .sortedBy { it.second }
-                .distinctBy { it.second }
+                // Where a part and its first chapter open on the same page, the chapter names it.
+                .groupBy { it.second }
+                .map { (_, same) -> same.last() }
             if (marks.size < 2) return null
 
             val starts = if (marks.first().second > 0) listOf("Start" to 0) + marks else marks

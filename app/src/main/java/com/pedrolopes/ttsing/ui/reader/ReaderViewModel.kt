@@ -133,14 +133,15 @@ class ReaderViewModel(
                 return@launch
             }
             source = BookContentSource(opened)
+            // Character counts drive the time estimates; computing them walks the whole book, so
+            // it runs off the critical path — but only once the book is open, since opening is
+            // what clears counts left over from an older way of splitting the book.
+            launch {
+                val counts = runCatching { repo.chapterCharCounts(bookId) }.getOrDefault(emptyList())
+                if (counts.isNotEmpty()) _ui.value = _ui.value.copy(chapterCharCounts = counts)
+            }
             val chapter = (saved?.chapterIndex ?: 0).coerceIn(0, opened.sectionCount - 1)
             recenter(chapter, jumpToBlock = saved?.blockIndex ?: 0)
-        }
-        // Character counts drive the time estimates; computing them walks the whole book,
-        // so do it off the critical path and cache it in the database.
-        viewModelScope.launch {
-            val counts = runCatching { repo.chapterCharCounts(bookId) }.getOrDefault(emptyList())
-            if (counts.isNotEmpty()) _ui.value = _ui.value.copy(chapterCharCounts = counts)
         }
     }
 

@@ -147,7 +147,7 @@ class BookRepository(
         val entity = dao.get(id) ?: return@withContext null
         val format = BookFormat.fromStored(entity.format)
         val file = ensureCachedFile(id, Uri.parse(entity.uri), format)
-        when (format) {
+        val document = when (format) {
             BookFormat.EPUB -> EpubParser(file).let { parser ->
                 runCatching { EpubDocument(parser, parser.parseBook()) }
                     .onFailure { parser.close() }
@@ -155,6 +155,14 @@ class BookRepository(
             }
             BookFormat.PDF -> PdfDocument.open(file, entity.title)
         }
+        // Per-section caches are only valid for the sections they were counted over; if the
+        // way a book is split has changed since it was indexed, count again.
+        if (document.sectionCount != entity.spineCount) dao.resetSections(id, document.sectionCount)
+        // Likewise the title and author, when how they are read from the file has improved.
+        if (document.title != entity.title || document.author != entity.author) {
+            dao.updateTitleAndAuthor(id, document.title, document.author)
+        }
+        document
     }
 
     /** The cached per-chapter character counts, or null if nobody has computed them yet. */

@@ -29,6 +29,19 @@ interface BookDao {
     @Query("UPDATE books SET pageCounts = :pageCounts, pageLayoutKey = :layoutKey WHERE id = :id")
     suspend fun updatePageCounts(id: String, pageCounts: String, layoutKey: String)
 
+    /**
+     * The book now splits into [sectionCount] sections (how a format is read has changed), so
+     * everything counted per section is stale and is dropped to be counted again.
+     */
+    @Query(
+        """UPDATE books SET spineCount = :sectionCount, chapterChars = NULL, pageCounts = NULL,
+           pageLayoutKey = NULL WHERE id = :id""",
+    )
+    suspend fun resetSections(id: String, sectionCount: Int)
+
+    @Query("UPDATE books SET title = :title, author = :author WHERE id = :id")
+    suspend fun updateTitleAndAuthor(id: String, title: String, author: String?)
+
     /** Adds a stretch of listening to this book's totals. */
     @Query("UPDATE books SET listenedMs = listenedMs + :ms, listenedChars = listenedChars + :chars WHERE id = :id")
     suspend fun addListening(id: String, ms: Long, chars: Long)

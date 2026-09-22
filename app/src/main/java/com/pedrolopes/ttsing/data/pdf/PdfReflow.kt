@@ -111,6 +111,8 @@ object PdfReflow {
         // Pictures the reading has already passed, waiting for the paragraph they interrupt
         // to end: a figure goes *between* paragraphs, never through the middle of a sentence.
         val passedFigures = mutableListOf<PdfImage>()
+        // Footnotes wait the same way, and are read once the paragraph that cites them is done.
+        val passedNotes = mutableListOf<String>()
 
         fun flush() {
             val text = paragraph.toString().replace(Regex("\\s+"), " ").trim()
@@ -120,15 +122,22 @@ object PdfReflow {
                 blocks.add(Block.Text(text, kind, SentenceSplitter.split(text, locale)))
             }
             headingKind = null
+            passedNotes.forEach { note ->
+                blocks.add(Block.Text(note, Block.Text.Kind.QUOTE, SentenceSplitter.split(note, locale)))
+            }
+            passedNotes.clear()
             passedFigures.forEach { blocks.add(Block.Image(it.key, null)) }
             passedFigures.clear()
         }
 
         for ((pageNumber, pageAndLines) in body.withIndex()) {
-            val (page, lines) = pageAndLines
+            val (page, pageLines) = pageAndLines
             val figures = ArrayDeque(figuresOn(page))
+            val notes = footnotesOn(pageLines, page, bodySize)
+            val noteNumbers = notes.mapNotNull { noteNumber.find(clean(it.text))?.groupValues?.get(1) }.toSet()
+            val lines = pageLines - notes.toSet()
             for ((lineNumber, line) in lines.withIndex()) {
-                val text = clean(line.text)
+                val text = stripNoteMarkers(clean(line.text), noteNumbers)
                 if (text.isEmpty()) continue
                 // Reaching a line below a figure's top edge means the reader has got to it. The
                 // space the figure takes up is not paragraph spacing: text that resumes under a
@@ -145,13 +154,23 @@ object PdfReflow {
                 val startsNew = when {
                     prev == null -> true
                     // Headings stand alone, and a run of heading lines at one size is one heading.
-                    kind != null || headingKind != null -> kind != headingKind || gapBetween(prev, line) > lineGap * 1.6f
+                    // Measured against the heading's own size: titles are set with more
+                    // leading than body text, and "Why Platform Engineering Is" / "Becoming
+                    // Essential" is one title.
+                    // A caption stands alone: it neither joins the text above it nor runs on
+                    // into the next page's first paragraph.
+                    isCaption(text) || isCaption(paragraph) &&
+                        (lineNumber == 0 || line.y < prev.y || gapBetween(prev, line) > lineGap * 1.3f) -> true
+                    kind != null || headingKind != null ->
+                        kind != headingKind || gapBetween(prev, line) > maxOf(lineGap * 1.6f, line.fontSize * 1.9f)
                     // A page break, or a jump back up the page (the next column), only ends the
                     // paragraph if the text there reads as ended.
                     lineNumber == 0 && pageNumber > 0 -> endsSentence(paragraph) || isIndented(line, bodyLeft, bodySize)
                     line.y < prev.y -> endsSentence(paragraph) || isIndented(line, bodyLeft, bodySize)
                     gapBetween(prev, line) - figureSpace > lineGap * 1.45f -> true
-                    isIndented(line, bodyLeft, bodySize) -> true
+                    // A first-line indent is an indent relative to the line above: an epigraph
+                    // or a block quote set in from the margin keeps all its lines together.
+                    isIndentedFrom(line, prev, bodySize) -> true
                     // A short last line that finished a sentence ends its paragraph.
                     endsSentence(paragraph) && prev.right < bodyRight - bodySize * 4 -> true
                     else -> false
@@ -168,6 +187,7 @@ object PdfReflow {
             }
             // Whatever sits below the page's last line comes after it.
             passedFigures.addAll(figures)
+            passedNotes.addAll(joinNotes(notes))
         }
         flush()
         return blocks
@@ -189,15 +209,64 @@ object PdfReflow {
         return page.images
             .filter { image ->
                 val area = image.width * image.height
+                // A page of body text over a tint is a background; a cover — one big picture
+                // with a title and the authors' names over it — is not, and must stay.
                 val isBackground = pageArea > 0 && area >= pageArea * 0.8f &&
-                    page.lines.count { it.y in image.top..image.bottom && it.x in image.left..(image.left + image.width) } >= 3
+                    page.lines.count { it.y in image.top..image.bottom && it.x in image.left..(image.left + image.width) } >= 12
                 image.width >= MIN_FIGURE_POINTS && image.height >= MIN_FIGURE_POINTS && !isBackground
             }
             .distinctBy { listOf(it.left.toInt(), it.top.toInt(), it.width.toInt(), it.height.toInt()) }
             .sortedBy { it.top }
     }
 
+    // ---- footnotes ----
+
+    private val noteNumber = Regex("""^([0-9]{1,3}|[*†‡§])\s""")
+
+    /**
+     * The footnotes at the foot of [page]: the run of lines in smaller type below all of the
+     * page's body text, starting with a note number. Producers often draw them before the
+     * body, so they are picked out by position rather than by where they come in the stream.
+     */
+    fun footnotesOn(lines: List<PdfLine>, page: PdfPage, bodySize: Float): List<PdfLine> {
+        val lowestBody = lines.filter { it.fontSize >= bodySize * 0.95f }.maxOfOrNull { it.y } ?: return emptyList()
+        val below = lines
+            .filter { it.y > lowestBody && it.fontSize <= bodySize * 0.9f && it.y > page.height * 0.5f }
+            .sortedBy { it.y }
+        if (below.isEmpty() || !noteNumber.containsMatchIn(clean(below.first().text))) return emptyList()
+        return below
+    }
+
+    /** Footnote lines, one string per note. */
+    private fun joinNotes(lines: List<PdfLine>): List<String> {
+        val notes = mutableListOf<StringBuilder>()
+        for (line in lines) {
+            val text = clean(line.text)
+            if (text.isEmpty()) continue
+            if (notes.isEmpty() || noteNumber.containsMatchIn(text)) notes.add(StringBuilder(text))
+            else appendLine(notes.last(), text)
+        }
+        return notes.map { it.toString() }
+    }
+
+    /**
+     * Takes the page's note markers out of its text — "another.4 To function" is read
+     * "another. To function", not "another. four" — only for numbers that have a note on the
+     * page, and only where they're stuck to the word or punctuation before them.
+     */
+    fun stripNoteMarkers(text: String, numbers: Set<String>): String {
+        if (numbers.isEmpty()) return text
+        return numbers.fold(text) { acc, n ->
+            acc.replace(Regex("""(?<=[\p{L}.,;:!?”’"')\]])${Regex.escape(n)}(?=[\s,.;:!?)]|$)"""), "")
+        }
+    }
+
     // ---- line classification ----
+
+    private val captionPattern = Regex("""^(Figure|Fig\.|Table|Example|Listing|Figura|Tabela|Quadro)\s+[0-9]+([-.–][0-9]+)*\.?\s""")
+
+    private fun isCaption(text: CharSequence): Boolean = captionPattern.containsMatchIn(text)
+
 
     private fun isFurniture(line: PdfLine, page: PdfPage, furniture: Set<String>): Boolean {
         if (!inMarginBand(line, page)) return false
@@ -233,6 +302,9 @@ object PdfReflow {
 
     private fun isIndented(line: PdfLine, bodyLeft: Float, bodySize: Float): Boolean =
         line.x > bodyLeft + bodySize * 0.8f && line.x < bodyLeft + bodySize * 6f
+
+    private fun isIndentedFrom(line: PdfLine, previous: PdfLine, bodySize: Float): Boolean =
+        line.x - previous.x in (bodySize * 0.8f)..(bodySize * 6f)
 
     private fun gapBetween(a: PdfLine, b: PdfLine): Float = b.y - a.y
 
@@ -272,6 +344,10 @@ object PdfReflow {
     /** Strips what PDF text layers carry that nobody wants spoken. */
     private fun clean(text: String): String =
         text.replace(' ', ' ')
+            // Typeset hyphens (U+2010, U+2011) are hyphens; left as they are they would neither
+            // be mended at a line break nor read sensibly.
+            .replace('\u2010', '-')
+            .replace('\u2011', '-')
             .replace(Regex("[​-‍﻿]"), "")
             .replace(Regex("\\s+"), " ")
             .trim()
