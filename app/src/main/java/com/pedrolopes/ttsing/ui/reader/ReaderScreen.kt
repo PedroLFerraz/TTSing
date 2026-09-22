@@ -136,6 +136,8 @@ fun ReaderScreen(
     val scope = rememberCoroutineScope()
     var showSettings by remember { mutableStateOf(false) }
     var visible by remember { mutableStateOf<VisiblePage?>(null) }
+    /** The page the voice is on, when it is in the chapters the pager holds. */
+    var voicePage by remember { mutableStateOf<VisiblePage?>(null) }
     var cardDraft by remember { mutableStateOf<CardDraft?>(null) }
     val snackbarHost = remember { SnackbarHostState() }
     val drawerState = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
@@ -173,27 +175,54 @@ fun ReaderScreen(
         }
         ?: visible?.takeIf { ui.chapterCount == 1 }?.let { listOf(it.pagesInChapter) }
 
-    // Time to finish: from where the voice is when it's playing, otherwise from the top of
-    // the visible page.
+    // ---- time left, KOReader's way (see TimeLeft) ----
+    // Where from: the voice's page while it is speaking, the page on screen otherwise.
     val voiceChapter = playback.position.chapterIndex
-    val trackPlayback = isThisBook && playback.isSpeaking && ui.window.any { it.index == voiceChapter }
-    val fromChapter = if (trackPlayback) voiceChapter else visibleChapter
-    val fromBlocks = ui.window.firstOrNull { it.index == fromChapter }?.blocks.orEmpty()
-    val fromBlock = if (trackPlayback) playback.position.blockIndex else (visible?.firstBlockIndex ?: 0)
-    val fromOffset = if (trackPlayback) (playback.sentenceRange?.first ?: 0) else (visible?.firstOffset ?: 0)
-    val remainingChapterChars = ReadingEstimate.remainingCharsInChapter(fromBlocks, fromBlock, fromOffset)
-    // The service's live figure when it has one; the persisted one is written behind and
-    // would make the estimate jump in steps.
-    val charsPerSecond = playback.charsPerSecond.takeIf { isThisBook } ?: settings.charsPerSecond
-    val chapterSeconds = ReadingEstimate.secondsFor(remainingChapterChars, charsPerSecond, settings.speechRate)
-    val chapterTimeText = ReadingEstimate.formatDuration(rememberSteadySeconds(chapterSeconds) ?: chapterSeconds)
+    val trackPlayback = isThisBook && playback.isSpeaking && voicePage != null
+    val at = if (trackPlayback) voicePage else visible
+    val fromChapter = at?.chapterIndex ?: visibleChapter
+    // At what pace: this book's own listening — live from the service while it has the book,
+    // as saved otherwise — starting from the voice's speed while the book is new.
+    val listenedMs = if (isThisBook) playback.bookListenedMs else ui.listenedMs
+    val listenedChars = if (isThisBook) playback.bookListenedChars else ui.listenedChars
+    val voiceCps = playback.charsPerSecond.takeIf { isThisBook } ?: settings.charsPerSecond
     val charCounts = ui.chapterCharCounts
-    val remainingBookChars = charCounts.takeIf { it.isNotEmpty() }
-        ?.let { ReadingEstimate.remainingCharsInBook(remainingChapterChars, it, fromChapter) }
-    val bookSeconds = rememberSteadySeconds(
-        remainingBookChars?.let { ReadingEstimate.secondsFor(it, charsPerSecond, settings.speechRate) },
-    )
-    val bookTimeText = bookSeconds?.let(ReadingEstimate::formatDuration)
+    val bookChars = charCounts.sum()
+    val pagesKnown = pageCounts != null
+    // The pace is taken when a chapter starts (and again when the counts arrive or the speech
+    // rate changes), the way KOReader refreshes on page turns: within a chapter, the only
+    // thing that moves the figures is reading on.
+    val secondsPerChar = remember(fromChapter, bookChars > 0, settings.speechRate, isThisBook) {
+        TimeLeft.secondsPerChar(listenedMs, listenedChars, voiceCps) / settings.speechRate.coerceAtLeast(0.1f)
+    }
+    val secondsPerPage = remember(fromChapter, pagesKnown, bookChars, settings.speechRate, isThisBook) {
+        pageCounts?.let { counts ->
+            TimeLeft.secondsPerPage(listenedMs, listenedChars, voiceCps, bookChars, BookPages.total(counts), settings.speechRate)
+        }
+    }
+    val estimate = if (pageCounts != null && secondsPerPage != null && at != null) {
+        TimeLeft.byPages(pageCounts, fromChapter, at.pageInChapter, secondsPerPage)
+    } else {
+        // Pages still being counted: characters left, from the voice or the top of the page.
+        val fromBlocks = ui.window.firstOrNull { it.index == fromChapter }?.blocks.orEmpty()
+        val fromBlock = if (trackPlayback) playback.position.blockIndex else (visible?.firstBlockIndex ?: 0)
+        val fromOffset = if (trackPlayback) (playback.sentenceRange?.first ?: 0) else (visible?.firstOffset ?: 0)
+        TimeLeft.byCharacters(
+            ReadingEstimate.remainingCharsInChapter(fromBlocks, fromBlock, fromOffset),
+            charCounts.drop(fromChapter + 1).sum(),
+            secondsPerChar,
+        )
+    }
+    val chapterTimeText = ReadingEstimate.formatDuration(estimate.chapterSeconds)
+    val bookTimeText = if (charCounts.isNotEmpty()) ReadingEstimate.formatMinutes(estimate.bookMinutes) else null
+    val remainingBookChars = charCounts.takeIf { it.isNotEmpty() }?.let {
+        val fromBlocks = ui.window.firstOrNull { c -> c.index == visibleChapter }?.blocks.orEmpty()
+        ReadingEstimate.remainingCharsInBook(
+            ReadingEstimate.remainingCharsInChapter(fromBlocks, visible?.firstBlockIndex ?: 0, visible?.firstOffset ?: 0),
+            it,
+            visibleChapter,
+        )
+    }
 
     val pageInChapter = visible?.pageInChapter ?: 0
     val progress = when {
@@ -327,6 +356,7 @@ fun ReaderScreen(
                         loadImage = viewModel::imageBytes,
                         onGeometry = { geometry -> viewModel.ensurePageCounts(geometry, countingMeasurer, density) },
                         onVisiblePage = { page -> visible = page },
+                        onVoicePage = { page -> voicePage = page },
                         onSettledChapter = viewModel::onVisibleChapter,
                     )
                 }
@@ -418,23 +448,6 @@ fun ReaderScreen(
     }
 }
 
-/**
- * [seconds], held steady: the value on screen only moves when a fresh estimate is clearly
- * different (see [ReadingEstimate.steady]).
- */
-@Composable
-private fun rememberSteadySeconds(seconds: Int?): Int? {
-    val shown = remember { SteadyHolder() }
-    if (seconds == null) return null
-    shown.value = ReadingEstimate.steady(shown.value, seconds)
-    return shown.value
-}
-
-/** Bookkeeping for [rememberSteadySeconds]; plain, so updating it never recomposes. */
-private class SteadyHolder {
-    var value: Int? = null
-}
-
 /** One page of the continuous book: which chapter it belongs to, and what is on it. */
 private data class BookPage(
     val chapter: LoadedChapter,
@@ -469,6 +482,7 @@ private fun PagedBook(
     loadImage: suspend (String) -> ByteArray?,
     onGeometry: (PageGeometry) -> Unit,
     onVisiblePage: (VisiblePage) -> Unit,
+    onVoicePage: (VisiblePage?) -> Unit,
     onSettledChapter: (Int) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -521,6 +535,14 @@ private fun PagedBook(
                 indexOfBlock(pages, voiceChapter, activeBlockIndex, activeOffset ?: 0)?.let { pages[it].key }
             } else {
                 null
+            }
+            LaunchedEffect(voicePageKey, pages) {
+                val page = pages.firstOrNull { it.key == voicePageKey }
+                onVoicePage(
+                    page?.let {
+                        VisiblePage(it.chapter.index, it.pageInChapter, it.pagesInChapter, 0, 0)
+                    },
+                )
             }
             LaunchedEffect(voicePageKey) {
                 if (voicePageKey == null || voicePageKey == shown.lastVoiceKey) return@LaunchedEffect

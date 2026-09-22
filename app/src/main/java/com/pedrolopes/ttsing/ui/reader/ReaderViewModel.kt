@@ -63,6 +63,9 @@ data class ReaderUiState(
     val chapterCharCounts: List<Int> = emptyList(),
     /** Pages per chapter at the current layout; null while they are being counted. */
     val pageCounts: List<Int>? = null,
+    /** This book's listening totals as saved, for the time left before playback starts. */
+    val listenedMs: Long = 0,
+    val listenedChars: Long = 0,
     /** True while a card's audio is being synthesized and handed to AnkiDroid. */
     val isSavingCard: Boolean = false,
     /** Article only: the full page couldn't be fetched, so this is just the feed's teaser. */
@@ -122,6 +125,8 @@ class ReaderViewModel(
                 toc = opened.toc,
                 chapterCount = opened.sectionCount,
                 languageTag = opened.language,
+                listenedMs = saved?.listenedMs ?: 0,
+                listenedChars = saved?.listenedChars ?: 0,
             )
             opened.unreadableReason?.let { reason ->
                 _ui.value = _ui.value.copy(isLoading = false, error = reason)

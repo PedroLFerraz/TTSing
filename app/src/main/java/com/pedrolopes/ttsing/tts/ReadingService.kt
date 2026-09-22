@@ -81,6 +81,13 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     /** Which voice [speed] belongs to — speeds are kept per voice, since voices differ most. */
     private var speedVoiceKey: String? = null
     private var listenedSincePersistMs = 0L
+
+    // This book's listening tally (KOReader's per-book statistics, for listening): what the
+    // database held when it opened, and what has been heard since and not yet saved.
+    private var savedListenMs = 0L
+    private var savedListenChars = 0L
+    private var unsavedListenMs = 0L
+    private var unsavedListenChars = 0L
     private var currentRate = 1f
 
     private val app: TTSingApp get() = application as TTSingApp
@@ -282,6 +289,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         persistPosition()
         document?.close()
         document = null
+        savedListenMs = 0
+        savedListenChars = 0
         content = null
         activeLocale = null
 
@@ -308,6 +317,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             position = restored,
             languageAvailable = languageOk,
             charsPerSecond = speed.charsPerSecond,
+            bookListenedMs = savedListenMs,
+            bookListenedChars = savedListenChars,
         )
         engine.moveTo(restored)
         updateMetadata()
@@ -329,6 +340,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             return null
         }
         document = opened
+        savedListenMs = entity.listenedMs
+        savedListenChars = entity.listenedChars
         return BookContentSource(opened) to
             ReadingPosition(entity.chapterIndex, entity.blockIndex, entity.sentenceIndex)
     }
@@ -400,7 +413,18 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         if (sample < 1f || sample > 200f) return
 
         speed.add(previousChars, elapsedMs, currentRate)
-        _state.value = _state.value.copy(charsPerSecond = speed.charsPerSecond)
+        val bookId = _state.value.bookId
+        if (bookId == null || NewsRepository.isArticle(bookId)) {
+            _state.value = _state.value.copy(charsPerSecond = speed.charsPerSecond)
+        } else {
+            unsavedListenMs += (elapsedMs * currentRate.coerceAtLeast(0.1f)).toLong()
+            unsavedListenChars += previousChars
+            _state.value = _state.value.copy(
+                charsPerSecond = speed.charsPerSecond,
+                bookListenedMs = savedListenMs + unsavedListenMs,
+                bookListenedChars = savedListenChars + unsavedListenChars,
+            )
+        }
 
         listenedSincePersistMs += elapsedMs
         if (listenedSincePersistMs >= SPEED_PERSIST_EVERY_MS) {
@@ -590,6 +614,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         val s = _state.value
         val bookId = s.bookId ?: return
         sentencesSinceSave = 0
+        flushListening(bookId)
         val source = content ?: return
         saveJob?.cancel()
         saveJob = lifecycleScope.launch {
@@ -605,6 +630,21 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             }
             app.books.savePosition(bookId, s.position, progress)
         }
+    }
+
+    /**
+     * Saves the listening heard since the last save. Its own job, not [saveJob]: a position
+     * save may be cancelled by the next one, which is fine for a position but would lose time.
+     */
+    private fun flushListening(bookId: String) {
+        val ms = unsavedListenMs
+        val chars = unsavedListenChars
+        if (ms <= 0 || chars <= 0) return
+        unsavedListenMs = 0
+        unsavedListenChars = 0
+        savedListenMs += ms
+        savedListenChars += chars
+        lifecycleScope.launch { app.books.addListening(bookId, ms, chars) }
     }
 
     /**

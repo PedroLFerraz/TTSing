@@ -211,6 +211,10 @@ class BookRepository(
             ?.takeIf { it.size == entity.spineCount }
     }
 
+    suspend fun addListening(id: String, ms: Long, chars: Long) {
+        if (ms > 0 && chars > 0) dao.addListening(id, ms, chars)
+    }
+
     suspend fun savePageCounts(id: String, layoutKey: String, counts: List<Int>) {
         dao.updatePageCounts(id, counts.joinToString(","), layoutKey)
     }

@@ -45,36 +45,18 @@ object ReadingEstimate {
     }
 
     /**
-     * The duration to *show*, given the one on screen ([shown]) and a fresh estimate
-     * ([next]). The fresh one is taken only when it has clearly moved — by more than most of
-     * a display step — so a figure sitting on a rounding boundary cannot flick between
-     * "5 h 10 min" and "5 h 15 min" as the speed wobbles. Real movement (reading on, jumping
-     * chapters) always gets through.
-     */
-    fun steady(shown: Int?, next: Int): Int {
-        if (shown == null) return next
-        val step = if (maxOf(shown, next) >= 3600) 3 * 60 else 45
-        return when {
-            // Reading on: the figure comes down as soon as it has clearly moved.
-            next <= shown -> if (shown - next < step) shown else next
-            // Going up while reading forward is almost always a slow passage nudging the
-            // speed, and it reads as the estimate being broken. Only a real rise gets
-            // through — going back a chapter, a slower voice — at 2% or more.
-            else -> if (next - shown < maxOf(step, (shown * 0.02f).toInt())) shown else next
-        }
-    }
-
-    /**
-     * "3 h 20 min", "12 min", "< 1 min".
-     *
-     * Past an hour the figure is rounded to 5 minutes. Precision beyond that is false —
-     * nobody plans around "4 h 17 min" versus "4 h 18" — and it is what made the book total
-     * tick on every page turn even when the underlying speed was steady.
+     * "3 h 21 min", "12 min", "< 1 min" — to the minute. (It used to round past an hour to five
+     * minutes, which is why a book's total only moved every five minutes while its chapter's
+     * went down one at a time.)
      */
     fun formatDuration(seconds: Int): String {
         if (seconds < 60) return "< 1 min"
-        val exactMinutes = seconds / 60
-        val totalMinutes = if (exactMinutes >= 60) ((exactMinutes + 2) / 5) * 5 else exactMinutes
+        return formatMinutes(seconds / 60)
+    }
+
+    /** A whole number of minutes, as [formatDuration] writes it. */
+    fun formatMinutes(totalMinutes: Int): String {
+        if (totalMinutes < 1) return "< 1 min"
         val hours = totalMinutes / 60
         val minutes = totalMinutes % 60
         return when {

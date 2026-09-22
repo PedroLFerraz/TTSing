@@ -27,4 +27,11 @@ data class BookEntity(
     val pageCounts: String? = null,
     /** The layout [pageCounts] were measured for; any other layout recounts. */
     val pageLayoutKey: String? = null,
+    /**
+     * How long this book has been listened to and how much of it, summed over every sentence
+     * the voice has read — KOReader's per-book reading statistics, for listening. Time is
+     * normalised to speech rate 1.0.
+     */
+    val listenedMs: Long = 0,
+    val listenedChars: Long = 0,
 )

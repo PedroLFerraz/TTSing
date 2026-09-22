@@ -29,6 +29,10 @@ interface BookDao {
     @Query("UPDATE books SET pageCounts = :pageCounts, pageLayoutKey = :layoutKey WHERE id = :id")
     suspend fun updatePageCounts(id: String, pageCounts: String, layoutKey: String)
 
+    /** Adds a stretch of listening to this book's totals. */
+    @Query("UPDATE books SET listenedMs = listenedMs + :ms, listenedChars = listenedChars + :chars WHERE id = :id")
+    suspend fun addListening(id: String, ms: Long, chars: Long)
+
     @Query(
         """UPDATE books SET chapterIndex = :chapter, blockIndex = :block, sentenceIndex = :sentence,
            progressPercent = :progress, lastOpenedAt = :openedAt WHERE id = :id""",

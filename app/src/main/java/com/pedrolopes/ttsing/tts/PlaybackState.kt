@@ -22,4 +22,11 @@ data class PlaybackState(
      * written behind and would make the estimate step.
      */
     val charsPerSecond: Float? = null,
+    /**
+     * This book's listening totals so far — time (at rate 1.0) and characters over every
+     * sentence the voice has read in it — including what has not been saved yet. Zero for
+     * articles. See [com.pedrolopes.ttsing.ui.reader.TimeLeft].
+     */
+    val bookListenedMs: Long = 0,
+    val bookListenedChars: Long = 0,
 )

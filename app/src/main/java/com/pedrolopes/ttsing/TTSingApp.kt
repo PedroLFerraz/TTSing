@@ -18,7 +18,7 @@ class TTSingApp : Application() {
             // Book metadata is a rebuildable cache of the books folder, but reading positions
             // live here too, so known upgrades migrate. The destructive fallback stays only for
             // version gaps no migration covers.
-            .addMigrations(com.pedrolopes.ttsing.data.db.MIGRATION_2_3)
+            .addMigrations(com.pedrolopes.ttsing.data.db.MIGRATION_2_3, com.pedrolopes.ttsing.data.db.MIGRATION_3_4)
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
     }
