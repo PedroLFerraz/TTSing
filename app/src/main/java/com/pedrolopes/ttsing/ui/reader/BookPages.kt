@@ -19,7 +19,8 @@ data class PageGeometry(
             "d${"%.3f".format(java.util.Locale.ROOT, density)}"
 
     private companion object {
-        const val LAYOUT_VERSION = 1
+        /** 2: PDF chapters gained figures, so their stored counts were too low. */
+        const val LAYOUT_VERSION = 2
     }
 }
 

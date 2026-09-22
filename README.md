@@ -65,9 +65,13 @@ app running, not mockups.
   tap-to-read and the highlighting all work as they do for an EPUB. Running headers and page
   numbers are dropped, lines are joined back into paragraphs, words hyphenated across a line
   break are mended, a sentence cut by a page or column break is rejoined, and larger type
-  becomes headings. Sections follow the PDF's bookmarks, or runs of ten pages when it has
-  none. The cover is the first page, rendered. Figures are not carried over, and scanned PDFs
-  with no text layer say so rather than showing empty pages (there is no OCR).
+  becomes headings. **Pictures come along too**, placed between paragraphs: each one is drawn
+  from its own rectangle of the page by the platform renderer, so it looks exactly as it does
+  in the PDF, and a picture that sits in the middle of a paragraph waits for that paragraph to
+  end rather than splitting a sentence. Bullets, rules, small icons and page backgrounds are
+  left out. Sections follow the PDF's bookmarks, or runs of ten pages when it has none. The
+  cover is the first page, rendered. Scanned PDFs with no text layer say so rather than
+  showing empty pages (there is no OCR).
 - **Tap to start** — tap any paragraph to begin reading from there (from the sentence you
   actually touched, not the top of the page).
 - **News feeds** — the RSS icon in the library opens straight onto the latest stories across
@@ -145,8 +149,9 @@ data/book/    BookDocument — an open book of either format: sections of blocks
 data/epub/    EpubParser (ZIP + OPF + nav/NCX), ChapterLoader (XHTML → blocks via Jsoup),
               BreakIterator sentence segmentation. Pure JVM, unit-tested.
 data/pdf/     PdfDocument (PDFBox-Android: positioned lines, bookmarks, metadata; first-page
-              cover via PdfRenderer), PdfReflow (lines → paragraphs and headings, headers
-              and page numbers dropped — pure JVM, unit-tested), PdfMetadata.
+              cover and figures drawn via PdfRenderer), PdfReflow (lines → paragraphs and
+              headings, figures placed between them, headers and page numbers dropped —
+              pure JVM, unit-tested), PdfMetadata.
 data/db/      Room cache of book metadata, reading position and per-layout page counts.
               Migrated, not dropped, on schema changes — reading positions live here.
 data/news/    RssParser (RSS 2.0 + Atom), ArticleExtractor (readability-style scoring to pull
@@ -177,6 +182,7 @@ it, so every speech callback maps directly to what to highlight and where to scr
 Pure-JVM unit tests under `app/src/test` cover EPUB parsing (EPUB 2 NCX + EPUB 3 nav,
 percent-encoded hrefs, cover detection), the XHTML→blocks conversion, Portuguese/English
 sentence segmentation, end-to-end parsing of the real sample EPUBs, PDF reflow (headers
-and page numbers, de-hyphenation, paragraph and page breaks, headings), whole-book page
+and page numbers, de-hyphenation, paragraph and page breaks, headings, where figures go
+and which pictures are decoration), whole-book page
 arithmetic, and the speaking-speed estimate — including a replay of sentences logged on a
 device, against the old average and the new one. Run with `.\gradlew.bat test`.

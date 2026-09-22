@@ -192,4 +192,117 @@ class PdfReflowTest {
     fun `a page with no text gives no blocks`() {
         assertTrue(PdfReflow.toBlocks(listOf(page(0)), emptySet(), Locale.ENGLISH).isEmpty())
     }
+
+    // ---- figures ----
+
+    private fun figure(key: String, top: Float, height: Float = 200f, width: Float = 300f, left: Float = 150f) =
+        PdfImage(key, left, top, width, height)
+
+    private fun pageWith(index: Int, lines: List<PdfLine>, images: List<PdfImage>) =
+        PdfPage(index, width, height, lines, images)
+
+    /** Blocks as short labels: the first words of each paragraph, or "[key]" for a figure. */
+    private fun shape(blocks: List<Block>) = blocks.map {
+        when (it) {
+            is Block.Image -> "[${it.zipPath}]"
+            is Block.Text -> it.text.split(' ').take(2).joinToString(" ")
+        }
+    }
+
+    @Test
+    fun `a figure between two paragraphs is placed between them`() {
+        val p = pageWith(
+            0,
+            listOf(
+                line("First paragraph ends before the picture.", 100f, end = 330f),
+                line("Second paragraph starts under the picture.", 350f, x = left + 18f, end = 330f),
+            ),
+            listOf(figure("fig", top = 120f)),
+        )
+        assertEquals(
+            listOf("First paragraph", "[fig]", "Second paragraph"),
+            shape(PdfReflow.toBlocks(listOf(p), emptySet(), Locale.ENGLISH)),
+        )
+    }
+
+    @Test
+    fun `a figure in the middle of a paragraph waits for the paragraph to end`() {
+        // The text wraps around the picture: one paragraph above and below it.
+        val p = pageWith(
+            0,
+            listOf(
+                line("This paragraph runs above the picture and does not", 100f),
+                line("stop when the picture appears, carrying on beneath", 330f),
+                line("it until it is done.", 344f, end = 200f),
+                line("Next paragraph.", 380f, x = left + 18f, end = 200f),
+            ),
+            listOf(figure("fig", top = 110f)),
+        )
+        val blocks = PdfReflow.toBlocks(listOf(p), emptySet(), Locale.ENGLISH)
+        assertEquals(listOf("This paragraph", "[fig]", "Next paragraph."), shape(blocks))
+        // And the sentence it interrupted on the page reads whole.
+        assertEquals(
+            "This paragraph runs above the picture and does not stop when the picture appears, " +
+                "carrying on beneath it until it is done.",
+            (blocks.first() as Block.Text).text,
+        )
+    }
+
+    @Test
+    fun `a figure at the foot of a page follows the paragraph that carries on overleaf`() {
+        val pages = listOf(
+            pageWith(0, listOf(line("A paragraph that has not finished at the foot", 500f)), listOf(figure("fig", top = 520f, height = 150f))),
+            pageWith(1, listOf(line("of the page, and ends here.", 100f, end = 260f), line("Then another.", 130f, x = left + 18f, end = 200f)), emptyList()),
+        )
+        assertEquals(
+            listOf("A paragraph", "[fig]", "Then another."),
+            shape(PdfReflow.toBlocks(pages, emptySet(), Locale.ENGLISH)),
+        )
+    }
+
+    @Test
+    fun `a heading after a figure keeps the figure before it`() {
+        val p = pageWith(
+            0,
+            listOf(
+                line("The end of a chapter.", 100f, end = 250f),
+                line("Chapter Two", 420f, size = 18f, end = 220f),
+                line("It begins.", 450f, end = 150f),
+            ),
+            listOf(figure("fig", top = 150f)),
+        )
+        assertEquals(
+            listOf("The end", "[fig]", "Chapter Two", "It begins."),
+            shape(PdfReflow.toBlocks(listOf(p), emptySet(), Locale.ENGLISH, bodySize = body)),
+        )
+    }
+
+    @Test
+    fun `a page of plates with no text still gives its pictures`() {
+        val plates = pageWith(0, emptyList(), listOf(figure("a", top = 80f), figure("b", top = 400f)))
+        assertEquals(listOf("[a]", "[b]"), shape(PdfReflow.toBlocks(listOf(plates), emptySet(), Locale.ENGLISH)))
+    }
+
+    @Test
+    fun `bullets, rules and backgrounds are not figures`() {
+        val text = (0 until 10).map { line("Body line $it over a tinted page background here", 100f + it * 14f) }
+        val p = pageWith(
+            0,
+            text,
+            listOf(
+                figure("bullet", top = 100f, width = 8f, height = 8f),
+                figure("rule", top = 300f, width = 400f, height = 1f),
+                figure("background", top = 0f, left = 0f, width = width, height = height),
+                figure("photo", top = 400f),
+                figure("photo-again", top = 400f),
+            ),
+        )
+        assertEquals(listOf("photo"), PdfReflow.figuresOn(p).map { it.key })
+    }
+
+    @Test
+    fun `a full-page illustration with no text over it is kept`() {
+        val plate = pageWith(0, emptyList(), listOf(figure("plate", top = 0f, left = 0f, width = width, height = height)))
+        assertEquals(listOf("plate"), PdfReflow.figuresOn(plate).map { it.key })
+    }
 }

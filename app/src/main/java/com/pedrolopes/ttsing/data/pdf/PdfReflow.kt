@@ -16,11 +16,26 @@ data class PdfLine(
     val fontSize: Float,
 )
 
+/**
+ * A picture drawn on a page, in the same top-down points as [PdfLine]. [key] is what the
+ * document renders it from later, so the reflow never has to hold image bytes.
+ */
+data class PdfImage(
+    val key: String,
+    val left: Float,
+    val top: Float,
+    val width: Float,
+    val height: Float,
+) {
+    val bottom: Float get() = top + height
+}
+
 data class PdfPage(
     val index: Int,
     val width: Float,
     val height: Float,
     val lines: List<PdfLine>,
+    val images: List<PdfImage> = emptyList(),
 )
 
 /**
@@ -78,7 +93,10 @@ object PdfReflow {
     ): List<Block> {
         val body = pages.map { page -> page to page.lines.filterNot { isFurniture(it, page, furniture) } }
         val allLines = body.flatMap { it.second }
-        if (allLines.isEmpty()) return emptyList()
+        if (allLines.isEmpty()) {
+            // A run of plates: pictures and no text.
+            return pages.flatMap { page -> figuresOn(page).map { Block.Image(it.key, null) } }
+        }
 
         val bodySize = bodySize ?: weightedMedian(allLines.map { it.fontSize to it.text.length }) ?: 10f
         val lineGap = medianLineGap(body.map { it.second }) ?: (bodySize * 1.2f)
@@ -90,6 +108,10 @@ object PdfReflow {
         var headingKind: Block.Text.Kind? = null
         var previous: PdfLine? = null
 
+        // Pictures the reading has already passed, waiting for the paragraph they interrupt
+        // to end: a figure goes *between* paragraphs, never through the middle of a sentence.
+        val passedFigures = mutableListOf<PdfImage>()
+
         fun flush() {
             val text = paragraph.toString().replace(Regex("\\s+"), " ").trim()
             paragraph.setLength(0)
@@ -98,13 +120,25 @@ object PdfReflow {
                 blocks.add(Block.Text(text, kind, SentenceSplitter.split(text, locale)))
             }
             headingKind = null
+            passedFigures.forEach { blocks.add(Block.Image(it.key, null)) }
+            passedFigures.clear()
         }
 
         for ((pageNumber, pageAndLines) in body.withIndex()) {
-            val lines = pageAndLines.second
+            val (page, lines) = pageAndLines
+            val figures = ArrayDeque(figuresOn(page))
             for ((lineNumber, line) in lines.withIndex()) {
                 val text = clean(line.text)
                 if (text.isEmpty()) continue
+                // Reaching a line below a figure's top edge means the reader has got to it. The
+                // space the figure takes up is not paragraph spacing: text that resumes under a
+                // picture is often the same paragraph, carrying on.
+                var figureSpace = 0f
+                while (figures.isNotEmpty() && figures.first().top <= line.y) {
+                    val figure = figures.removeFirst()
+                    passedFigures.add(figure)
+                    figureSpace += figure.height + lineGap * 2
+                }
                 val kind = headingKindFor(line, text, bodySize)
                 val prev = previous
 
@@ -116,7 +150,7 @@ object PdfReflow {
                     // paragraph if the text there reads as ended.
                     lineNumber == 0 && pageNumber > 0 -> endsSentence(paragraph) || isIndented(line, bodyLeft, bodySize)
                     line.y < prev.y -> endsSentence(paragraph) || isIndented(line, bodyLeft, bodySize)
-                    gapBetween(prev, line) > lineGap * 1.45f -> true
+                    gapBetween(prev, line) - figureSpace > lineGap * 1.45f -> true
                     isIndented(line, bodyLeft, bodySize) -> true
                     // A short last line that finished a sentence ends its paragraph.
                     endsSentence(paragraph) && prev.right < bodyRight - bodySize * 4 -> true
@@ -132,9 +166,35 @@ object PdfReflow {
                 }
                 previous = line
             }
+            // Whatever sits below the page's last line comes after it.
+            passedFigures.addAll(figures)
         }
         flush()
         return blocks
+    }
+
+    // ---- figures ----
+
+    /** Smaller than this on either side, a picture is a bullet, a rule or an icon. */
+    private const val MIN_FIGURE_POINTS = 36f
+
+    /**
+     * The pictures on [page] worth showing, top to bottom. Drops decoration — bullets,
+     * rules, small icons — and a picture covering most of the page with text printed over
+     * it, which is a background (a tint, a watermark, a paper texture), not a figure. The
+     * same picture drawn twice in the same place counts once.
+     */
+    fun figuresOn(page: PdfPage): List<PdfImage> {
+        val pageArea = page.width * page.height
+        return page.images
+            .filter { image ->
+                val area = image.width * image.height
+                val isBackground = pageArea > 0 && area >= pageArea * 0.8f &&
+                    page.lines.count { it.y in image.top..image.bottom && it.x in image.left..(image.left + image.width) } >= 3
+                image.width >= MIN_FIGURE_POINTS && image.height >= MIN_FIGURE_POINTS && !isBackground
+            }
+            .distinctBy { listOf(it.left.toInt(), it.top.toInt(), it.width.toInt(), it.height.toInt()) }
+            .sortedBy { it.top }
     }
 
     // ---- line classification ----

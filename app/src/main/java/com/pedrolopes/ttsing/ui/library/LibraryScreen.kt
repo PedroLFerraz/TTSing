@@ -105,18 +105,14 @@ fun LibraryScreen(
                 )
                 else -> {
                     val inProgress = state.books.count { it.progressPercent > 0f }
+                    // While a scan runs, "Scanning" takes the place of "Library" and is the live
+                    // word; appended at the end it ran off the line and left a stray dot.
                     val parts = listOfNotNull(
-                        "Library",
+                        if (state.isScanning) "Scanning" else "Library",
                         "${state.books.size} ${if (state.books.size == 1) "book" else "books"}",
                         "$inProgress in progress".takeIf { inProgress > 0 },
-                        "Scanning".takeIf { state.isScanning },
                     )
-                    // The size of the library is the live number, unless a scan is running —
-                    // then that is the thing actually changing.
-                    StatusStrip(
-                        parts = parts,
-                        highlightIndex = if (state.isScanning) parts.lastIndex else 1,
-                    )
+                    StatusStrip(parts = parts, highlightIndex = if (state.isScanning) 0 else 1)
                     Hairline()
                     BookGrid(
                         books = state.books,
