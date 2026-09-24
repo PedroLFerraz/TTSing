@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.LocalFontFamilyResolver
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -319,7 +320,13 @@ fun ReaderScreen(
                     canGoBack = ui.window.firstOrNull()?.index?.let { it < visibleChapter } ?: false,
                     canGoForward = ui.window.lastOrNull()?.index?.let { it > visibleChapter } ?: false,
                     isSpeaking = isThisBook && playback.isSpeaking,
+                    speechRate = settings.speechRate,
                     palette = palette,
+                    onCycleSpeed = {
+                        val next = nextSpeed(settings.speechRate)
+                        scope.launch { app.settings.setSpeechRate(next) }
+                        controller.applySpeechSettings(next, settings.pitch)
+                    },
                     onPrevChapter = { viewModel.stepChapter(visibleChapter, forward = false) },
                     onNextChapter = { viewModel.stepChapter(visibleChapter, forward = true) },
                     onPlayPause = { controller.togglePlayPause(bookId) },
@@ -479,6 +486,20 @@ fun ReaderScreen(
             },
         )
     }
+}
+
+/** The speeds the footer's chip steps through: everyday reading, then faster and faster. */
+private val SpeedSteps = listOf(1f, 1.25f, 1.5f, 1.75f, 2f, 2.25f, 2.5f)
+
+/** The next speed up from [rate], wrapping back to 1× past the top. */
+private fun nextSpeed(rate: Float): Float =
+    SpeedSteps.firstOrNull { it > rate + 0.01f } ?: SpeedSteps.first()
+
+/** "1×", "1.5×", "2.25×" — no trailing zeros, because the chip is tiny. */
+private fun formatSpeed(rate: Float): String {
+    val rounded = (rate * 100).roundToInt() / 100f
+    val text = if (rounded == rounded.toInt().toFloat()) "${rounded.toInt()}" else "$rounded"
+    return "$text×"
 }
 
 /** One page of the continuous book: which chapter it belongs to, and what is on it. */
@@ -956,7 +977,9 @@ private fun ReaderFooter(
     canGoBack: Boolean,
     canGoForward: Boolean,
     isSpeaking: Boolean,
+    speechRate: Float,
     palette: ReaderPalette,
+    onCycleSpeed: () -> Unit,
     onPrevChapter: () -> Unit,
     onNextChapter: () -> Unit,
     onPlayPause: () -> Unit,
@@ -983,6 +1006,19 @@ private fun ReaderFooter(
                     color = palette.secondaryText,
                 )
                 Spacer(Modifier.weight(1f).widthIn(min = 14.dp))
+                // Reading speed is the setting that gets changed most, and it used to be three
+                // taps deep in the settings sheet. Here it cycles through the usual steps.
+                MonoText(
+                    text = formatSpeed(speechRate),
+                    size = 10f,
+                    tracking = 0.16f,
+                    color = if (speechRate == 1f) palette.secondaryText else palette.accent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(2.dp))
+                        .clickable(onClick = onCycleSpeed)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+                Spacer(Modifier.width(10.dp))
                 MonoText(text = rememberClock(), size = 10f, tracking = 0.16f, color = palette.secondaryText)
             }
             BookProgressBar(
