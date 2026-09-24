@@ -171,12 +171,12 @@ class AudioTrackNarrator(
             return@coroutineScope
         }
         var consecutiveFailures = 0
-        var prefetched: Deferred<SynthesizedSentence?>? = null
+        // Sentences waiting to be spoken, each already synthesized or being synthesized now.
+        val ahead = ArrayDeque<Pair<SentenceRef, Deferred<SynthesizedSentence?>>>()
         while (ref != null && coroutineIsActive()) {
             currentRef = ref
             val speaking = ref
-            val audio = (prefetched ?: synthesizeAsync(speaking)).await()
-            prefetched = null
+            val audio = (ahead.removeFirstOrNull()?.second ?: synthesizeAsync(speaking)).await()
             if (!coroutineIsActive()) return@coroutineScope
             if (audio == null) {
                 // One refused sentence is skipped rather than stalling the whole book. A run of
@@ -198,9 +198,15 @@ class AudioTrackNarrator(
                 continue
             }
             consecutiveFailures = 0
-            // Get the next sentence under way before this one starts playing.
-            val next = src.next(speaking.position)
-            if (next != null) prefetched = synthesizeAsync(next)
+            // Keep the queue topped up before this sentence starts playing. Two sentences of
+            // look-ahead, not one, so a long sentence's synthesis can overlap two short ones.
+            var tail = ahead.lastOrNull()?.first ?: speaking
+            while (ahead.size < LOOK_AHEAD) {
+                val upcoming = src.next(tail.position) ?: break
+                ahead.addLast(upcoming to synthesizeAsync(upcoming))
+                tail = upcoming
+            }
+            val next = ahead.firstOrNull()?.first ?: src.next(speaking.position)
             val marks = estimatedMarks(speaking, audio)
             withMain { listener.onSentenceStart(speaking) }
 
@@ -336,6 +342,9 @@ class AudioTrackNarrator(
         "u|${ref.position.chapterIndex}|${ref.position.blockIndex}|${ref.position.sentenceIndex}"
 
     private companion object {
+        /** Sentences synthesized ahead of the one being spoken. */
+        const val LOOK_AHEAD = 2
+
         /** Enough to ride out one odd sentence, few enough to report a broken voice quickly. */
         const val MAX_CONSECUTIVE_FAILURES = 3
     }

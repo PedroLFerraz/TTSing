@@ -52,6 +52,10 @@ class PiperSynthesizer(private val context: Context) {
         release()
         tts = engine
         loaded = ready
+        // The first sentence through a fresh model is much slower than the rest — onnxruntime
+        // is still working out its plan. Spend that here, while the reader is still choosing a
+        // voice, rather than on the first line of the book.
+        runCatching { engine.generate(WARM_UP, 0, 1f) }
         true
     }
 
@@ -81,6 +85,9 @@ class PiperSynthesizer(private val context: Context) {
     private companion object {
         /** All the cores a phone will give us: synthesis is what keeps the reader fed. */
         val THREADS = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+
+        /** Short and ordinary: enough to make onnxruntime do its first-run work. */
+        const val WARM_UP = "Um, dois, três."
 
         /** What the model will stretch to; past this the speech stops being speech. */
         const val MIN_SPEED = 0.25f
