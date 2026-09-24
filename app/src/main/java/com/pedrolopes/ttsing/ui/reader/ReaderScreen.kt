@@ -460,6 +460,16 @@ fun ReaderScreen(
             neuralVoices = PiperCatalog.forLanguage(activeLocale),
             installedNeuralIds = installedNeural,
             downloading = downloadProgress,
+            onDeleteVoice = { voice ->
+                scope.launch {
+                    withContext(Dispatchers.IO) { PiperVoices.delete(context, voice.id) }
+                    if (settings.voiceFor(languageCode) == voice.id) {
+                        app.settings.setVoice(languageCode, null)
+                        controller.selectVoice(null)
+                    }
+                    installedNeural = PiperVoices.available(context).map { it.id }.toSet()
+                }
+            },
             onDownloadVoice = { voice ->
                 scope.launch {
                     if (downloads.download(voice)) {

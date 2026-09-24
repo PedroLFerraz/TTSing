@@ -63,13 +63,22 @@ class PiperDownloads(private val context: Context) {
                     _progress.value = current.copy(done = mb)
                 }
             }
+            val shared = PiperVoices.sharedDataDir(context)
+            val wantsShared = !shared.isDirectory
             TarArchiveInputStream(BZip2CompressorInputStream(counting)).use { tar ->
                 var entry = tar.nextEntry
                 while (entry != null) {
-                    // The archive holds one top folder; its contents land directly in `target`.
+                    // The archive holds one top folder; its contents land directly in `target`,
+                    // except the phoneme data, which every voice shares one copy of.
                     val relative = entry.name.substringAfter('/', "")
-                    if (relative.isNotEmpty() && !relative.contains("..")) {
-                        val file = File(target, relative)
+                    val phonemes = relative.startsWith("${PiperVoice.DATA_DIR_NAME}/")
+                    val file = when {
+                        relative.isEmpty() || relative.contains("..") -> null
+                        !phonemes -> File(target, relative)
+                        wantsShared -> File(shared, relative.removePrefix("${PiperVoice.DATA_DIR_NAME}/"))
+                        else -> null
+                    }
+                    if (file != null) {
                         if (entry.isDirectory) {
                             file.mkdirs()
                         } else {

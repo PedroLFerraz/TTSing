@@ -3,7 +3,9 @@ package com.pedrolopes.ttsing.ui.reader
 import android.speech.tts.Voice
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,7 +60,7 @@ import java.util.Locale
 /** The order the design lists themes in: the app's own first, the system's last. */
 private val ThemeOrder = listOf(ReaderTheme.DARK, ReaderTheme.LIGHT, ReaderTheme.SEPIA, ReaderTheme.SYSTEM)
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ReaderSettingsSheet(
     settings: AppSettings,
@@ -75,6 +77,7 @@ fun ReaderSettingsSheet(
     installedNeuralIds: Set<String>,
     downloading: DownloadProgress?,
     onDownloadVoice: (CatalogVoice) -> Unit,
+    onDeleteVoice: (CatalogVoice) -> Unit,
     onDismiss: () -> Unit,
     onSpeechRate: (Float) -> Unit,
     onPitch: (Float) -> Unit,
@@ -257,6 +260,8 @@ fun ReaderSettingsSheet(
                         onClick = {
                             if (installed) onSelectVoice(voice.id) else onDownloadVoice(voice)
                         },
+                        // A downloaded voice is 40 MB; hold it to get the space back.
+                        onLongClick = { onDeleteVoice(voice) }.takeIf { installed && !voice.bundled },
                     )
                     if (busy != null) {
                         ThinProgress(
@@ -320,6 +325,7 @@ fun ReaderSettingsSheet(
  * A row you pick from — voice, language. The selected one is marked with a live spine and a
  * raised fill rather than a tick, so the current choice is legible at a glance down the list.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChoiceRow(
     title: String,
@@ -327,13 +333,14 @@ private fun ChoiceRow(
     selected: Boolean,
     isSpeaking: Boolean,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .background(if (selected) Ink.Well else Color.Transparent)
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // The spine runs the full height of whatever the row's text works out to.

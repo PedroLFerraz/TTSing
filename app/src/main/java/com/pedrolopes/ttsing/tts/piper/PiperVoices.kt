@@ -25,7 +25,15 @@ data class PiperVoice(
 
     val tokens: File? get() = directory?.let { File(it, "tokens.txt") }
 
-    val dataDir: File? get() = directory?.let { File(it, "espeak-ng-data") }
+    /**
+     * espeak-ng's phoneme data. Every Piper voice ships the same 20 MB of it, so voices share
+     * one copy; a voice that brought its own (downloaded before that was true) keeps using it.
+     */
+    val dataDir: File?
+        get() = directory?.let { dir ->
+            File(dir, DATA_DIR_NAME).takeIf { it.isDirectory }
+                ?: File(dir.parentFile, DATA_DIR_NAME).takeIf { it.isDirectory }
+        }
 
     /** How this voice appears in the reader's voice list. */
     fun asEngineVoice(): Voice = Voice(
@@ -40,6 +48,8 @@ data class PiperVoice(
     companion object {
         /** Marks our own voices in a list that otherwise holds the engine's. */
         const val FEATURE = "ttsing-piper"
+
+        const val DATA_DIR_NAME = "espeak-ng-data"
     }
 }
 
@@ -60,6 +70,10 @@ object PiperVoices {
             val locale = localeOf(id) ?: return@mapNotNull null
             PiperVoice(id, locale, directoryFor(context, id).takeIf { it.isReadyFor(id) })
         }
+
+    /** The shared espeak-ng data, beside the voices that use it. */
+    fun sharedDataDir(context: Context): File =
+        File(File(context.filesDir, ASSET_DIR), PiperVoice.DATA_DIR_NAME)
 
     /** The voices already downloaded into the app's own storage. */
     fun downloaded(context: Context): List<PiperVoice> {
@@ -91,7 +105,17 @@ object PiperVoices {
         // A downloaded voice is already on disk; only the bundled one has to be copied out.
         if (!directory.isReadyFor(voice.id)) {
             directory.deleteRecursively()
-            copyAsset(context, "$ASSET_DIR/${voice.id}", directory)
+            val shared = sharedDataDir(context)
+            val wantsShared = !shared.isDirectory
+            copyAsset(context, "$ASSET_DIR/${voice.id}", directory) { name ->
+                // The phoneme data goes to the shared folder, and only the first voice needs
+                // to write it; everything else belongs to the voice.
+                when {
+                    !name.startsWith("${PiperVoice.DATA_DIR_NAME}/") -> File(directory, name)
+                    wantsShared -> File(shared, name.removePrefix("${PiperVoice.DATA_DIR_NAME}/"))
+                    else -> null
+                }
+            }
             File(directory, MARKER).writeText(voice.id)
         }
         return voice.copy(directory = directory)
@@ -103,16 +127,31 @@ object PiperVoices {
     private fun File.isReadyFor(id: String): Boolean =
         File(this, MARKER).takeIf { it.isFile }?.readText() == id
 
-    private fun copyAsset(context: Context, assetPath: String, target: File) {
+    /** Copies an asset folder out, with [destination] saying where each file goes (null: skip). */
+    private fun copyAsset(
+        context: Context,
+        assetPath: String,
+        target: File,
+        relative: String = "",
+        destination: (String) -> File?,
+    ) {
         val children = runCatching { context.assets.list(assetPath) }.getOrNull().orEmpty()
         if (children.isEmpty()) {
-            target.parentFile?.mkdirs()
+            val file = destination(relative) ?: return
+            file.parentFile?.mkdirs()
             context.assets.open(assetPath).use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
+                file.outputStream().use { output -> input.copyTo(output) }
             }
             return
         }
         target.mkdirs()
-        children.forEach { child -> copyAsset(context, "$assetPath/$child", File(target, child)) }
+        children.forEach { child ->
+            val childPath = if (relative.isEmpty()) child else "$relative/$child"
+            copyAsset(context, "$assetPath/$child", target, childPath, destination)
+        }
     }
+
+    /** Frees a downloaded voice's files. The one inside the app is left alone. */
+    fun delete(context: Context, id: String): Boolean =
+        directoryFor(context, id).takeIf { it.isDirectory }?.deleteRecursively() ?: false
 }
