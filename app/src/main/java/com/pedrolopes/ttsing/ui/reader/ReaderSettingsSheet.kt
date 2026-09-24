@@ -46,6 +46,8 @@ import com.pedrolopes.ttsing.data.settings.AppSettings
 import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.LanguageOption
 import com.pedrolopes.ttsing.tts.needsDownload
+import com.pedrolopes.ttsing.tts.piper.CatalogVoice
+import com.pedrolopes.ttsing.tts.piper.DownloadProgress
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.MonoText
 import com.pedrolopes.ttsing.ui.common.ThinProgress
@@ -68,6 +70,11 @@ fun ReaderSettingsSheet(
     /** What the EPUB itself declares, shown so a wrong declaration is visible. */
     declaredLanguageTag: String?,
     availableLanguages: List<LanguageOption>,
+    /** The app's own neural voices for this language, installed or not. */
+    neuralVoices: List<CatalogVoice>,
+    installedNeuralIds: Set<String>,
+    downloading: DownloadProgress?,
+    onDownloadVoice: (CatalogVoice) -> Unit,
     onDismiss: () -> Unit,
     onSpeechRate: (Float) -> Unit,
     onPitch: (Float) -> Unit,
@@ -76,7 +83,7 @@ fun ReaderSettingsSheet(
     onSelectLanguage: (Locale) -> Unit,
     onInstallVoiceData: () -> Unit,
     onSelectDefaultVoice: () -> Unit,
-    onSelectVoice: (Voice) -> Unit,
+    onSelectVoice: (String) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val storedVoice = settings.voiceFor(activeLocale.language)
@@ -226,6 +233,40 @@ fun ReaderSettingsSheet(
                 if (activeLabel != null) MonoText("Now speaking", size = 10f, tracking = 0.12f, color = Ink.Live)
             }
 
+            if (neuralVoices.isNotEmpty()) {
+                MonoText(
+                    "In this app · neural",
+                    size = 10f,
+                    tracking = 0.14f,
+                    color = Ink.Dim,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                )
+                neuralVoices.forEach { voice ->
+                    val installed = voice.id in installedNeuralIds
+                    val busy = downloading?.takeIf { it.id == voice.id && !it.failed }
+                    ChoiceRow(
+                        title = voice.displayName,
+                        subtitle = when {
+                            busy != null -> "Downloading — ${busy.done} of ${voice.megabytes} MB"
+                            downloading?.id == voice.id && downloading.failed -> "Download failed — tap to retry"
+                            installed -> "Offline · in this app"
+                            else -> "Tap to download · ${voice.megabytes} MB"
+                        },
+                        selected = storedVoice == voice.id,
+                        isSpeaking = voice.id == currentVoiceName,
+                        onClick = {
+                            if (installed) onSelectVoice(voice.id) else onDownloadVoice(voice)
+                        },
+                    )
+                    if (busy != null) {
+                        ThinProgress(
+                            fraction = busy.fraction,
+                            modifier = Modifier.padding(start = 3.dp, top = 2.dp, bottom = 6.dp),
+                        )
+                    }
+                }
+            }
+
             Column {
                 ChoiceRow(
                     title = "Device default",
@@ -248,7 +289,10 @@ fun ReaderSettingsSheet(
                         modifier = Modifier.padding(top = 10.dp),
                     )
                 } else {
-                    voices.groupBy { regionName(it.locale) }.forEach { (region, list) ->
+                    voices
+                        .filterNot { it.name in installedNeuralIds }
+                        .groupBy { regionName(it.locale) }
+                        .forEach { (region, list) ->
                         MonoText(
                             region,
                             size = 10f,
@@ -262,7 +306,7 @@ fun ReaderSettingsSheet(
                                 subtitle = voice.name,
                                 selected = storedVoice == voice.name,
                                 isSpeaking = voice.name == currentVoiceName,
-                                onClick = { onSelectVoice(voice) },
+                                onClick = { onSelectVoice(voice.name) },
                             )
                         }
                     }

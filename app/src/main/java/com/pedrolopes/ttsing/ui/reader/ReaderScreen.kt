@@ -87,6 +87,9 @@ import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.settings.AppSettings
 import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.ReadingController
+import com.pedrolopes.ttsing.tts.piper.PiperCatalog
+import com.pedrolopes.ttsing.tts.piper.PiperDownloads
+import com.pedrolopes.ttsing.tts.piper.PiperVoices
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.LocalImage
 import com.pedrolopes.ttsing.ui.common.MonoText
@@ -95,7 +98,9 @@ import com.pedrolopes.ttsing.ui.common.ThinProgress
 import com.pedrolopes.ttsing.ui.common.simpleFactory
 import com.pedrolopes.ttsing.ui.theme.AppFonts
 import com.pedrolopes.ttsing.ui.theme.Ink
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -407,6 +412,14 @@ fun ReaderScreen(
             ?.takeIf { it.language.isNotEmpty() }
         val activeLocale = settings.localeFor(bookId, declaredLocale ?: Locale.getDefault())
         val languageCode = activeLocale.language
+        val downloads = remember(context) { PiperDownloads(context) }
+        val downloadProgress by downloads.progress.collectAsStateWithLifecycle()
+        var installedNeural by remember { mutableStateOf(emptySet<String>()) }
+        LaunchedEffect(showSettings, downloadProgress) {
+            installedNeural = withContext(Dispatchers.IO) {
+                PiperVoices.available(context).map { it.id }.toSet()
+            }
+        }
         ReaderSettingsSheet(
             settings = settings,
             voices = remember(languageCode, connected) { controller.voicesFor(activeLocale) },
@@ -440,9 +453,19 @@ fun ReaderScreen(
                 scope.launch { app.settings.setVoice(languageCode, null) }
                 controller.selectVoice(null)
             },
-            onSelectVoice = { voice ->
-                scope.launch { app.settings.setVoice(languageCode, voice.name) }
-                controller.selectVoice(voice.name)
+            onSelectVoice = { name ->
+                scope.launch { app.settings.setVoice(languageCode, name) }
+                controller.selectVoice(name)
+            },
+            neuralVoices = PiperCatalog.forLanguage(activeLocale),
+            installedNeuralIds = installedNeural,
+            downloading = downloadProgress,
+            onDownloadVoice = { voice ->
+                scope.launch {
+                    if (downloads.download(voice)) {
+                        installedNeural = PiperVoices.available(context).map { it.id }.toSet()
+                    }
+                }
             },
         )
     }

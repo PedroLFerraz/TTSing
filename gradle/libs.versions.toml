@@ -17,6 +17,7 @@ coroutines = "1.10.2"
 ankidroidApi = "api-v1.1.0"
 sherpaOnnx = "1.13.4"
 pdfboxAndroid = "2.0.27.0"
+commonsCompress = "1.27.1"
 junit = "4.13.2"
 
 [libraries]
@@ -44,6 +45,7 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 ankidroid-api = { group = "com.github.ankidroid", name = "Anki-Android", version.ref = "ankidroidApi" }
 sherpa-onnx = { group = "com.github.k2-fsa", name = "sherpa-onnx", version.ref = "sherpaOnnx" }
 pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfboxAndroid" }
+commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
