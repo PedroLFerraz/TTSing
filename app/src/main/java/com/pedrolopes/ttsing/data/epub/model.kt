@@ -1,5 +1,6 @@
 package com.pedrolopes.ttsing.data.epub
 
+import com.pedrolopes.ttsing.data.BookLanguage
 import java.util.Locale
 
 data class EpubBook(
@@ -14,6 +15,7 @@ data class EpubBook(
         language
             ?.let { Locale.forLanguageTag(it.trim().replace('_', '-')) }
             ?.takeIf { it.language.isNotEmpty() }
+            ?.let { BookLanguage.withRegion(it) }
             ?: Locale.getDefault()
 }
 

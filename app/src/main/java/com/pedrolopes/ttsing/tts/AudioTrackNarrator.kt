@@ -76,13 +76,10 @@ class AudioTrackNarrator(
         this.locale = locale
         val result = tts.setLanguage(locale)
         val available = result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
-        val match = preferredVoiceName?.let { name -> tts.voices?.firstOrNull { it.name == name } }
-        if (match != null) {
-            tts.voice = match
-        } else {
-            val default = tts.defaultVoice
-            if (default != null && default.locale.language == locale.language) tts.voice = default
-        }
+        val voices = tts.voices.orEmpty()
+        val chosenName = preferredVoiceName?.takeIf { name -> voices.any { it.name == name } }
+            ?: VoiceChoice.pick(locale, voices.map { it.info() }, tts.defaultVoice?.info())
+        voices.firstOrNull { it.name == chosenName }?.let { tts.voice = it }
         return available
     }
 

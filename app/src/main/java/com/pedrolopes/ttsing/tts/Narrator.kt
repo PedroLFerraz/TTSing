@@ -22,6 +22,9 @@ data class LanguageOption(
 fun Voice.needsDownload(): Boolean =
     features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true
 
+/** This voice as [VoiceChoice] sees it. */
+fun Voice.info(): VoiceInfo = VoiceInfo(name, locale, quality, needsDownload())
+
 /** A single sentence ready to be spoken. */
 data class SentenceRef(
     val position: ReadingPosition,

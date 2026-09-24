@@ -3,6 +3,7 @@ package com.pedrolopes.ttsing.data.book
 import com.pedrolopes.ttsing.data.epub.Chapter
 import com.pedrolopes.ttsing.data.epub.TocEntry
 import java.io.Closeable
+import com.pedrolopes.ttsing.data.BookLanguage
 import java.util.Locale
 
 /**
@@ -38,6 +39,7 @@ interface BookDocument : Closeable {
         fun localeForTag(tag: String?): Locale =
             tag?.let { Locale.forLanguageTag(it.trim().replace('_', '-')) }
                 ?.takeIf { it.language.isNotEmpty() }
+                ?.let { BookLanguage.withRegion(it) }
                 ?: Locale.getDefault()
     }
 }
