@@ -18,6 +18,8 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 
 /**
@@ -58,6 +60,9 @@ class AudioTrackNarrator(
     private var piperVoice: PiperVoice? = null
 
     private val player = SentencePlayer()
+
+    /** Held while a sentence is being synthesized: one at a time, whatever the voice. */
+    private val synthesis = Mutex()
 
     private var source: Narrator.ContentSource? = null
     private var readingJob: Job? = null
@@ -226,12 +231,21 @@ class AudioTrackNarrator(
         if (coroutineIsActive()) finishBook()
     }
 
-    /** One sentence's audio, from whichever voice is in use. */
+    /**
+     * One sentence's audio, from whichever voice is in use.
+     *
+     * The lock is what makes look-ahead safe: both synthesizers handle one sentence at a time
+     * — [PcmSynthesizer] keeps a single pending request, which a second call would replace,
+     * leaving the first waiting for a result that never comes. Kotlin's mutex is first-come,
+     * first-served, so the queue is still synthesized in reading order.
+     */
     private fun CoroutineScope.synthesizeAsync(ref: SentenceRef): Deferred<SynthesizedSentence?> =
         async(Dispatchers.Default) {
-            piperVoice
-                ?.let { piper.synthesize(ref.text, speechRate) }
-                ?: synthesizer.synthesize(ref.text, utteranceIdFor(ref))
+            synthesis.withLock {
+                piperVoice
+                    ?.let { piper.synthesize(ref.text, speechRate) }
+                    ?: synthesizer.synthesize(ref.text, utteranceIdFor(ref))
+            }
         }
 
     private fun markAt(

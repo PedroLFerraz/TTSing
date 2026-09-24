@@ -31,6 +31,7 @@ import com.pedrolopes.ttsing.TTSingApp
 import com.pedrolopes.ttsing.data.book.BookDocument
 import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
+import com.pedrolopes.ttsing.tts.piper.PiperVoices
 import com.pedrolopes.ttsing.data.news.NewsRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -252,7 +253,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             val locale = Locale.forLanguageTag(languageTag).takeIf { it.language.isNotEmpty() }
                 ?: return@launch
             activeLocale = locale
-            val available = engine.configureLanguage(locale, app.settings.settings.first().voiceFor(locale.language))
+            val available = engine.configureLanguage(locale, chosenVoiceFor(locale))
             _state.value = _state.value.copy(languageAvailable = available, error = null)
             loadSpeedForCurrentVoice()
             if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
@@ -265,6 +266,23 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         engine.setSpeechRate(rate)
         engine.setPitch(pitch)
         if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
+    }
+
+    /**
+     * The voice to read [locale] with: the reader's own choice, or — the first time, before
+     * they have made one — a neural voice the app carries for that language, which is the
+     * reason it carries one. Remembered, so it shows as chosen in the picker and can be
+     * changed like any other.
+     */
+    private suspend fun chosenVoiceFor(locale: Locale): String? {
+        val settings = app.settings.settings.first()
+        settings.voiceFor(locale.language)?.let { return it }
+        val own = PiperVoices.available(this)
+            .filter { it.locale.language == locale.language }
+            .minByOrNull { if (it.locale.country == locale.country) 0 else 1 }
+            ?: return null
+        app.settings.setVoice(locale.language, own.id)
+        return own.id
     }
 
     /** Selects a voice by name, or null to fall back to the engine default. */
@@ -305,7 +323,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         engine.setPitch(settings.pitch)
         val locale = settings.localeFor(bookId, source.locale)
         activeLocale = locale
-        val languageOk = engine.configureLanguage(locale, settings.voiceFor(locale.language))
+        val languageOk = engine.configureLanguage(locale, chosenVoiceFor(locale))
         loadSpeedForCurrentVoice()
 
         _state.value = PlaybackState(
