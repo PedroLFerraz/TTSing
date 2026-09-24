@@ -29,4 +29,11 @@ data class PlaybackState(
      */
     val bookListenedMs: Long = 0,
     val bookListenedChars: Long = 0,
+    /**
+     * When the sleep timer will stop the reading, as an
+     * [android.os.SystemClock.elapsedRealtime] stamp, or null when none is set. A timer set
+     * to the end of the chapter has no stamp: see [sleepAtChapterEnd].
+     */
+    val sleepAtElapsedMs: Long? = null,
+    val sleepAtChapterEnd: Boolean = false,
 )

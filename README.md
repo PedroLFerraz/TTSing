@@ -102,6 +102,10 @@ app running, not mockups.
   showing empty pages (there is no OCR).
 - **Tap to start** — tap any paragraph to begin reading from there (from the sentence you
   actually touched, not the top of the page).
+- **Speed from the footer** — a chip beside the clock steps through 1× … 2.5× without opening
+  the settings sheet, and turns yellow while it is above 1×.
+- **Sleep timer** — 15, 30 or 60 minutes, or "until this chapter ends". The footer counts it
+  down, and the reading stops where it is, so falling asleep doesn't lose your place.
 - **News feeds** — the RSS icon in the library opens straight onto the latest stories across
   every subscribed feed (not a feed picker first); "Manage feeds" from there is where you add
   or remove subscriptions. Reads a story the same way as a book. Articles are fetched and

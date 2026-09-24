@@ -100,6 +100,7 @@ import com.pedrolopes.ttsing.ui.common.simpleFactory
 import com.pedrolopes.ttsing.ui.theme.AppFonts
 import com.pedrolopes.ttsing.ui.theme.Ink
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -137,6 +138,24 @@ fun ReaderScreen(
     val connected by controller.connected.collectAsStateWithLifecycle()
     val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = DefaultSettings)
     val palette = readerPalette(settings.readerTheme)
+
+    // Minutes left on the sleep timer, ticking down for the footer and the settings sheet.
+    // CHAPTER_END stands for a timer that runs to the end of the chapter instead of a clock.
+    var sleepMinutesLeft by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(playback.sleepAtElapsedMs, playback.sleepAtChapterEnd) {
+        while (true) {
+            sleepMinutesLeft = when {
+                playback.sleepAtChapterEnd -> CHAPTER_END
+                playback.sleepAtElapsedMs == null -> null
+                else -> {
+                    val left = playback.sleepAtElapsedMs!! - android.os.SystemClock.elapsedRealtime()
+                    if (left <= 0) null else ((left + 59_999) / 60_000).toInt()
+                }
+            }
+            if (sleepMinutesLeft == null || sleepMinutesLeft == CHAPTER_END) break
+            delay(10_000)
+        }
+    }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -321,6 +340,7 @@ fun ReaderScreen(
                     canGoForward = ui.window.lastOrNull()?.index?.let { it > visibleChapter } ?: false,
                     isSpeaking = isThisBook && playback.isSpeaking,
                     speechRate = settings.speechRate,
+                    sleepMinutesLeft = sleepMinutesLeft,
                     palette = palette,
                     onCycleSpeed = {
                         val next = nextSpeed(settings.speechRate)
@@ -467,6 +487,8 @@ fun ReaderScreen(
             neuralVoices = PiperCatalog.forLanguage(activeLocale),
             installedNeuralIds = installedNeural,
             downloading = downloadProgress,
+            sleepMinutesLeft = sleepMinutesLeft,
+            onSleepTimer = { minutes, atChapterEnd -> controller.setSleepTimer(minutes, atChapterEnd) },
             onDeleteVoice = { voice ->
                 scope.launch {
                     withContext(Dispatchers.IO) { PiperVoices.delete(context, voice.id) }
@@ -978,6 +1000,7 @@ private fun ReaderFooter(
     canGoForward: Boolean,
     isSpeaking: Boolean,
     speechRate: Float,
+    sleepMinutesLeft: Int?,
     palette: ReaderPalette,
     onCycleSpeed: () -> Unit,
     onPrevChapter: () -> Unit,
@@ -1018,6 +1041,15 @@ private fun ReaderFooter(
                         .clickable(onClick = onCycleSpeed)
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                 )
+                if (sleepMinutesLeft != null) {
+                    MonoText(
+                        text = if (sleepMinutesLeft == CHAPTER_END) "SLEEP CH" else "SLEEP $sleepMinutesLeft",
+                        size = 10f,
+                        tracking = 0.16f,
+                        color = palette.accent,
+                        modifier = Modifier.padding(end = 10.dp),
+                    )
+                }
                 Spacer(Modifier.width(10.dp))
                 MonoText(text = rememberClock(), size = 10f, tracking = 0.16f, color = palette.secondaryText)
             }

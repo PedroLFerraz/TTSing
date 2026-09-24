@@ -34,6 +34,7 @@ import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.tts.piper.PiperVoices
 import com.pedrolopes.ttsing.data.news.NewsRepository
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -73,6 +74,10 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     private var resumeOnFocusGain = false
     private var sentencesSinceSave = 0
     private var saveJob: Job? = null
+
+    /** Runs out when the sleep timer does; [sleepChapter] is the chapter to stop after. */
+    private var sleepJob: Job? = null
+    private var sleepChapter: Int? = null
     private var isForeground = false
 
     // Speaking-speed measurement (drives time-to-finish estimates).
@@ -193,6 +198,32 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
+    }
+
+    /**
+     * Stops the reading after [minutes], or at the end of the chapter when [atChapterEnd], or
+     * not at all when both are null/false. Falling asleep over a book is the normal way to
+     * end a reading session, and waking up eleven chapters further on loses your place.
+     */
+    fun setSleepTimer(minutes: Int?, atChapterEnd: Boolean = false) {
+        sleepJob?.cancel()
+        sleepJob = null
+        sleepChapter = if (atChapterEnd) _state.value.position.chapterIndex else null
+        val stopAt = minutes?.let { android.os.SystemClock.elapsedRealtime() + it * 60_000L }
+        _state.value = _state.value.copy(sleepAtElapsedMs = stopAt, sleepAtChapterEnd = atChapterEnd)
+        if (stopAt == null) return
+        sleepJob = lifecycleScope.launch {
+            delay(stopAt - android.os.SystemClock.elapsedRealtime())
+            clearSleepTimer()
+            pause()
+        }
+    }
+
+    private fun clearSleepTimer() {
+        sleepJob?.cancel()
+        sleepJob = null
+        sleepChapter = null
+        _state.value = _state.value.copy(sleepAtElapsedMs = null, sleepAtChapterEnd = false)
     }
 
     fun pause() {
@@ -403,6 +434,13 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             wordRange = null,
             isSpeaking = engine.isSpeaking,
         )
+        sleepChapter?.let { chapter ->
+            if (ref.position.chapterIndex != chapter) {
+                clearSleepTimer()
+                pause()
+                return
+            }
+        }
         if (engine.isSpeaking) {
             recordSpeakingSpeed(ref)
             updateSessionAndNotification()

@@ -57,6 +57,9 @@ import com.pedrolopes.ttsing.ui.theme.AppFonts
 import com.pedrolopes.ttsing.ui.theme.Ink
 import java.util.Locale
 
+/** What [ReaderSettingsSheet]'s `sleepMinutesLeft` uses to mean "when the chapter ends". */
+const val CHAPTER_END = -1
+
 /** The order the design lists themes in: the app's own first, the system's last. */
 private val ThemeOrder = listOf(ReaderTheme.DARK, ReaderTheme.LIGHT, ReaderTheme.SEPIA, ReaderTheme.SYSTEM)
 
@@ -78,6 +81,9 @@ fun ReaderSettingsSheet(
     downloading: DownloadProgress?,
     onDownloadVoice: (CatalogVoice) -> Unit,
     onDeleteVoice: (CatalogVoice) -> Unit,
+    /** Minutes left on the sleep timer, or null; -1 means "until the chapter ends". */
+    sleepMinutesLeft: Int?,
+    onSleepTimer: (minutes: Int?, atChapterEnd: Boolean) -> Unit,
     onDismiss: () -> Unit,
     onSpeechRate: (Float) -> Unit,
     onPitch: (Float) -> Unit,
@@ -220,6 +226,33 @@ fun ReaderSettingsSheet(
                             },
                         )
                     }
+                }
+            }
+
+            Hairline(inset = 0.dp)
+
+            MonoText("Sleep timer", size = 11f, tracking = 0.16f)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                val options = listOf<Pair<String, Pair<Int?, Boolean>>>(
+                    "OFF" to (null to false),
+                    "15" to (15 to false),
+                    "30" to (30 to false),
+                    "60" to (60 to false),
+                    "CHAPTER" to (null to true),
+                )
+                options.forEach { (label, setting) ->
+                    val (minutes, chapterEnd) = setting
+                    val selected = when {
+                        chapterEnd -> sleepMinutesLeft == CHAPTER_END
+                        minutes == null -> sleepMinutesLeft == null
+                        // The running timer counts down, so the chip that set it stays lit.
+                        else -> sleepMinutesLeft != null && sleepMinutesLeft != CHAPTER_END &&
+                            sleepMinutesLeft <= minutes && sleepMinutesLeft > minutes - 15
+                    }
+                    ThemeChip(label = label, selected = selected) { onSleepTimer(minutes, chapterEnd) }
                 }
             }
 
