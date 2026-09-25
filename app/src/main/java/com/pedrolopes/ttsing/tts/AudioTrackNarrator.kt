@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -66,6 +67,7 @@ class AudioTrackNarrator(
 
     private var source: Narrator.ContentSource? = null
     private var readingJob: Job? = null
+    private var releaseJob: Job? = null
 
     /** Playback speed, applied by the engine during synthesis. */
     private var speechRate = 1f
@@ -147,8 +149,11 @@ class AudioTrackNarrator(
     }
 
     override fun playFrom(position: ReadingPosition) {
+        releaseJob?.cancel()
         scope.launch(Dispatchers.Main) {
             stopReading()
+            // Reloads the model when a long pause let it go; a no-op the rest of the time.
+            piperVoice?.let { if (!piper.prepare(it)) piperVoice = null }
             if (!awaitReady()) {
                 listener.onEngineError("Text-to-speech engine failed to initialize")
                 return@launch
@@ -297,6 +302,21 @@ class AudioTrackNarrator(
         synthesizer.cancel()
         readingJob?.cancel()
         readingJob = null
+        scheduleModelRelease()
+    }
+
+    /**
+     * Gives the neural model's memory back when the reading has been stopped for a while.
+     * onnxruntime holds around 270 MB once it has been running, which is a lot to sit on in
+     * the background; loading it again costs a second or two, and only after a long pause.
+     */
+    private fun scheduleModelRelease() {
+        if (piperVoice == null) return
+        releaseJob?.cancel()
+        releaseJob = scope.launch(Dispatchers.Default) {
+            delay(IDLE_RELEASE_MS)
+            if (!isSpeaking) piper.release()
+        }
     }
 
     override fun resume() {
@@ -358,6 +378,9 @@ class AudioTrackNarrator(
     private companion object {
         /** Sentences synthesized ahead of the one being spoken. */
         const val LOOK_AHEAD = 2
+
+        /** How long a pause has to run before the neural model's memory is handed back. */
+        const val IDLE_RELEASE_MS = 5 * 60_000L
 
         /** Enough to ride out one odd sentence, few enough to report a broken voice quickly. */
         const val MAX_CONSECUTIVE_FAILURES = 3
