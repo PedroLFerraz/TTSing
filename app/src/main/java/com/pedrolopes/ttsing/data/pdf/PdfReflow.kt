@@ -269,8 +269,25 @@ object PdfReflow {
 
 
     private fun isFurniture(line: PdfLine, page: PdfPage, furniture: Set<String>): Boolean {
+        if (isBarcode(line.text)) return true
         if (!inMarginBand(line, page)) return false
         return isPageNumber(line.text) || signature(line.text) in furniture
+    }
+
+    /**
+     * The digits printed under a barcode — "9 7 8 1 0 9 8 1 5 3 6 4 9" on a back cover — which
+     * the voice would otherwise read out one by one. Nothing but digits and spaces, and more
+     * of them than any real sentence carries.
+     */
+    fun isBarcode(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return false
+        if (!trimmed.all { it.isDigit() || it.isWhitespace() || it in "-><" }) return false
+        // A barcode's giveaway is digits printed one by one; a year or a page range is not.
+        val loneDigits = trimmed.split(Regex("""\s+""")).count { token ->
+            token.count { it.isDigit() } == 1
+        }
+        return loneDigits >= 5 || trimmed.count { it.isDigit() } >= 10
     }
 
     private fun inMarginBand(line: PdfLine, page: PdfPage): Boolean =
