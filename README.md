@@ -58,8 +58,8 @@ app running, not mockups.
   Piper voices (MIT) run locally by sherpa-onnx, no network and no second app. One ships
   inside the APK (**pt-BR Faber**), so a Brazilian book reads well out of the box; the others
   download from that same list with a progress bar, and a long press deletes one to get the
-  space back. Voices share one copy of espeak-ng's phoneme data, so each extra voice costs
-  60 MB rather than 80. Speed is applied by the *model* (`length_scale`), so 2.5× is genuinely
+  space back. A voice downloads 67 MB and keeps 60 MB: they share one copy of espeak-ng's
+  phoneme data instead of carrying 20 MB of it each. Speed is applied by the *model* (`length_scale`), so 2.5× is genuinely
   faster speech, not a pitched-up recording.
   Which voices are listed was decided by measurement — real-time factor is synthesis seconds
   per second of speech, measured with the same sherpa-onnx the app uses:
