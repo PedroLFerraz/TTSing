@@ -55,6 +55,14 @@ object PiperCatalog {
             .sortedWith(compareByDescending<CatalogVoice> { it.bundled }.thenBy { it.displayName })
 
     /**
+     * The rest of the catalogue — the languages this book is not in — so a voice can be
+     * fetched before the book that needs it is opened, grouped by the language it speaks.
+     */
+    fun otherLanguages(locale: Locale): List<CatalogVoice> =
+        voices.filterNot { it.locale.language == locale.language }
+            .sortedWith(compareBy({ it.locale.displayLanguage }, { it.displayName }))
+
+    /**
      * What to call a voice the reader has but the catalogue doesn't, e.g. one added by hand:
      * `vits-piper-pt_BR-faber-medium` reads "Faber (medium)".
      */

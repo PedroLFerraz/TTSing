@@ -78,6 +78,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
     /** Runs out when the sleep timer does; [sleepChapter] is the chapter to stop after. */
     private var sleepJob: Job? = null
+
+    /** Waits for a speed change to settle before the sentence is spoken again. */
+    private var restartJob: Job? = null
     private var sleepChapter: Int? = null
     private var isForeground = false
 
@@ -298,12 +301,18 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         }
     }
 
-    fun applySpeechSettings(rate: Float, pitch: Float) {
+    fun setSpeechRate(rate: Float) {
         currentRate = rate
         previousSentenceStartedAt = null // speed changed; don't mix samples across rates
         engine.setSpeechRate(rate)
-        engine.setPitch(pitch)
-        if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
+        if (!engine.isSpeaking) return
+        // The new speed only reaches the ear by speaking the sentence again, and a slider
+        // being dragged asks for that on every step. Restart once the speed settles.
+        restartJob?.cancel()
+        restartJob = lifecycleScope.launch {
+            delay(RESTART_AFTER_SETTLING_MS)
+            engine.currentRef?.let { engine.playFrom(it.position) }
+        }
     }
 
     /**
@@ -364,7 +373,6 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         val settings = app.settings.settings.first()
         currentRate = settings.speechRate
         engine.setSpeechRate(settings.speechRate)
-        engine.setPitch(settings.pitch)
         val locale = settings.localeFor(bookId, source.locale)
         activeLocale = locale
         val languageOk = engine.configureLanguage(locale, chosenVoiceFor(locale))
@@ -770,6 +778,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         const val WAKE_LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
         /** Accumulators are written after this much listening, and on pause and voice change. */
         const val SPEED_PERSIST_EVERY_MS = 30_000L
+
+        /** How long the speed has to hold still before the reading starts again. */
+        const val RESTART_AFTER_SETTLING_MS = 300L
 
         fun playIntent(context: Context, bookId: String, position: ReadingPosition?): Intent =
             Intent(context, ReadingService::class.java).apply {

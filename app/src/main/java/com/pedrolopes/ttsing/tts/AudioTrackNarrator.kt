@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -67,6 +68,9 @@ class AudioTrackNarrator(
 
     private var source: Narrator.ContentSource? = null
     private var readingJob: Job? = null
+
+    /** The coroutine bringing a reading up: cancelled by the next start, and by [pause]. */
+    private var startJob: Job? = null
     private var releaseJob: Job? = null
 
     /** Playback speed, applied by the engine during synthesis. */
@@ -144,13 +148,16 @@ class AudioTrackNarrator(
         tts.setSpeechRate(rate)
     }
 
-    override fun setPitch(pitch: Float) {
-        tts.setPitch(pitch)
-    }
-
     override fun playFrom(position: ReadingPosition) {
         releaseJob?.cancel()
-        scope.launch(Dispatchers.Main) {
+        // A start already under way is abandoned before this one begins. Starting is not
+        // instant — it waits for the sentence being spoken to come to a stop, and may have to
+        // load a voice — so two starts overlapping used to leave *both* reading: the book read
+        // by two voices at once, with only the newer one answering to pause. Changing the
+        // speed restarts the reading, so dragging the speed slider was enough to do it.
+        val earlier = startJob
+        startJob = scope.launch(Dispatchers.Main) {
+            runCatching { earlier?.cancelAndJoin() }
             stopReading()
             // Reloads the model when a long pause let it go; a no-op the rest of the time.
             piperVoice?.let { if (!piper.prepare(it)) piperVoice = null }
@@ -159,6 +166,7 @@ class AudioTrackNarrator(
                 return@launch
             }
             val src = source ?: return@launch
+            ensureActive()
             isSpeaking = true
             readingJob = scope.launch(Dispatchers.Default) { readLoop(src, position) }
         }
@@ -312,6 +320,7 @@ class AudioTrackNarrator(
         kotlinx.coroutines.withContext(Dispatchers.Main) { block() }
 
     override fun pause() {
+        startJob?.cancel()
         isSpeaking = false
         player.stop()
         synthesizer.cancel()

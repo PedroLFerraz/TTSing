@@ -109,7 +109,6 @@ import kotlin.math.roundToInt
 private val DefaultSettings = AppSettings(
     libraryFolderUri = null,
     speechRate = 1f,
-    pitch = 1f,
     fontScale = 1f,
     readerTheme = ReaderTheme.DARK,
 )
@@ -345,7 +344,7 @@ fun ReaderScreen(
                     onCycleSpeed = {
                         val next = nextSpeed(settings.speechRate)
                         scope.launch { app.settings.setSpeechRate(next) }
-                        controller.applySpeechSettings(next, settings.pitch)
+                        controller.setSpeechRate(next)
                     },
                     onPrevChapter = { viewModel.stepChapter(visibleChapter, forward = false) },
                     onNextChapter = { viewModel.stepChapter(visibleChapter, forward = true) },
@@ -465,11 +464,7 @@ fun ReaderScreen(
             onDismiss = { showSettings = false },
             onSpeechRate = { rate ->
                 scope.launch { app.settings.setSpeechRate(rate) }
-                controller.applySpeechSettings(rate, settings.pitch)
-            },
-            onPitch = { pitch ->
-                scope.launch { app.settings.setPitch(pitch) }
-                controller.applySpeechSettings(settings.speechRate, pitch)
+                controller.setSpeechRate(rate)
             },
             onFontScale = { scale ->
                 // Snapped to exact 5% steps, so the same size is always the same layout key.
@@ -485,6 +480,7 @@ fun ReaderScreen(
                 controller.selectVoice(name)
             },
             neuralVoices = PiperCatalog.forLanguage(activeLocale),
+            otherNeuralVoices = PiperCatalog.otherLanguages(activeLocale),
             installedNeuralIds = installedNeural,
             downloading = downloadProgress,
             sleepMinutesLeft = sleepMinutesLeft,
@@ -510,10 +506,10 @@ fun ReaderScreen(
     }
 }
 
-/** The speeds the footer's chip steps through: everyday reading, then faster and faster. */
-private val SpeedSteps = listOf(1f, 1.25f, 1.5f, 1.75f, 2f, 2.25f, 2.5f)
+/** Every speed the reader offers, in the footer's chip and in the settings sheet. */
+val SpeedSteps = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.25f, 2.5f)
 
-/** The next speed up from [rate], wrapping back to 1× past the top. */
+/** The next speed up from [rate], wrapping round to the slowest past the top. */
 private fun nextSpeed(rate: Float): Float =
     SpeedSteps.firstOrNull { it > rate + 0.01f } ?: SpeedSteps.first()
 

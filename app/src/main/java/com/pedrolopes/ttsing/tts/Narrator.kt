@@ -89,7 +89,6 @@ interface Narrator {
 
     fun setSpeechRate(rate: Float)
 
-    fun setPitch(pitch: Float)
 
     fun playFrom(position: ReadingPosition)
 

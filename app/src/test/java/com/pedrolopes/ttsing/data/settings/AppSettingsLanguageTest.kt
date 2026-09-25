@@ -13,7 +13,6 @@ class AppSettingsLanguageTest {
     ) = AppSettings(
         libraryFolderUri = null,
         speechRate = 1f,
-        pitch = 1f,
         fontScale = 1f,
         readerTheme = ReaderTheme.SYSTEM,
         voices = voices,

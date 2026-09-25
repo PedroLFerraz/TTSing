@@ -128,8 +128,8 @@ class ReadingController(context: Context) {
         service?.selectLanguage(languageTag)
     }
 
-    fun applySpeechSettings(rate: Float, pitch: Float) {
-        service?.applySpeechSettings(rate, pitch)
+    fun setSpeechRate(rate: Float) {
+        service?.setSpeechRate(rate)
     }
 
     fun selectVoice(voiceName: String?) {

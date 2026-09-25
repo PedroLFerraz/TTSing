@@ -77,6 +77,8 @@ fun ReaderSettingsSheet(
     availableLanguages: List<LanguageOption>,
     /** The app's own neural voices for this language, installed or not. */
     neuralVoices: List<CatalogVoice>,
+    /** Neural voices for the languages this book is not in, to fetch before they're needed. */
+    otherNeuralVoices: List<CatalogVoice>,
     installedNeuralIds: Set<String>,
     downloading: DownloadProgress?,
     onDownloadVoice: (CatalogVoice) -> Unit,
@@ -86,7 +88,6 @@ fun ReaderSettingsSheet(
     onSleepTimer: (minutes: Int?, atChapterEnd: Boolean) -> Unit,
     onDismiss: () -> Unit,
     onSpeechRate: (Float) -> Unit,
-    onPitch: (Float) -> Unit,
     onFontScale: (Float) -> Unit,
     onTheme: (ReaderTheme) -> Unit,
     onSelectLanguage: (Locale) -> Unit,
@@ -123,9 +124,29 @@ fun ReaderSettingsSheet(
         ) {
             MonoText("Reading settings", size = 13f, tracking = 0.2f, color = Ink.Text, weight = FontWeight.Bold)
 
-            // Same wording as the footer's chip, so 1.75× doesn't read as 1.8× here.
-            HardSlider("Speed", settings.speechRate, formatSpeed(settings.speechRate), 0.5f..2.5f, onSpeechRate)
-            HardSlider("Pitch", settings.pitch, "%.1f".format(settings.pitch), 0.5f..2.0f, onPitch)
+            // Speeds you would actually choose, not a slider: each step is a fresh synthesis
+            // of the sentence being spoken, so sliding through the range restarted the reading
+            // at every hair of movement.
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    MonoText("Speed", size = 11f, tracking = 0.16f)
+                    MonoText(formatSpeed(settings.speechRate), size = 11f, tracking = 0.16f, color = Ink.Live)
+                }
+                SpeedSteps.chunked(5).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { step ->
+                            ThemeChip(
+                                label = formatSpeed(step),
+                                selected = kotlin.math.abs(settings.speechRate - step) < 0.01f,
+                                onClick = { onSpeechRate(step) },
+                            )
+                        }
+                    }
+                }
+            }
             // In 5% steps: every font size is its own page layout, counted across the whole
             // book, so a continuous slider would recount it for every hair of movement.
             HardSlider(
@@ -302,6 +323,51 @@ fun ReaderSettingsSheet(
                             fraction = busy.fraction,
                             modifier = Modifier.padding(start = 3.dp, top = 2.dp, bottom = 6.dp),
                         )
+                    }
+                }
+            }
+
+            if (otherNeuralVoices.isNotEmpty()) {
+                var showOthers by remember { mutableStateOf(false) }
+                MonoText(
+                    text = if (showOthers) {
+                        "Other languages — tap to hide"
+                    } else {
+                        "Other languages · ${otherNeuralVoices.size} voices — tap to show"
+                    },
+                    size = 10f,
+                    tracking = 0.14f,
+                    color = Ink.Dim,
+                    modifier = Modifier
+                        .clickable { showOthers = !showOthers }
+                        .padding(top = 14.dp, bottom = 4.dp),
+                )
+                if (showOthers) {
+                    otherNeuralVoices.forEach { voice ->
+                        val installed = voice.id in installedNeuralIds
+                        val busy = downloading?.takeIf { it.id == voice.id && !it.failed }
+                        ChoiceRow(
+                            title = "${voice.displayName} · ${voice.locale.displayName()}",
+                            subtitle = when {
+                                busy != null -> "Downloading — ${busy.done} of ${voice.megabytes} MB"
+                                downloading?.id == voice.id && downloading.failed ->
+                                    "Download failed — tap to retry"
+                                // Picking it here would read this book in the wrong language:
+                                // it is offered so it is ready when you open one that needs it.
+                                installed -> "Ready for when you read in ${voice.locale.displayName()}"
+                                else -> "Tap to download · ${voice.megabytes} MB"
+                            },
+                            selected = false,
+                            isSpeaking = false,
+                            onClick = { if (!installed) onDownloadVoice(voice) },
+                            onLongClick = { onDeleteVoice(voice) }.takeIf { installed && !voice.bundled },
+                        )
+                        if (busy != null) {
+                            ThinProgress(
+                                fraction = busy.fraction,
+                                modifier = Modifier.padding(start = 3.dp, top = 2.dp, bottom = 6.dp),
+                            )
+                        }
                     }
                 }
             }
