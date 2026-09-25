@@ -7,6 +7,8 @@ background playback and media-notification controls.
 
 ![TTSing: the library, the reader mid-sentence, a PDF being read, the reading settings sheet, and the news list](docs/screenshots/showcase.png)
 
+![The settings sheet with the sleep timer, the app's own neural voices with their downloads, and the reader with the speed chip in the footer](docs/screenshots/neural-voices.png)
+
 ## Look
 
 Black surfaces, and one yellow — `#FFD400` — reserved for whatever is live: the sentence
