@@ -269,12 +269,27 @@ class AudioTrackNarrator(
     ): List<SynthesizedSentence.FrameMark> {
         val words = WordSplitter.split(ref.text, locale)
         if (words.isEmpty()) return emptyList()
-        val timings = NeuralWordTiming.estimate(
-            sentenceLength = ref.text.length,
-            wordSpans = words,
-            startInBlock = 0,
-            totalDurationMs = audio.durationMs,
-        )
+        val framesPerMsRate = audio.sampleRateHz / 1000f
+        val timings = if (audio.pieces.isEmpty()) {
+            NeuralWordTiming.estimate(
+                sentenceLength = ref.text.length,
+                wordSpans = words,
+                startInBlock = 0,
+                totalDurationMs = audio.durationMs,
+            )
+        } else {
+            // A sentence synthesized in pieces knows when each of them plays, so the estimate
+            // is anchored piece by piece instead of spread across the whole sentence.
+            val pieces = audio.pieces.mapIndexed { index, anchor ->
+                val endFrame = audio.pieces.getOrNull(index + 1)?.frame ?: audio.frameCount
+                NeuralWordTiming.Piece(
+                    chars = anchor.start until anchor.end,
+                    startMs = (anchor.frame / framesPerMsRate).toInt(),
+                    endMs = (endFrame / framesPerMsRate).toInt(),
+                )
+            }
+            NeuralWordTiming.estimateInPieces(pieces, words, startInBlock = 0)
+        }
         val framesPerMs = audio.sampleRateHz / 1000f
         return timings.map { timing ->
             SynthesizedSentence.FrameMark(

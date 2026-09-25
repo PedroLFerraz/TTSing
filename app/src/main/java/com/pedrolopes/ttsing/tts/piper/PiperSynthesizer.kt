@@ -70,19 +70,30 @@ class PiperSynthesizer(private val context: Context) {
             val engine = tts ?: return@withContext null
             val rate = speed.coerceIn(MIN_SPEED, MAX_SPEED)
             var sampleRate = 0
-            val pieces = PiperChunks.split(text).mapNotNull { piece ->
-                val audio = runCatching { engine.generate(piece, 0, rate) }.getOrNull()
-                    ?: return@mapNotNull null
-                sampleRate = audio.sampleRate
-                audio.samples.takeIf { it.isNotEmpty() }
+            var frame = 0
+            var cursor = 0
+            val audio = mutableListOf<FloatArray>()
+            val anchors = mutableListOf<SynthesizedSentence.FrameMark>()
+            PiperChunks.split(text).forEach { piece ->
+                val generated = runCatching { engine.generate(piece, 0, rate) }.getOrNull()
+                val samples = generated?.samples?.takeIf { it.isNotEmpty() }
+                // Where this piece's words sit in the sentence, for the highlight.
+                val start = text.indexOf(piece, cursor).takeIf { it >= 0 } ?: cursor
+                cursor = start + piece.length
+                if (samples == null) return@forEach
+                sampleRate = generated.sampleRate
+                audio.add(samples)
+                anchors.add(SynthesizedSentence.FrameMark(frame, start, cursor))
+                frame += samples.size
             }
-            if (pieces.isEmpty() || sampleRate <= 0) return@withContext null
+            if (audio.isEmpty() || sampleRate <= 0) return@withContext null
             SynthesizedSentence(
-                pcm = pieces.toPcm16(),
+                pcm = audio.toPcm16(),
                 sampleRateHz = sampleRate,
                 audioFormat = AudioFormat.ENCODING_PCM_16BIT,
                 channelCount = 1,
                 marks = emptyList(),
+                pieces = anchors.takeIf { it.size > 1 }.orEmpty(),
             )
         }
 
