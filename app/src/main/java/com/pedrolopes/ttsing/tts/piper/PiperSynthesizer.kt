@@ -59,17 +59,27 @@ class PiperSynthesizer(private val context: Context) {
         true
     }
 
-    /** [text] spoken at [speed] (1.0 is the voice's own pace), or null if it could not be. */
+    /**
+     * [text] spoken at [speed] (1.0 is the voice's own pace), or null if it could not be.
+     *
+     * A long sentence is synthesized clause by clause — see [PiperChunks] for why — and the
+     * pieces are played as one, so nothing downstream knows the difference.
+     */
     suspend fun synthesize(text: String, speed: Float): SynthesizedSentence? =
         withContext(Dispatchers.IO) {
             val engine = tts ?: return@withContext null
-            val audio = runCatching { engine.generate(text, 0, speed.coerceIn(MIN_SPEED, MAX_SPEED)) }
-                .getOrNull() ?: return@withContext null
-            val samples = audio.samples
-            if (samples.isEmpty()) return@withContext null
+            val rate = speed.coerceIn(MIN_SPEED, MAX_SPEED)
+            var sampleRate = 0
+            val pieces = PiperChunks.split(text).mapNotNull { piece ->
+                val audio = runCatching { engine.generate(piece, 0, rate) }.getOrNull()
+                    ?: return@mapNotNull null
+                sampleRate = audio.sampleRate
+                audio.samples.takeIf { it.isNotEmpty() }
+            }
+            if (pieces.isEmpty() || sampleRate <= 0) return@withContext null
             SynthesizedSentence(
-                pcm = samples.toPcm16(),
-                sampleRateHz = audio.sampleRate,
+                pcm = pieces.toPcm16(),
+                sampleRateHz = sampleRate,
                 audioFormat = AudioFormat.ENCODING_PCM_16BIT,
                 channelCount = 1,
                 marks = emptyList(),
@@ -94,11 +104,13 @@ class PiperSynthesizer(private val context: Context) {
         const val MAX_SPEED = 3f
 
         /** Float samples in [-1, 1] as the 16-bit little-endian PCM the player expects. */
-        fun FloatArray.toPcm16(): ByteArray {
-            val buffer = ByteBuffer.allocate(size * 2).order(ByteOrder.LITTLE_ENDIAN)
-            forEach { sample ->
-                val clamped = sample.coerceIn(-1f, 1f)
-                buffer.putShort((clamped * Short.MAX_VALUE).toInt().toShort())
+        fun List<FloatArray>.toPcm16(): ByteArray {
+            val buffer = ByteBuffer.allocate(sumOf { it.size } * 2).order(ByteOrder.LITTLE_ENDIAN)
+            forEach { piece ->
+                piece.forEach { sample ->
+                    val clamped = sample.coerceIn(-1f, 1f)
+                    buffer.putShort((clamped * Short.MAX_VALUE).toInt().toShort())
+                }
             }
             return buffer.array()
         }
