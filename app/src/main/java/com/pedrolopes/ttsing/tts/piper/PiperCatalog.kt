@@ -33,18 +33,18 @@ data class CatalogVoice(
 object PiperCatalog {
 
     val voices: List<CatalogVoice> = listOf(
-        CatalogVoice("vits-piper-pt_BR-faber-medium", Locale("pt", "BR"), "Faber", 63, bundled = true),
-        CatalogVoice("vits-piper-pt_BR-cadu-medium", Locale("pt", "BR"), "Cadu", 63),
-        CatalogVoice("vits-piper-pt_BR-jeff-medium", Locale("pt", "BR"), "Jeff", 63),
-        CatalogVoice("vits-piper-pt_BR-edresson-low", Locale("pt", "BR"), "Edresson", 63),
-        CatalogVoice("vits-piper-en_US-lessac-medium", Locale("en", "US"), "Lessac", 63),
-        CatalogVoice("vits-piper-en_US-hfc_female-medium", Locale("en", "US"), "HFC female", 63),
-        CatalogVoice("vits-piper-en_US-amy-medium", Locale("en", "US"), "Amy", 63),
-        CatalogVoice("vits-piper-en_GB-alba-medium", Locale("en", "GB"), "Alba", 63),
-        CatalogVoice("vits-piper-es_ES-davefx-medium", Locale("es", "ES"), "Davefx", 63),
-        CatalogVoice("vits-piper-fr_FR-siwis-medium", Locale("fr", "FR"), "Siwis", 63),
-        CatalogVoice("vits-piper-de_DE-thorsten-medium", Locale("de", "DE"), "Thorsten", 63),
-        CatalogVoice("vits-piper-it_IT-paola-medium", Locale("it", "IT"), "Paola", 63),
+        CatalogVoice("vits-piper-pt_BR-faber-medium", Locale("pt", "BR"), "Faber", 67, bundled = true),
+        CatalogVoice("vits-piper-pt_BR-cadu-medium", Locale("pt", "BR"), "Cadu", 67),
+        CatalogVoice("vits-piper-pt_BR-jeff-medium", Locale("pt", "BR"), "Jeff", 67),
+        CatalogVoice("vits-piper-pt_BR-edresson-low", Locale("pt", "BR"), "Edresson", 67),
+        CatalogVoice("vits-piper-en_US-lessac-medium", Locale("en", "US"), "Lessac", 67),
+        CatalogVoice("vits-piper-en_US-hfc_female-medium", Locale("en", "US"), "HFC female", 67),
+        CatalogVoice("vits-piper-en_US-amy-medium", Locale("en", "US"), "Amy", 67),
+        CatalogVoice("vits-piper-en_GB-alba-medium", Locale("en", "GB"), "Alba", 67),
+        CatalogVoice("vits-piper-es_ES-davefx-medium", Locale("es", "ES"), "Davefx", 67),
+        CatalogVoice("vits-piper-fr_FR-siwis-medium", Locale("fr", "FR"), "Siwis", 67),
+        CatalogVoice("vits-piper-de_DE-thorsten-medium", Locale("de", "DE"), "Thorsten", 67),
+        CatalogVoice("vits-piper-it_IT-paola-medium", Locale("it", "IT"), "Paola", 67),
     )
 
     fun find(id: String): CatalogVoice? = voices.firstOrNull { it.id == id }
