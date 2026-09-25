@@ -183,6 +183,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
     fun play(bookId: String, position: ReadingPosition? = null) {
         ensureForeground()
+        // Jumping somewhere on purpose keeps a "stop at the chapter's end" timer, moved to
+        // whichever chapter you jumped into.
+        if (sleepChapter != null && position != null) sleepChapter = position.chapterIndex
         lifecycleScope.launch {
             val restored = openBookIfNeeded(bookId) ?: run { stopSelfIfIdle(); return@launch }
             if (!requestAudioFocus()) return@launch
@@ -251,6 +254,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
     fun moveTo(position: ReadingPosition) {
         previousSentenceStartedAt = null
+        // Going to another chapter on purpose is not the reading reaching its end, so a timer
+        // set to stop at the chapter's end follows you to the chapter you asked for.
+        if (sleepChapter != null) sleepChapter = position.chapterIndex
         engine.moveTo(position)
     }
 
