@@ -31,6 +31,7 @@ import com.pedrolopes.ttsing.TTSingApp
 import com.pedrolopes.ttsing.data.book.BookDocument
 import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
+import com.pedrolopes.ttsing.tts.piper.PiperCatalog
 import com.pedrolopes.ttsing.tts.piper.PiperVoices
 import com.pedrolopes.ttsing.data.news.NewsRepository
 import kotlinx.coroutines.Job
@@ -307,7 +308,13 @@ class ReadingService : LifecycleService(), Narrator.Listener {
      */
     private suspend fun chosenVoiceFor(locale: Locale): String? {
         val settings = app.settings.settings.first()
-        settings.voiceFor(locale.language)?.let { return it }
+        settings.voiceFor(locale.language)?.let { stored ->
+            // A voice of ours whose files were deleted is no longer a choice; anything else
+            // is the engine's business and is passed through as it always was.
+            val ours = PiperCatalog.find(stored)
+            if (ours == null || PiperVoices.find(this, stored) != null) return stored
+            app.settings.setVoice(locale.language, null)
+        }
         val own = PiperVoices.available(this)
             .filter { it.locale.language == locale.language }
             .minByOrNull { if (it.locale.country == locale.country) 0 else 1 }

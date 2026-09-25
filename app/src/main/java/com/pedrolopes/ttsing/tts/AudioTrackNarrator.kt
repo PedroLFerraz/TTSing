@@ -377,6 +377,8 @@ class AudioTrackNarrator(
 
     override fun shutdown() {
         pause()
+        releaseJob?.cancel()
+        piper.release()
         runCatching { tts.shutdown() }
     }
 

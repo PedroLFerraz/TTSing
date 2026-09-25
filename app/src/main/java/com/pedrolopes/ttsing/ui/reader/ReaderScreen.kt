@@ -518,7 +518,7 @@ private fun nextSpeed(rate: Float): Float =
     SpeedSteps.firstOrNull { it > rate + 0.01f } ?: SpeedSteps.first()
 
 /** "1×", "1.5×", "2.25×" — no trailing zeros, because the chip is tiny. */
-private fun formatSpeed(rate: Float): String {
+fun formatSpeed(rate: Float): String {
     val rounded = (rate * 100).roundToInt() / 100f
     val text = if (rounded == rounded.toInt().toFloat()) "${rounded.toInt()}" else "$rounded"
     return "$text×"

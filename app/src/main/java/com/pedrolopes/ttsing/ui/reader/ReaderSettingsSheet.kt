@@ -123,7 +123,8 @@ fun ReaderSettingsSheet(
         ) {
             MonoText("Reading settings", size = 13f, tracking = 0.2f, color = Ink.Text, weight = FontWeight.Bold)
 
-            HardSlider("Speed", settings.speechRate, "%.1f×".format(settings.speechRate), 0.5f..2.5f, onSpeechRate)
+            // Same wording as the footer's chip, so 1.75× doesn't read as 1.8× here.
+            HardSlider("Speed", settings.speechRate, formatSpeed(settings.speechRate), 0.5f..2.5f, onSpeechRate)
             HardSlider("Pitch", settings.pitch, "%.1f".format(settings.pitch), 0.5f..2.0f, onPitch)
             // In 5% steps: every font size is its own page layout, counted across the whole
             // book, so a continuous slider would recount it for every hair of movement.
