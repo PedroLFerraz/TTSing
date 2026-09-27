@@ -348,7 +348,7 @@ class ReaderViewModel(
         viewModelScope.launch {
             val current = settings.settings.first()
             val locale = current.localeFor(bookId, bookLocale())
-            cardAudio.speak(draft.sentence, locale, current.voiceFor(locale.language), current.pitch)
+            cardAudio.speak(draft.sentence, locale, current.voiceFor(locale.language))
         }
     }
 
@@ -370,7 +370,6 @@ class ReaderViewModel(
                         text = draft.sentence,
                         locale = locale,
                         voiceName = current.voiceFor(locale.language),
-                        pitch = current.pitch,
                     )
                     when (val result = anki.addCard(draft, audio)) {
                         is AnkiExporter.Result.Added ->

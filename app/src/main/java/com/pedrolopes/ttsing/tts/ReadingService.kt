@@ -31,8 +31,11 @@ import com.pedrolopes.ttsing.TTSingApp
 import com.pedrolopes.ttsing.data.book.BookDocument
 import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
+import com.pedrolopes.ttsing.tts.piper.PiperCatalog
+import com.pedrolopes.ttsing.tts.piper.PiperVoices
 import com.pedrolopes.ttsing.data.news.NewsRepository
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,6 +75,13 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     private var resumeOnFocusGain = false
     private var sentencesSinceSave = 0
     private var saveJob: Job? = null
+
+    /** Runs out when the sleep timer does; [sleepChapter] is the chapter to stop after. */
+    private var sleepJob: Job? = null
+
+    /** Waits for a speed change to settle before the sentence is spoken again. */
+    private var restartJob: Job? = null
+    private var sleepChapter: Int? = null
     private var isForeground = false
 
     // Speaking-speed measurement (drives time-to-finish estimates).
@@ -176,6 +186,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
     fun play(bookId: String, position: ReadingPosition? = null) {
         ensureForeground()
+        // Jumping somewhere on purpose keeps a "stop at the chapter's end" timer, moved to
+        // whichever chapter you jumped into.
+        if (sleepChapter != null && position != null) sleepChapter = position.chapterIndex
         lifecycleScope.launch {
             val restored = openBookIfNeeded(bookId) ?: run { stopSelfIfIdle(); return@launch }
             if (!requestAudioFocus()) return@launch
@@ -192,6 +205,32 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
+    }
+
+    /**
+     * Stops the reading after [minutes], or at the end of the chapter when [atChapterEnd], or
+     * not at all when both are null/false. Falling asleep over a book is the normal way to
+     * end a reading session, and waking up eleven chapters further on loses your place.
+     */
+    fun setSleepTimer(minutes: Int?, atChapterEnd: Boolean = false) {
+        sleepJob?.cancel()
+        sleepJob = null
+        sleepChapter = if (atChapterEnd) _state.value.position.chapterIndex else null
+        val stopAt = minutes?.let { android.os.SystemClock.elapsedRealtime() + it * 60_000L }
+        _state.value = _state.value.copy(sleepAtElapsedMs = stopAt, sleepAtChapterEnd = atChapterEnd)
+        if (stopAt == null) return
+        sleepJob = lifecycleScope.launch {
+            delay(stopAt - android.os.SystemClock.elapsedRealtime())
+            clearSleepTimer()
+            pause()
+        }
+    }
+
+    private fun clearSleepTimer() {
+        sleepJob?.cancel()
+        sleepJob = null
+        sleepChapter = null
+        _state.value = _state.value.copy(sleepAtElapsedMs = null, sleepAtChapterEnd = false)
     }
 
     fun pause() {
@@ -218,6 +257,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
     fun moveTo(position: ReadingPosition) {
         previousSentenceStartedAt = null
+        // Going to another chapter on purpose is not the reading reaching its end, so a timer
+        // set to stop at the chapter's end follows you to the chapter you asked for.
+        if (sleepChapter != null) sleepChapter = position.chapterIndex
         engine.moveTo(position)
     }
 
@@ -252,19 +294,48 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             val locale = Locale.forLanguageTag(languageTag).takeIf { it.language.isNotEmpty() }
                 ?: return@launch
             activeLocale = locale
-            val available = engine.configureLanguage(locale, app.settings.settings.first().voiceFor(locale.language))
+            val available = engine.configureLanguage(locale, chosenVoiceFor(locale))
             _state.value = _state.value.copy(languageAvailable = available, error = null)
             loadSpeedForCurrentVoice()
             if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
         }
     }
 
-    fun applySpeechSettings(rate: Float, pitch: Float) {
+    fun setSpeechRate(rate: Float) {
         currentRate = rate
         previousSentenceStartedAt = null // speed changed; don't mix samples across rates
         engine.setSpeechRate(rate)
-        engine.setPitch(pitch)
-        if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
+        if (!engine.isSpeaking) return
+        // The new speed only reaches the ear by speaking the sentence again, and a slider
+        // being dragged asks for that on every step. Restart once the speed settles.
+        restartJob?.cancel()
+        restartJob = lifecycleScope.launch {
+            delay(RESTART_AFTER_SETTLING_MS)
+            engine.currentRef?.let { engine.playFrom(it.position) }
+        }
+    }
+
+    /**
+     * The voice to read [locale] with: the reader's own choice, or — the first time, before
+     * they have made one — a neural voice the app carries for that language, which is the
+     * reason it carries one. Remembered, so it shows as chosen in the picker and can be
+     * changed like any other.
+     */
+    private suspend fun chosenVoiceFor(locale: Locale): String? {
+        val settings = app.settings.settings.first()
+        settings.voiceFor(locale.language)?.let { stored ->
+            // A voice of ours whose files were deleted is no longer a choice; anything else
+            // is the engine's business and is passed through as it always was.
+            val ours = PiperCatalog.find(stored)
+            if (ours == null || PiperVoices.find(this, stored) != null) return stored
+            app.settings.setVoice(locale.language, null)
+        }
+        val own = PiperVoices.available(this)
+            .filter { it.locale.language == locale.language }
+            .minByOrNull { if (it.locale.country == locale.country) 0 else 1 }
+            ?: return null
+        app.settings.setVoice(locale.language, own.id)
+        return own.id
     }
 
     /** Selects a voice by name, or null to fall back to the engine default. */
@@ -302,10 +373,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         val settings = app.settings.settings.first()
         currentRate = settings.speechRate
         engine.setSpeechRate(settings.speechRate)
-        engine.setPitch(settings.pitch)
         val locale = settings.localeFor(bookId, source.locale)
         activeLocale = locale
-        val languageOk = engine.configureLanguage(locale, settings.voiceFor(locale.language))
+        val languageOk = engine.configureLanguage(locale, chosenVoiceFor(locale))
         loadSpeedForCurrentVoice()
 
         _state.value = PlaybackState(
@@ -385,6 +455,13 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             wordRange = null,
             isSpeaking = engine.isSpeaking,
         )
+        sleepChapter?.let { chapter ->
+            if (ref.position.chapterIndex != chapter) {
+                clearSleepTimer()
+                pause()
+                return
+            }
+        }
         if (engine.isSpeaking) {
             recordSpeakingSpeed(ref)
             updateSessionAndNotification()
@@ -701,6 +778,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         const val WAKE_LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
         /** Accumulators are written after this much listening, and on pause and voice change. */
         const val SPEED_PERSIST_EVERY_MS = 30_000L
+
+        /** How long the speed has to hold still before the reading starts again. */
+        const val RESTART_AFTER_SETTLING_MS = 300L
 
         fun playIntent(context: Context, bookId: String, position: ReadingPosition?): Intent =
             Intent(context, ReadingService::class.java).apply {

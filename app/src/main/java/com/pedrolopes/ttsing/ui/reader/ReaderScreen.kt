@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.LocalFontFamilyResolver
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -87,6 +88,9 @@ import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.settings.AppSettings
 import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.ReadingController
+import com.pedrolopes.ttsing.tts.piper.PiperCatalog
+import com.pedrolopes.ttsing.tts.piper.PiperDownloads
+import com.pedrolopes.ttsing.tts.piper.PiperVoices
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.LocalImage
 import com.pedrolopes.ttsing.ui.common.MonoText
@@ -95,14 +99,16 @@ import com.pedrolopes.ttsing.ui.common.ThinProgress
 import com.pedrolopes.ttsing.ui.common.simpleFactory
 import com.pedrolopes.ttsing.ui.theme.AppFonts
 import com.pedrolopes.ttsing.ui.theme.Ink
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 
 private val DefaultSettings = AppSettings(
     libraryFolderUri = null,
     speechRate = 1f,
-    pitch = 1f,
     fontScale = 1f,
     readerTheme = ReaderTheme.DARK,
 )
@@ -131,6 +137,24 @@ fun ReaderScreen(
     val connected by controller.connected.collectAsStateWithLifecycle()
     val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = DefaultSettings)
     val palette = readerPalette(settings.readerTheme)
+
+    // Minutes left on the sleep timer, ticking down for the footer and the settings sheet.
+    // CHAPTER_END stands for a timer that runs to the end of the chapter instead of a clock.
+    var sleepMinutesLeft by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(playback.sleepAtElapsedMs, playback.sleepAtChapterEnd) {
+        while (true) {
+            sleepMinutesLeft = when {
+                playback.sleepAtChapterEnd -> CHAPTER_END
+                playback.sleepAtElapsedMs == null -> null
+                else -> {
+                    val left = playback.sleepAtElapsedMs!! - android.os.SystemClock.elapsedRealtime()
+                    if (left <= 0) null else ((left + 59_999) / 60_000).toInt()
+                }
+            }
+            if (sleepMinutesLeft == null || sleepMinutesLeft == CHAPTER_END) break
+            delay(10_000)
+        }
+    }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -314,7 +338,14 @@ fun ReaderScreen(
                     canGoBack = ui.window.firstOrNull()?.index?.let { it < visibleChapter } ?: false,
                     canGoForward = ui.window.lastOrNull()?.index?.let { it > visibleChapter } ?: false,
                     isSpeaking = isThisBook && playback.isSpeaking,
+                    speechRate = settings.speechRate,
+                    sleepMinutesLeft = sleepMinutesLeft,
                     palette = palette,
+                    onCycleSpeed = {
+                        val next = nextSpeed(settings.speechRate)
+                        scope.launch { app.settings.setSpeechRate(next) }
+                        controller.setSpeechRate(next)
+                    },
                     onPrevChapter = { viewModel.stepChapter(visibleChapter, forward = false) },
                     onNextChapter = { viewModel.stepChapter(visibleChapter, forward = true) },
                     onPlayPause = { controller.togglePlayPause(bookId) },
@@ -407,6 +438,14 @@ fun ReaderScreen(
             ?.takeIf { it.language.isNotEmpty() }
         val activeLocale = settings.localeFor(bookId, declaredLocale ?: Locale.getDefault())
         val languageCode = activeLocale.language
+        val downloads = remember(context) { PiperDownloads(context) }
+        val downloadProgress by downloads.progress.collectAsStateWithLifecycle()
+        var installedNeural by remember { mutableStateOf(emptySet<String>()) }
+        LaunchedEffect(showSettings, downloadProgress) {
+            installedNeural = withContext(Dispatchers.IO) {
+                PiperVoices.available(context).map { it.id }.toSet()
+            }
+        }
         ReaderSettingsSheet(
             settings = settings,
             voices = remember(languageCode, connected) { controller.voicesFor(activeLocale) },
@@ -425,11 +464,7 @@ fun ReaderScreen(
             onDismiss = { showSettings = false },
             onSpeechRate = { rate ->
                 scope.launch { app.settings.setSpeechRate(rate) }
-                controller.applySpeechSettings(rate, settings.pitch)
-            },
-            onPitch = { pitch ->
-                scope.launch { app.settings.setPitch(pitch) }
-                controller.applySpeechSettings(settings.speechRate, pitch)
+                controller.setSpeechRate(rate)
             },
             onFontScale = { scale ->
                 // Snapped to exact 5% steps, so the same size is always the same layout key.
@@ -440,12 +475,49 @@ fun ReaderScreen(
                 scope.launch { app.settings.setVoice(languageCode, null) }
                 controller.selectVoice(null)
             },
-            onSelectVoice = { voice ->
-                scope.launch { app.settings.setVoice(languageCode, voice.name) }
-                controller.selectVoice(voice.name)
+            onSelectVoice = { name ->
+                scope.launch { app.settings.setVoice(languageCode, name) }
+                controller.selectVoice(name)
+            },
+            neuralVoices = PiperCatalog.forLanguage(activeLocale),
+            otherNeuralVoices = PiperCatalog.otherLanguages(activeLocale),
+            installedNeuralIds = installedNeural,
+            downloading = downloadProgress,
+            sleepMinutesLeft = sleepMinutesLeft,
+            onSleepTimer = { minutes, atChapterEnd -> controller.setSleepTimer(minutes, atChapterEnd) },
+            onDeleteVoice = { voice ->
+                scope.launch {
+                    withContext(Dispatchers.IO) { PiperVoices.delete(context, voice.id) }
+                    if (settings.voiceFor(languageCode) == voice.id) {
+                        app.settings.setVoice(languageCode, null)
+                        controller.selectVoice(null)
+                    }
+                    installedNeural = PiperVoices.available(context).map { it.id }.toSet()
+                }
+            },
+            onDownloadVoice = { voice ->
+                scope.launch {
+                    if (downloads.download(voice)) {
+                        installedNeural = PiperVoices.available(context).map { it.id }.toSet()
+                    }
+                }
             },
         )
     }
+}
+
+/** Every speed the reader offers, in the footer's chip and in the settings sheet. */
+val SpeedSteps = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.25f, 2.5f)
+
+/** The next speed up from [rate], wrapping round to the slowest past the top. */
+private fun nextSpeed(rate: Float): Float =
+    SpeedSteps.firstOrNull { it > rate + 0.01f } ?: SpeedSteps.first()
+
+/** "1×", "1.5×", "2.25×" — no trailing zeros, because the chip is tiny. */
+fun formatSpeed(rate: Float): String {
+    val rounded = (rate * 100).roundToInt() / 100f
+    val text = if (rounded == rounded.toInt().toFloat()) "${rounded.toInt()}" else "$rounded"
+    return "$text×"
 }
 
 /** One page of the continuous book: which chapter it belongs to, and what is on it. */
@@ -923,7 +995,10 @@ private fun ReaderFooter(
     canGoBack: Boolean,
     canGoForward: Boolean,
     isSpeaking: Boolean,
+    speechRate: Float,
+    sleepMinutesLeft: Int?,
     palette: ReaderPalette,
+    onCycleSpeed: () -> Unit,
     onPrevChapter: () -> Unit,
     onNextChapter: () -> Unit,
     onPlayPause: () -> Unit,
@@ -950,6 +1025,28 @@ private fun ReaderFooter(
                     color = palette.secondaryText,
                 )
                 Spacer(Modifier.weight(1f).widthIn(min = 14.dp))
+                // Reading speed is the setting that gets changed most, and it used to be three
+                // taps deep in the settings sheet. Here it cycles through the usual steps.
+                MonoText(
+                    text = formatSpeed(speechRate),
+                    size = 10f,
+                    tracking = 0.16f,
+                    color = if (speechRate == 1f) palette.secondaryText else palette.accent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(2.dp))
+                        .clickable(onClick = onCycleSpeed)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+                if (sleepMinutesLeft != null) {
+                    MonoText(
+                        text = if (sleepMinutesLeft == CHAPTER_END) "SLEEP CH" else "SLEEP $sleepMinutesLeft",
+                        size = 10f,
+                        tracking = 0.16f,
+                        color = palette.accent,
+                        modifier = Modifier.padding(end = 10.dp),
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
                 MonoText(text = rememberClock(), size = 10f, tracking = 0.16f, color = palette.secondaryText)
             }
             BookProgressBar(

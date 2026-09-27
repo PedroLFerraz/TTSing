@@ -32,7 +32,6 @@ private fun Preferences.stringsWithPrefix(prefix: String): Map<String, String> =
 data class AppSettings(
     val libraryFolderUri: String?,
     val speechRate: Float,
-    val pitch: Float,
     val fontScale: Float,
     val readerTheme: ReaderTheme,
     /** Chosen voice name per language code ("en", "pt", "de", …); absent means engine default. */
@@ -74,7 +73,6 @@ class SettingsRepository(private val context: Context) {
     private object Keys {
         val folderUri = stringPreferencesKey("library_folder_uri")
         val speechRate = floatPreferencesKey("speech_rate")
-        val pitch = floatPreferencesKey("pitch")
         val fontScale = floatPreferencesKey("font_scale")
         val readerTheme = stringPreferencesKey("reader_theme")
         val charsPerSecond = floatPreferencesKey("chars_per_second")
@@ -99,7 +97,6 @@ class SettingsRepository(private val context: Context) {
         AppSettings(
             libraryFolderUri = prefs[Keys.folderUri],
             speechRate = prefs[Keys.speechRate] ?: 1.0f,
-            pitch = prefs[Keys.pitch] ?: 1.0f,
             fontScale = prefs[Keys.fontScale] ?: 1.0f,
             readerTheme = prefs[Keys.readerTheme]
                 ?.let { runCatching { ReaderTheme.valueOf(it) }.getOrNull() }
@@ -140,10 +137,6 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setSpeechRate(rate: Float) {
         context.dataStore.edit { it[Keys.speechRate] = rate }
-    }
-
-    suspend fun setPitch(pitch: Float) {
-        context.dataStore.edit { it[Keys.pitch] = pitch }
     }
 
     suspend fun setFontScale(scale: Float) {

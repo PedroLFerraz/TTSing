@@ -18,3 +18,7 @@
 /sample-books/*
 !/sample-books/the-little-garden.epub
 !/sample-books/o-pequeno-jardim.epub
+
+# Bundled Piper voices are 60-120 MB model files fetched by `gradlew fetchPiperVoices`,
+# not source. The app works without them: it just offers no built-in neural voice.
+/app/src/main/assets/piper

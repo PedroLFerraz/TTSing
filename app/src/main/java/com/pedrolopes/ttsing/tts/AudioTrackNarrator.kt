@@ -5,13 +5,23 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.epub.WordSplitter
+import com.pedrolopes.ttsing.tts.piper.PiperSynthesizer
+import com.pedrolopes.ttsing.tts.piper.PiperVoice
+import com.pedrolopes.ttsing.tts.piper.PiperVoices
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 
 /**
@@ -37,17 +47,31 @@ class AudioTrackNarrator(
     private val listener: Narrator.Listener,
 ) : Narrator {
 
+    private val appContext = context.applicationContext
+
     private val ready = CompletableDeferred<Boolean>()
 
-    private val tts: TextToSpeech = TextToSpeech(context.applicationContext) { status ->
+    private val tts: TextToSpeech = TextToSpeech(appContext) { status ->
         ready.complete(status == TextToSpeech.SUCCESS)
     }
 
-    private val synthesizer = PcmSynthesizer(tts, context.applicationContext.cacheDir)
+    private val synthesizer = PcmSynthesizer(tts, appContext.cacheDir)
+
+    /** The voices the app carries itself; null unless one of them is the chosen voice. */
+    private val piper = PiperSynthesizer(appContext)
+    private var piperVoice: PiperVoice? = null
+
     private val player = SentencePlayer()
+
+    /** Held while a sentence is being synthesized: one at a time, whatever the voice. */
+    private val synthesis = Mutex()
 
     private var source: Narrator.ContentSource? = null
     private var readingJob: Job? = null
+
+    /** The coroutine bringing a reading up: cancelled by the next start, and by [pause]. */
+    private var startJob: Job? = null
+    private var releaseJob: Job? = null
 
     /** Playback speed, applied by the engine during synthesis. */
     private var speechRate = 1f
@@ -76,17 +100,21 @@ class AudioTrackNarrator(
         this.locale = locale
         val result = tts.setLanguage(locale)
         val available = result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
-        val match = preferredVoiceName?.let { name -> tts.voices?.firstOrNull { it.name == name } }
-        if (match != null) {
-            tts.voice = match
-        } else {
-            val default = tts.defaultVoice
-            if (default != null && default.locale.language == locale.language) tts.voice = default
+        val bundled = PiperVoices.find(appContext, preferredVoiceName)
+        if (bundled != null && piper.prepare(bundled)) {
+            piperVoice = bundled
+            return true
         }
+        piperVoice = null
+        val voices = tts.voices.orEmpty()
+        val chosenName = preferredVoiceName?.takeIf { name -> voices.any { it.name == name } }
+            ?: VoiceChoice.pick(locale, voices.map { it.info() }, tts.defaultVoice?.info())
+        voices.firstOrNull { it.name == chosenName }?.let { tts.voice = it }
         return available
     }
 
-    override fun currentVoiceName(): String? = runCatching { tts.voice?.name }.getOrNull()
+    override fun currentVoiceName(): String? =
+        piperVoice?.id ?: runCatching { tts.voice?.name }.getOrNull()
 
     override fun defaultVoiceName(locale: Locale): String? = runCatching {
         tts.defaultVoice?.takeIf { it.locale.language == locale.language }?.name
@@ -109,8 +137,7 @@ class AudioTrackNarrator(
             )
 
     override fun voicesFor(locale: Locale): List<Voice> =
-        tts.voices
-            .orEmpty()
+        (tts.voices.orEmpty() + PiperVoices.available(appContext).map { it.asEngineVoice() })
             .filter { it.locale.language == locale.language }
             .sortedWith(
                 compareBy({ it.needsDownload() }, { it.locale.country }, { -it.quality }, { it.name }),
@@ -121,35 +148,54 @@ class AudioTrackNarrator(
         tts.setSpeechRate(rate)
     }
 
-    override fun setPitch(pitch: Float) {
-        tts.setPitch(pitch)
-    }
-
     override fun playFrom(position: ReadingPosition) {
-        scope.launch(Dispatchers.Main) {
+        releaseJob?.cancel()
+        // A start already under way is abandoned before this one begins. Starting is not
+        // instant — it waits for the sentence being spoken to come to a stop, and may have to
+        // load a voice — so two starts overlapping used to leave *both* reading: the book read
+        // by two voices at once, with only the newer one answering to pause. Changing the
+        // speed restarts the reading, so dragging the speed slider was enough to do it.
+        val earlier = startJob
+        startJob = scope.launch(Dispatchers.Main) {
+            runCatching { earlier?.cancelAndJoin() }
             stopReading()
+            // Reloads the model when a long pause let it go; a no-op the rest of the time.
+            piperVoice?.let { if (!piper.prepare(it)) piperVoice = null }
             if (!awaitReady()) {
                 listener.onEngineError("Text-to-speech engine failed to initialize")
                 return@launch
             }
             val src = source ?: return@launch
+            ensureActive()
             isSpeaking = true
             readingJob = scope.launch(Dispatchers.Default) { readLoop(src, position) }
         }
     }
 
-    /** Synthesizes and plays sentence after sentence until the book ends or we're stopped. */
-    private suspend fun readLoop(src: Narrator.ContentSource, from: ReadingPosition) {
+    /**
+     * Synthesizes and plays sentence after sentence until the book ends or we're stopped.
+     *
+     * The next sentence is synthesized *while the current one plays*. Synthesis and playback
+     * are the same length of work for a neural voice, so doing them one after the other left
+     * a silence before every sentence — audible as stuttering, and worse the faster you read,
+     * because the audio gets shorter while the synthesis does not. One sentence of look-ahead
+     * hides it whenever the voice can synthesize faster than it speaks. Only ever one
+     * synthesis runs at a time, which both engines require.
+     */
+    private suspend fun readLoop(src: Narrator.ContentSource, from: ReadingPosition) = coroutineScope {
         var ref = src.firstAtOrAfter(from)
         if (ref == null) {
             finishBook()
-            return
+            return@coroutineScope
         }
         var consecutiveFailures = 0
+        // Sentences waiting to be spoken, each already synthesized or being synthesized now.
+        val ahead = ArrayDeque<Pair<SentenceRef, Deferred<SynthesizedSentence?>>>()
         while (ref != null && coroutineIsActive()) {
             currentRef = ref
-            val audio = synthesizer.synthesize(ref.text, utteranceIdFor(ref))
-            if (!coroutineIsActive()) return
+            val speaking = ref
+            val audio = (ahead.removeFirstOrNull()?.second ?: synthesizeAsync(speaking)).await()
+            if (!coroutineIsActive()) return@coroutineScope
             if (audio == null) {
                 // One refused sentence is skipped rather than stalling the whole book. A run of
                 // them means the voice itself cannot speak — a language whose data never
@@ -164,13 +210,21 @@ class AudioTrackNarrator(
                                 "try another language or voice.",
                         )
                     }
-                    return
+                    return@coroutineScope
                 }
-                ref = src.next(ref.position)
+                ref = src.next(speaking.position)
                 continue
             }
             consecutiveFailures = 0
-            val speaking = ref
+            // Keep the queue topped up before this sentence starts playing. Two sentences of
+            // look-ahead, not one, so a long sentence's synthesis can overlap two short ones.
+            var tail = ahead.lastOrNull()?.first ?: speaking
+            while (ahead.size < LOOK_AHEAD) {
+                val upcoming = src.next(tail.position) ?: break
+                ahead.addLast(upcoming to synthesizeAsync(upcoming))
+                tail = upcoming
+            }
+            val next = ahead.firstOrNull()?.first ?: src.next(speaking.position)
             val marks = estimatedMarks(speaking, audio)
             withMain { listener.onSentenceStart(speaking) }
 
@@ -184,11 +238,28 @@ class AudioTrackNarrator(
                     scope.launch(Dispatchers.Main) { listener.onWordRange(speaking, range) }
                 }
             }
-            if (!completed || !coroutineIsActive()) return
-            ref = src.next(speaking.position)
+            if (!completed || !coroutineIsActive()) return@coroutineScope
+            ref = next
         }
         if (coroutineIsActive()) finishBook()
     }
+
+    /**
+     * One sentence's audio, from whichever voice is in use.
+     *
+     * The lock is what makes look-ahead safe: both synthesizers handle one sentence at a time
+     * — [PcmSynthesizer] keeps a single pending request, which a second call would replace,
+     * leaving the first waiting for a result that never comes. Kotlin's mutex is first-come,
+     * first-served, so the queue is still synthesized in reading order.
+     */
+    private fun CoroutineScope.synthesizeAsync(ref: SentenceRef): Deferred<SynthesizedSentence?> =
+        async(Dispatchers.Default) {
+            synthesis.withLock {
+                piperVoice
+                    ?.let { piper.synthesize(ref.text, speechRate) }
+                    ?: synthesizer.synthesize(ref.text, utteranceIdFor(ref))
+            }
+        }
 
     private fun markAt(
         marks: List<SynthesizedSentence.FrameMark>,
@@ -206,12 +277,27 @@ class AudioTrackNarrator(
     ): List<SynthesizedSentence.FrameMark> {
         val words = WordSplitter.split(ref.text, locale)
         if (words.isEmpty()) return emptyList()
-        val timings = NeuralWordTiming.estimate(
-            sentenceLength = ref.text.length,
-            wordSpans = words,
-            startInBlock = 0,
-            totalDurationMs = audio.durationMs,
-        )
+        val framesPerMsRate = audio.sampleRateHz / 1000f
+        val timings = if (audio.pieces.isEmpty()) {
+            NeuralWordTiming.estimate(
+                sentenceLength = ref.text.length,
+                wordSpans = words,
+                startInBlock = 0,
+                totalDurationMs = audio.durationMs,
+            )
+        } else {
+            // A sentence synthesized in pieces knows when each of them plays, so the estimate
+            // is anchored piece by piece instead of spread across the whole sentence.
+            val pieces = audio.pieces.mapIndexed { index, anchor ->
+                val endFrame = audio.pieces.getOrNull(index + 1)?.frame ?: audio.frameCount
+                NeuralWordTiming.Piece(
+                    chars = anchor.start until anchor.end,
+                    startMs = (anchor.frame / framesPerMsRate).toInt(),
+                    endMs = (endFrame / framesPerMsRate).toInt(),
+                )
+            }
+            NeuralWordTiming.estimateInPieces(pieces, words, startInBlock = 0)
+        }
         val framesPerMs = audio.sampleRateHz / 1000f
         return timings.map { timing ->
             SynthesizedSentence.FrameMark(
@@ -234,11 +320,27 @@ class AudioTrackNarrator(
         kotlinx.coroutines.withContext(Dispatchers.Main) { block() }
 
     override fun pause() {
+        startJob?.cancel()
         isSpeaking = false
         player.stop()
         synthesizer.cancel()
         readingJob?.cancel()
         readingJob = null
+        scheduleModelRelease()
+    }
+
+    /**
+     * Gives the neural model's memory back when the reading has been stopped for a while.
+     * onnxruntime holds around 270 MB once it has been running, which is a lot to sit on in
+     * the background; loading it again costs a second or two, and only after a long pause.
+     */
+    private fun scheduleModelRelease() {
+        if (piperVoice == null) return
+        releaseJob?.cancel()
+        releaseJob = scope.launch(Dispatchers.Default) {
+            delay(IDLE_RELEASE_MS)
+            if (!isSpeaking) piper.release()
+        }
     }
 
     override fun resume() {
@@ -284,6 +386,8 @@ class AudioTrackNarrator(
 
     override fun shutdown() {
         pause()
+        releaseJob?.cancel()
+        piper.release()
         runCatching { tts.shutdown() }
     }
 
@@ -298,6 +402,12 @@ class AudioTrackNarrator(
         "u|${ref.position.chapterIndex}|${ref.position.blockIndex}|${ref.position.sentenceIndex}"
 
     private companion object {
+        /** Sentences synthesized ahead of the one being spoken. */
+        const val LOOK_AHEAD = 2
+
+        /** How long a pause has to run before the neural model's memory is handed back. */
+        const val IDLE_RELEASE_MS = 5 * 60_000L
+
         /** Enough to ride out one odd sentence, few enough to report a broken voice quickly. */
         const val MAX_CONSECUTIVE_FAILURES = 3
     }

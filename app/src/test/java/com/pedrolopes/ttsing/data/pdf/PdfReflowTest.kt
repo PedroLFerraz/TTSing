@@ -418,4 +418,13 @@ class PdfReflowTest {
             PdfReflow.stripNoteMarkers("another.4 To function, Web 2 and 1984.", setOf("4", "2")),
         )
     }
+
+    @Test
+    fun `the digits under a barcode are not read aloud`() {
+        assertTrue(PdfReflow.isBarcode("9 7 8 1 0 9 8 1 5 3 6 4 9 5 5 9 9 9"))
+        assertTrue(PdfReflow.isBarcode("5 1 5 9 9 9>"))
+        assertFalse(PdfReflow.isBarcode("ISBN: 978-1-098-15364-9"))
+        assertFalse(PdfReflow.isBarcode("In 1984, 12 of them came back."))
+        assertFalse(PdfReflow.isBarcode("12"))
+    }
 }

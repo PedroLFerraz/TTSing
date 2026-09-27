@@ -7,6 +7,8 @@ background playback and media-notification controls.
 
 ![TTSing: the library, the reader mid-sentence, a PDF being read, the reading settings sheet, and the news list](docs/screenshots/showcase.png)
 
+![The settings sheet with the sleep timer, the app's own neural voices with their downloads, and the reader with the speed chip in the footer](docs/screenshots/neural-voices.png)
+
 ## Look
 
 Black surfaces, and one yellow — `#FFD400` — reserved for whatever is live: the sentence
@@ -35,8 +37,10 @@ app running, not mockups.
   then the time left in the chapter and in the book. Page counts come from paginating every
   chapter exactly as the pager does, in the background, and are cached per screen size and
   font size; the font slider moves in 5% steps so each size is one cached layout.
-- **Read-aloud TTS** — Android `TextToSpeech`, one utterance per sentence with a small
-  look-ahead queue for smooth speech. The sentence being read turns yellow and the exact
+- **Read-aloud TTS** — Android `TextToSpeech`, one utterance per sentence, with the next
+  sentence synthesized while the current one plays. Synthesis and speech take about the same
+  time for a neural voice, so doing them in turn put a silence before every sentence — worse
+  the faster you read, since the audio gets shorter while the synthesis does not. The sentence being read turns yellow and the exact
   word inverts to black-on-yellow (`onRangeStart` word callbacks). Pages turn automatically
   to keep up with the voice. Sentences end where sentences end: not after "Dr.", "Sra.",
   "pág.", an initial ("W. H. Auden") or a Roman numeral ("Livro IV."), while real one-word
@@ -50,6 +54,27 @@ app running, not mockups.
   (US / GB / …), the currently-speaking voice is marked, each shows quality and
   offline/online, and a "Device default" option returns to the engine's built-in voice.
   Speed goes up to **2.5×**.
+- **The app's own neural voices** — above the device's voices sits "in this app · neural":
+  Piper voices (MIT) run locally by sherpa-onnx, no network and no second app. One ships
+  inside the APK (**pt-BR Faber**), so a Brazilian book reads well out of the box; the others
+  download from that same list with a progress bar, and a long press deletes one to get the
+  space back. A voice downloads 67 MB and keeps 60 MB: they share one copy of espeak-ng's
+  phoneme data instead of carrying 20 MB of it each. Speed is applied by the *model* (`length_scale`), so 2.5× is genuinely
+  faster speech, not a pitched-up recording.
+  Which voices are listed was decided by measurement — real-time factor is synthesis seconds
+  per second of speech, measured with the same sherpa-onnx the app uses:
+
+  | voice | size | RTF |
+  | --- | --- | --- |
+  | Piper *medium* (pt-BR faber/cadu/jeff, en lessac/hfc/amy) | 63 MB | 0.04 – 0.055 |
+  | Piper *high* (en_US ryan) | 121 MB | 0.22 |
+  | Piper medium, int8 dynamic quantization | 19 MB | 0.49 |
+
+  So the catalogue lists medium voices: "high" is five times heavier and is what makes a
+  phone fall behind and leave gaps between sentences, and int8 quantization turned out to be
+  a dead end for VITS — twelve times *slower* than fp32 for a third of the size.
+  `gradlew fetchPiperVoices` fetches the bundled model; it is not in git, and a build without
+  it simply offers no built-in voice.
 - **Time to finish** — worked out the way KOReader does it: pages left × this book's seconds
   per page. The pace is learned from listening to *this* book (normalised to rate 1.0 and
   saved with it), starting from the voice's measured speed until there's enough of the book
@@ -79,6 +104,11 @@ app running, not mockups.
   showing empty pages (there is no OCR).
 - **Tap to start** — tap any paragraph to begin reading from there (from the sentence you
   actually touched, not the top of the page).
+- **Speed in steps** — 0.5× to 2.5×, chosen from a list rather than dragged on a slider:
+  every change re-speaks the sentence, so a slider restarted the reading at every hair of
+  movement. A chip beside the clock steps through the same values without opening the sheet.
+- **Sleep timer** — 15, 30 or 60 minutes, or "until this chapter ends". The footer counts it
+  down, and the reading stops where it is, so falling asleep doesn't lose your place.
 - **News feeds** — the RSS icon in the library opens straight onto the latest stories across
   every subscribed feed (not a feed picker first); "Manage feeds" from there is where you add
   or remove subscriptions. Reads a story the same way as a book. Articles are fetched and

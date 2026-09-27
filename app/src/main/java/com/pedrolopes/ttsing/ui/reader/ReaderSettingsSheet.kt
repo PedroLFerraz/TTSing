@@ -3,7 +3,9 @@ package com.pedrolopes.ttsing.ui.reader
 import android.speech.tts.Voice
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +48,8 @@ import com.pedrolopes.ttsing.data.settings.AppSettings
 import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.LanguageOption
 import com.pedrolopes.ttsing.tts.needsDownload
+import com.pedrolopes.ttsing.tts.piper.CatalogVoice
+import com.pedrolopes.ttsing.tts.piper.DownloadProgress
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.MonoText
 import com.pedrolopes.ttsing.ui.common.ThinProgress
@@ -53,10 +57,13 @@ import com.pedrolopes.ttsing.ui.theme.AppFonts
 import com.pedrolopes.ttsing.ui.theme.Ink
 import java.util.Locale
 
+/** What [ReaderSettingsSheet]'s `sleepMinutesLeft` uses to mean "when the chapter ends". */
+const val CHAPTER_END = -1
+
 /** The order the design lists themes in: the app's own first, the system's last. */
 private val ThemeOrder = listOf(ReaderTheme.DARK, ReaderTheme.LIGHT, ReaderTheme.SEPIA, ReaderTheme.SYSTEM)
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ReaderSettingsSheet(
     settings: AppSettings,
@@ -68,15 +75,25 @@ fun ReaderSettingsSheet(
     /** What the EPUB itself declares, shown so a wrong declaration is visible. */
     declaredLanguageTag: String?,
     availableLanguages: List<LanguageOption>,
+    /** The app's own neural voices for this language, installed or not. */
+    neuralVoices: List<CatalogVoice>,
+    /** Neural voices for the languages this book is not in, to fetch before they're needed. */
+    otherNeuralVoices: List<CatalogVoice>,
+    installedNeuralIds: Set<String>,
+    downloading: DownloadProgress?,
+    onDownloadVoice: (CatalogVoice) -> Unit,
+    onDeleteVoice: (CatalogVoice) -> Unit,
+    /** Minutes left on the sleep timer, or null; -1 means "until the chapter ends". */
+    sleepMinutesLeft: Int?,
+    onSleepTimer: (minutes: Int?, atChapterEnd: Boolean) -> Unit,
     onDismiss: () -> Unit,
     onSpeechRate: (Float) -> Unit,
-    onPitch: (Float) -> Unit,
     onFontScale: (Float) -> Unit,
     onTheme: (ReaderTheme) -> Unit,
     onSelectLanguage: (Locale) -> Unit,
     onInstallVoiceData: () -> Unit,
     onSelectDefaultVoice: () -> Unit,
-    onSelectVoice: (Voice) -> Unit,
+    onSelectVoice: (String) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val storedVoice = settings.voiceFor(activeLocale.language)
@@ -107,8 +124,29 @@ fun ReaderSettingsSheet(
         ) {
             MonoText("Reading settings", size = 13f, tracking = 0.2f, color = Ink.Text, weight = FontWeight.Bold)
 
-            HardSlider("Speed", settings.speechRate, "%.1f×".format(settings.speechRate), 0.5f..2.5f, onSpeechRate)
-            HardSlider("Pitch", settings.pitch, "%.1f".format(settings.pitch), 0.5f..2.0f, onPitch)
+            // Speeds you would actually choose, not a slider: each step is a fresh synthesis
+            // of the sentence being spoken, so sliding through the range restarted the reading
+            // at every hair of movement.
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    MonoText("Speed", size = 11f, tracking = 0.16f)
+                    MonoText(formatSpeed(settings.speechRate), size = 11f, tracking = 0.16f, color = Ink.Live)
+                }
+                SpeedSteps.chunked(5).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { step ->
+                            ThemeChip(
+                                label = formatSpeed(step),
+                                selected = kotlin.math.abs(settings.speechRate - step) < 0.01f,
+                                onClick = { onSpeechRate(step) },
+                            )
+                        }
+                    }
+                }
+            }
             // In 5% steps: every font size is its own page layout, counted across the whole
             // book, so a continuous slider would recount it for every hair of movement.
             HardSlider(
@@ -215,6 +253,33 @@ fun ReaderSettingsSheet(
 
             Hairline(inset = 0.dp)
 
+            MonoText("Sleep timer", size = 11f, tracking = 0.16f)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                val options = listOf<Pair<String, Pair<Int?, Boolean>>>(
+                    "OFF" to (null to false),
+                    "15" to (15 to false),
+                    "30" to (30 to false),
+                    "60" to (60 to false),
+                    "CHAPTER" to (null to true),
+                )
+                options.forEach { (label, setting) ->
+                    val (minutes, chapterEnd) = setting
+                    val selected = when {
+                        chapterEnd -> sleepMinutesLeft == CHAPTER_END
+                        minutes == null -> sleepMinutesLeft == null
+                        // The running timer counts down, so the chip that set it stays lit.
+                        else -> sleepMinutesLeft != null && sleepMinutesLeft != CHAPTER_END &&
+                            sleepMinutesLeft <= minutes && sleepMinutesLeft > minutes - 15
+                    }
+                    ThemeChip(label = label, selected = selected) { onSleepTimer(minutes, chapterEnd) }
+                }
+            }
+
+            Hairline(inset = 0.dp)
+
             val activeLabel = voices.firstOrNull { it.name == currentVoiceName }?.let { voiceTitle(it) }
                 ?: currentVoiceName
             Row(
@@ -224,6 +289,87 @@ fun ReaderSettingsSheet(
             ) {
                 MonoText("Voice — $languageName", size = 11f, tracking = 0.16f)
                 if (activeLabel != null) MonoText("Now speaking", size = 10f, tracking = 0.12f, color = Ink.Live)
+            }
+
+            if (neuralVoices.isNotEmpty()) {
+                MonoText(
+                    "In this app · neural",
+                    size = 10f,
+                    tracking = 0.14f,
+                    color = Ink.Dim,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                )
+                neuralVoices.forEach { voice ->
+                    val installed = voice.id in installedNeuralIds
+                    val busy = downloading?.takeIf { it.id == voice.id && !it.failed }
+                    ChoiceRow(
+                        title = voice.displayName,
+                        subtitle = when {
+                            busy != null -> "Downloading — ${busy.done} of ${voice.megabytes} MB"
+                            downloading?.id == voice.id && downloading.failed -> "Download failed — tap to retry"
+                            installed -> "Offline · in this app"
+                            else -> "Tap to download · ${voice.megabytes} MB"
+                        },
+                        selected = storedVoice == voice.id,
+                        isSpeaking = voice.id == currentVoiceName,
+                        onClick = {
+                            if (installed) onSelectVoice(voice.id) else onDownloadVoice(voice)
+                        },
+                        // A downloaded voice is 40 MB; hold it to get the space back.
+                        onLongClick = { onDeleteVoice(voice) }.takeIf { installed && !voice.bundled },
+                    )
+                    if (busy != null) {
+                        ThinProgress(
+                            fraction = busy.fraction,
+                            modifier = Modifier.padding(start = 3.dp, top = 2.dp, bottom = 6.dp),
+                        )
+                    }
+                }
+            }
+
+            if (otherNeuralVoices.isNotEmpty()) {
+                var showOthers by remember { mutableStateOf(false) }
+                MonoText(
+                    text = if (showOthers) {
+                        "Other languages — tap to hide"
+                    } else {
+                        "Other languages · ${otherNeuralVoices.size} voices — tap to show"
+                    },
+                    size = 10f,
+                    tracking = 0.14f,
+                    color = Ink.Dim,
+                    modifier = Modifier
+                        .clickable { showOthers = !showOthers }
+                        .padding(top = 14.dp, bottom = 4.dp),
+                )
+                if (showOthers) {
+                    otherNeuralVoices.forEach { voice ->
+                        val installed = voice.id in installedNeuralIds
+                        val busy = downloading?.takeIf { it.id == voice.id && !it.failed }
+                        ChoiceRow(
+                            title = "${voice.displayName} · ${voice.locale.displayName()}",
+                            subtitle = when {
+                                busy != null -> "Downloading — ${busy.done} of ${voice.megabytes} MB"
+                                downloading?.id == voice.id && downloading.failed ->
+                                    "Download failed — tap to retry"
+                                // Picking it here would read this book in the wrong language:
+                                // it is offered so it is ready when you open one that needs it.
+                                installed -> "Ready for when you read in ${voice.locale.displayName()}"
+                                else -> "Tap to download · ${voice.megabytes} MB"
+                            },
+                            selected = false,
+                            isSpeaking = false,
+                            onClick = { if (!installed) onDownloadVoice(voice) },
+                            onLongClick = { onDeleteVoice(voice) }.takeIf { installed && !voice.bundled },
+                        )
+                        if (busy != null) {
+                            ThinProgress(
+                                fraction = busy.fraction,
+                                modifier = Modifier.padding(start = 3.dp, top = 2.dp, bottom = 6.dp),
+                            )
+                        }
+                    }
+                }
             }
 
             Column {
@@ -248,7 +394,10 @@ fun ReaderSettingsSheet(
                         modifier = Modifier.padding(top = 10.dp),
                     )
                 } else {
-                    voices.groupBy { regionName(it.locale) }.forEach { (region, list) ->
+                    voices
+                        .filterNot { it.name in installedNeuralIds }
+                        .groupBy { regionName(it.locale) }
+                        .forEach { (region, list) ->
                         MonoText(
                             region,
                             size = 10f,
@@ -262,7 +411,7 @@ fun ReaderSettingsSheet(
                                 subtitle = voice.name,
                                 selected = storedVoice == voice.name,
                                 isSpeaking = voice.name == currentVoiceName,
-                                onClick = { onSelectVoice(voice) },
+                                onClick = { onSelectVoice(voice.name) },
                             )
                         }
                     }
@@ -276,6 +425,7 @@ fun ReaderSettingsSheet(
  * A row you pick from — voice, language. The selected one is marked with a live spine and a
  * raised fill rather than a tick, so the current choice is legible at a glance down the list.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChoiceRow(
     title: String,
@@ -283,13 +433,14 @@ private fun ChoiceRow(
     selected: Boolean,
     isSpeaking: Boolean,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .background(if (selected) Ink.Well else Color.Transparent)
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // The spine runs the full height of whatever the row's text works out to.

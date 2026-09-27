@@ -110,6 +110,10 @@ class ReadingController(context: Context) {
     /** Voices for a language the caller names, so the UI never depends on service timing. */
     fun voicesFor(locale: Locale): List<Voice> = service?.voicesFor(locale).orEmpty()
 
+    /** Stops the reading after [minutes], or at the end of the chapter, or not at all. */
+    fun setSleepTimer(minutes: Int?, atChapterEnd: Boolean = false) =
+        service?.setSleepTimer(minutes, atChapterEnd) ?: Unit
+
     fun currentVoiceName(): String? = service?.currentVoiceName()
 
     fun defaultVoiceNameFor(locale: Locale): String? = service?.defaultVoiceNameFor(locale)
@@ -124,8 +128,8 @@ class ReadingController(context: Context) {
         service?.selectLanguage(languageTag)
     }
 
-    fun applySpeechSettings(rate: Float, pitch: Float) {
-        service?.applySpeechSettings(rate, pitch)
+    fun setSpeechRate(rate: Float) {
+        service?.setSpeechRate(rate)
     }
 
     fun selectVoice(voiceName: String?) {

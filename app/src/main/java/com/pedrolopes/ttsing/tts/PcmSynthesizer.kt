@@ -16,6 +16,11 @@ data class SynthesizedSentence(
     val channelCount: Int,
     /** Word ranges tagged with the audio frame at which each is spoken. */
     val marks: List<FrameMark>,
+    /**
+     * Where each piece of a sentence synthesized in pieces begins, as a frame and the
+     * characters it covers. Empty when the whole sentence was synthesized at once.
+     */
+    val pieces: List<FrameMark> = emptyList(),
 ) {
     /** A word boundary reported by the engine, positioned in audio frames. */
     data class FrameMark(val frame: Int, val start: Int, val end: Int)

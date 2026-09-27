@@ -57,14 +57,12 @@ class CardAudio(context: Context) {
         text: String,
         locale: Locale,
         voiceName: String?,
-        pitch: Float,
     ): File? = withContext(Dispatchers.IO) {
         if (!ready.await()) return@withContext null
 
         tts.setLanguage(locale)
         voiceName?.let { name -> tts.voices?.firstOrNull { it.name == name }?.let { tts.voice = it } }
         tts.setSpeechRate(1f)
-        tts.setPitch(pitch)
 
         val dir = File(appContext.cacheDir, AUDIO_DIR).apply { mkdirs() }
         val utteranceId = "card-${System.currentTimeMillis()}-${text.hashCode()}"
@@ -91,12 +89,11 @@ class CardAudio(context: Context) {
      * Plays [text] out loud so the user can hear the card before saving it. Uses this
      * class's own engine, so read-aloud playback is untouched.
      */
-    suspend fun speak(text: String, locale: Locale, voiceName: String?, pitch: Float) {
+    suspend fun speak(text: String, locale: Locale, voiceName: String?) {
         if (!ready.await()) return
         tts.setLanguage(locale)
         voiceName?.let { name -> tts.voices?.firstOrNull { it.name == name }?.let { tts.voice = it } }
         tts.setSpeechRate(1f)
-        tts.setPitch(pitch)
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "card-preview")
     }
 

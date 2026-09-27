@@ -75,7 +75,42 @@ dependencies {
     implementation(libs.ankidroid.api)
     implementation(libs.sherpa.onnx)
     implementation(libs.pdfbox.android)
+    implementation(libs.commons.compress)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)
+}
+
+/**
+ * Downloads the neural voices the app ships with. They are model files, not source, so they
+ * live outside git: run `gradlew fetchPiperVoices` once on a fresh clone. Without them the
+ * app still builds and runs — it simply offers no built-in neural voice and falls back to
+ * the device's own TTS engine.
+ */
+val piperVoices = listOf("vits-piper-pt_BR-faber-medium")
+
+tasks.register("fetchPiperVoices") {
+    description = "Downloads the bundled Piper voices into src/main/assets/piper."
+    group = "build setup"
+    val assets = layout.projectDirectory.dir("src/main/assets/piper").asFile
+    outputs.dir(assets)
+    doLast {
+        piperVoices.forEach { voice ->
+            val target = File(assets, voice)
+            if (File(target, "tokens.txt").exists()) {
+                logger.lifecycle("$voice already present")
+                return@forEach
+            }
+            val url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$voice.tar.bz2"
+            val archive = File.createTempFile(voice, ".tar.bz2")
+            logger.lifecycle("Downloading $url")
+            uri(url).toURL().openStream().use { input ->
+                archive.outputStream().use { output -> input.copyTo(output) }
+            }
+            assets.mkdirs()
+            exec { commandLine("tar", "-xjf", archive.absolutePath, "-C", assets.absolutePath) }
+            archive.delete()
+            File(target, "MODEL_CARD").delete()
+        }
+    }
 }

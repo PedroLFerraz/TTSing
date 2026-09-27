@@ -47,6 +47,37 @@ object NeuralWordTiming {
         }
     }
 
+    /**
+     * The same estimate, but anchored to the pieces a long sentence was synthesized in.
+     *
+     * Spreading one duration across a whole sentence assumes every character takes the same
+     * time. That drifts on a long sentence, where one clause is spoken faster than another
+     * and each piece's audio ends with a small pause of its own. Given where each piece
+     * starts and ends, the drift is contained within it: a word's estimate can only be as
+     * wrong as its own clause is.
+     */
+    fun estimateInPieces(
+        pieces: List<Piece>,
+        wordSpans: List<SentenceSpan>,
+        startInBlock: Int,
+    ): List<WordTiming> = pieces.flatMap { piece ->
+        val within = wordSpans.filter { it.start >= piece.chars.first && it.start <= piece.chars.last }
+        if (within.isEmpty()) return@flatMap emptyList()
+        val length = piece.chars.last - piece.chars.first + 1
+        val duration = piece.endMs - piece.startMs
+        estimate(
+            sentenceLength = length,
+            wordSpans = within.map { SentenceSpan(it.start - piece.chars.first, it.end - piece.chars.first) },
+            startInBlock = startInBlock + piece.chars.first,
+            totalDurationMs = duration,
+        ).map { timing ->
+            timing.copy(startMs = timing.startMs + piece.startMs, endMs = timing.endMs + piece.startMs)
+        }
+    }
+
+    /** One piece of a sentence: which characters it covers, and when its audio plays. */
+    data class Piece(val chars: IntRange, val startMs: Int, val endMs: Int)
+
     /** Duration in milliseconds of [sampleCount] samples at [sampleRate] Hz. */
     fun durationMs(sampleCount: Int, sampleRate: Int): Int =
         if (sampleRate <= 0) 0 else (sampleCount * 1000L / sampleRate).toInt()
