@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -28,6 +29,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         controller = ReadingController(this)
+        // While the app is on screen the screen stays on and unlocked, so a page being read
+        // along doesn't go dark mid-chapter. The flag only holds while this window is visible:
+        // leave the app and the phone sleeps as usual, with playback carrying on in the service.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // The app is black under both system settings, so the bars are told to draw their
         // icons light rather than left to follow the device's day/night state.
         enableEdgeToEdge(
