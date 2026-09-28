@@ -127,6 +127,8 @@ app running, not mockups.
   Cards land in a `TTSing` deck, tagged with the book.
 - **Background playback** — a foreground media service keeps playing with the screen off,
   with play/pause and ±sentence controls in the notification and on the lock screen.
+- **Screen stays on in the app** — while TTSing is in front the screen never dims or locks,
+  so the page you're reading along with stays put; leave the app and the phone sleeps as usual.
 - **Any language your engine speaks** — the reading language starts from the EPUB's
   `dc:language` and can be overridden per book (see above). Speed and pitch are global;
   the voice is saved per language.
