@@ -1,4 +1,20 @@
-# TTSing
+<p align="center">
+  <img src="docs/brand/icon.svg" width="96" alt="">
+</p>
+
+<h1 align="center">TTSing</h1>
+
+<p align="center">
+  Reads your EPUBs, PDFs and news aloud, highlighting every word as it's spoken.
+</p>
+
+<p align="center">
+  <a href="https://github.com/PedroLFerraz/TTSing/releases/latest"><img src="https://img.shields.io/badge/download-APK-FFD400?labelColor=111111" alt="Download the APK"></a>
+  <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84" alt="Android 8.0+">
+  <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF" alt="Kotlin and Jetpack Compose">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT license"></a>
+</p>
+
 
 An Android app (Kotlin + Jetpack Compose) that reads your EPUB and PDF library aloud with
 text-to-speech, highlighting the current sentence and word karaoke-style and
@@ -135,19 +151,18 @@ app running, not mockups.
   `dc:language` and can be overridden per book (see above). Speed and pitch are global;
   the voice is saved per language.
 
-## Project location note
 
-This project (code + git repo) lives at `C:\Users\Pedro Lopes\AndroidStudioProjects\TTSing`.
-It was moved off the original Desktop path because that path contains an invisible
-`U+2800` character in the `⠀` folder, and the Android Gradle Plugin rejects non-ASCII
-project paths on Windows. See `LEIA-ME.txt` left in the old Desktop folder for how to
-turn that location into a junction pointing here, if you want it to appear there again.
+## Install
+
+Download `TTSing.apk` from the [latest release](https://github.com/PedroLFerraz/TTSing/releases/latest),
+open it on the phone and allow the install from that source. It needs Android 8.0 or newer. To build
+it yourself, see below.
 
 ## Requirements
 
 - Android Studio (uses its bundled JDK 21 — `gradle.properties` pins
   `org.gradle.java.home` to `C:\Program Files\Android\Android Studio\jbr`).
-- Android SDK platform 36 + build-tools 36.0.0 (already installed).
+- Android SDK platform 36 + build-tools 36.0.0.
 - A device or emulator running Android 8.0 (API 26) or newer, with a TTS engine and the
   Portuguese/English voice data installed (Settings → System → Languages →
   Text-to-speech). **Note:** stock emulator images often ship English only — for
@@ -164,7 +179,6 @@ turn that location into a junction pointing here, if you want it to appear there
 Open the folder in Android Studio and Run, or from a terminal:
 
 ```powershell
-cd "C:\Users\Pedro Lopes\AndroidStudioProjects\TTSing"
 .\gradlew.bat assembleDebug     # build the APK
 .\gradlew.bat test              # run the JVM unit tests
 ```
@@ -225,3 +239,15 @@ and page numbers, de-hyphenation, paragraph and page breaks, headings, where fig
 and which pictures are decoration), whole-book page
 arithmetic, and the speaking-speed estimate — including a replay of sentences logged on a
 device, against the old average and the new one. Run with `.\gradlew.bat test`.
+
+## License
+
+TTSing's own code is MIT; see [LICENSE](LICENSE). The APK also carries:
+
+- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0), which runs the neural voices;
+- the [Piper](https://github.com/rhasspy/piper) voice pt-BR Faber, under the license in its model card,
+  and [espeak-ng](https://github.com/espeak-ng/espeak-ng)'s phoneme data (GPL-3.0), unmodified;
+- [PDFBox-Android](https://github.com/TomRoush/PdfBox-Android) and Apache Commons Compress (Apache-2.0),
+  [jsoup](https://jsoup.org/) (MIT), the [AnkiDroid API](https://github.com/ankidroid/Anki-Android/tree/main/api)
+  (LGPL-3.0), and AndroidX and Kotlin coroutines (Apache-2.0);
+- the fonts JetBrains Mono, Space Grotesk and Source Serif 4 (SIL Open Font License 1.1).
