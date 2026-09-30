@@ -316,26 +316,23 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     }
 
     /**
-     * The voice to read [locale] with: the reader's own choice, or — the first time, before
-     * they have made one — a neural voice the app carries for that language, which is the
-     * reason it carries one. Remembered, so it shows as chosen in the picker and can be
-     * changed like any other.
+     * The voice to read [locale] with: the last one the reader chose for that language, or
+     * null for the engine's default when that is what they chose — or all they have had.
+     *
+     * No voice is put in place of that. Opening a book used to start it with the neural voice
+     * the app carries for its language, and since "Device default" is stored as no choice at
+     * all, going back to the device's voice lasted only until the next book: the neural one
+     * was chosen again. The device's voices are the better ones for fast listening, so which
+     * voice reads is left entirely to the reader.
      */
     private suspend fun chosenVoiceFor(locale: Locale): String? {
-        val settings = app.settings.settings.first()
-        settings.voiceFor(locale.language)?.let { stored ->
-            // A voice of ours whose files were deleted is no longer a choice; anything else
-            // is the engine's business and is passed through as it always was.
-            val ours = PiperCatalog.find(stored)
-            if (ours == null || PiperVoices.find(this, stored) != null) return stored
-            app.settings.setVoice(locale.language, null)
-        }
-        val own = PiperVoices.available(this)
-            .filter { it.locale.language == locale.language }
-            .minByOrNull { if (it.locale.country == locale.country) 0 else 1 }
-            ?: return null
-        app.settings.setVoice(locale.language, own.id)
-        return own.id
+        val stored = app.settings.settings.first().voiceFor(locale.language) ?: return null
+        // A voice of ours whose files were deleted is no longer a choice; anything else is the
+        // engine's business and is passed through as it always was.
+        val ours = PiperCatalog.find(stored)
+        if (ours == null || PiperVoices.find(this, stored) != null) return stored
+        app.settings.setVoice(locale.language, null)
+        return null
     }
 
     /** Selects a voice by name, or null to fall back to the engine default. */

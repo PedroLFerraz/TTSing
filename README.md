@@ -53,10 +53,12 @@ app running, not mockups.
 - **Voice picker** — in the reader's settings sheet, voices are grouped by region
   (US / GB / …), the currently-speaking voice is marked, each shows quality and
   offline/online, and a "Device default" option returns to the engine's built-in voice.
+  Whichever you pick — "Device default" included — stays until you pick another; a book
+  starts on the device's voice until you do, since those hold up best at high speeds.
   Speed goes up to **2.5×**.
 - **The app's own neural voices** — above the device's voices sits "in this app · neural":
   Piper voices (MIT) run locally by sherpa-onnx, no network and no second app. One ships
-  inside the APK (**pt-BR Faber**), so a Brazilian book reads well out of the box; the others
+  inside the APK (**pt-BR Faber**), so a Brazilian book can read well out of the box; the others
   download from that same list with a progress bar, and a long press deletes one to get the
   space back. A voice downloads 67 MB and keeps 60 MB: they share one copy of espeak-ng's
   phoneme data instead of carrying 20 MB of it each. Speed is applied by the *model* (`length_scale`), so 2.5× is genuinely
