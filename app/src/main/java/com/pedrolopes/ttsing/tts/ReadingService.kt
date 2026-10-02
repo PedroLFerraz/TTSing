@@ -534,6 +534,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     }
 
     override fun onWordRange(ref: SentenceRef, rangeInBlock: IntRange) {
+        // A word of the sentence just abandoned (a tap elsewhere) arrives late; applied to the
+        // new sentence's block it would mark, and turn the page to, the wrong place.
+        if (ref.position != _state.value.position) return
         _state.value = _state.value.copy(wordRange = rangeInBlock)
     }
 
