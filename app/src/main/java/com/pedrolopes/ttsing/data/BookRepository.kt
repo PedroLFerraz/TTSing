@@ -187,6 +187,7 @@ class BookRepository(
                     book.loadSection(index)
                         .blocks
                         .filterIsInstance<Block.Text>()
+                        .filter { it.sentences.isNotEmpty() }
                         .sumOf { it.text.length }
                 }.getOrDefault(0)
             }

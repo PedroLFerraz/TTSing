@@ -96,9 +96,12 @@ internal fun PdfPageView(
     val listState = rememberLazyListState()
 
     // What the voice is reading, as rectangles on the pages.
-    val voiceGeometry by produceState<SectionGeometry?>(null, pdf, voiceChapter) {
-        value = voiceChapter?.let { pdf.geometry(it) }
+    // Tagged with its chapter: until a newly tapped chapter's geometry loads, the old one's
+    // would place the new block on the old chapter's pages and scroll the reader back there.
+    val loadedGeometry by produceState<Pair<Int, SectionGeometry>?>(null, pdf, voiceChapter) {
+        value = voiceChapter?.let { it to pdf.geometry(it) }
     }
+    val voiceGeometry = loadedGeometry?.takeIf { it.first == voiceChapter }?.second
     val sentenceRects = remember(voiceGeometry, activeBlockIndex, sentenceRange) {
         rectsFor(voiceGeometry, activeBlockIndex, sentenceRange)
     }

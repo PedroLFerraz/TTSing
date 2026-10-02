@@ -2,6 +2,7 @@ package com.pedrolopes.ttsing.ui.reader
 
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
@@ -36,6 +37,7 @@ fun blockFontSizeSp(kind: Block.Text.Kind): Float = when (kind) {
     Block.Text.Kind.HEADING_3 -> 19f
     Block.Text.Kind.QUOTE -> 17f
     Block.Text.Kind.PARAGRAPH -> 19f
+    Block.Text.Kind.CODE -> 15f
 }
 
 fun blockVerticalPadding(kind: Block.Text.Kind): Dp = when (kind) {
@@ -43,15 +45,22 @@ fun blockVerticalPadding(kind: Block.Text.Kind): Dp = when (kind) {
     else -> 12.dp
 }
 
+/** Extra left inset a block is drawn with; measured off the width too, so pages match. */
+fun blockStartIndent(kind: Block.Text.Kind): Dp = when (kind) {
+    Block.Text.Kind.QUOTE -> 12.dp
+    else -> 0.dp
+}
+
 fun blockTextStyle(kind: Block.Text.Kind, fontScale: Float): TextStyle {
     val sizeValue = blockFontSizeSp(kind) * fontScale
-    val isBody = kind == Block.Text.Kind.PARAGRAPH || kind == Block.Text.Kind.QUOTE
+    val isBody = kind == Block.Text.Kind.PARAGRAPH || kind == Block.Text.Kind.QUOTE || kind == Block.Text.Kind.CODE
     return TextStyle(
         fontSize = sizeValue.sp,
         lineHeight = (sizeValue * LINE_HEIGHT_EM).sp,
         fontWeight = if (isBody) FontWeight.Normal else FontWeight.SemiBold,
-        // The whole page is the book's own voice, headings included, so it is all serif.
-        fontFamily = AppFonts.Serif,
+        // The whole page is the book's own voice, headings included, so it is all serif;
+        // only code keeps the fixed pitch it is written in.
+        fontFamily = if (kind == Block.Text.Kind.CODE) FontFamily.Monospace else AppFonts.Serif,
     )
 }
 
@@ -95,7 +104,10 @@ fun paginateChapter(
                 if (block.text.isBlank()) return@forEachIndexed
                 val style = blockTextStyle(block.kind, fontScale)
                 val vPad = with(density) { blockVerticalPadding(block.kind).toPx() } * 2
-                val layout = measurer.measure(text = block.text, style = style, constraints = widthConstraints)
+                val indentPx = with(density) { blockStartIndent(block.kind).roundToPx() }
+                val constraints = if (indentPx == 0) widthConstraints
+                else Constraints(maxWidth = (contentWidthPx - indentPx).coerceAtLeast(1))
+                val layout = measurer.measure(text = block.text, style = style, constraints = constraints)
                 val lineCount = layout.lineCount
                 var startLine = 0
                 while (startLine < lineCount) {

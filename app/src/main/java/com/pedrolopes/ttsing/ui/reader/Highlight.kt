@@ -4,7 +4,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 
 /**
  * Builds the chapter text with the current sentence marked — tinted, washed, or both — and
@@ -42,7 +41,8 @@ fun highlightedText(
         val end = (range.last + 1).coerceIn(start, text.length)
         if (end > start) {
             addStyle(
-                SpanStyle(background = wordColor, color = wordTextColor, fontWeight = FontWeight.SemiBold),
+                // Colour only: a heavier weight is wider and makes the line re-wrap.
+                SpanStyle(background = wordColor, color = wordTextColor),
                 start,
                 end,
             )

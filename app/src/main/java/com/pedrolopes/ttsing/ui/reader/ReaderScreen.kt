@@ -89,6 +89,7 @@ import com.pedrolopes.ttsing.data.settings.AppSettings
 import com.pedrolopes.ttsing.data.settings.PdfView
 import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.ReadingController
+import com.pedrolopes.ttsing.tts.SpeedSteps
 import com.pedrolopes.ttsing.tts.piper.PiperCatalog
 import com.pedrolopes.ttsing.tts.piper.PiperDownloads
 import com.pedrolopes.ttsing.tts.piper.PiperVoices
@@ -366,7 +367,7 @@ fun ReaderScreen(
                     sleepMinutesLeft = sleepMinutesLeft,
                     palette = palette,
                     onCycleSpeed = {
-                        val next = nextSpeed(settings.speechRate)
+                        val next = SpeedSteps.next(settings.speechRate)
                         scope.launch { app.settings.setSpeechRate(next) }
                         controller.setSpeechRate(next)
                     },
@@ -501,12 +502,25 @@ fun ReaderScreen(
             defaultVoiceName = remember(languageCode, connected) { controller.defaultVoiceNameFor(activeLocale) },
             activeLocale = activeLocale,
             declaredLanguageTag = ui.languageTag,
+            languageOverridden = bookId in settings.bookLanguages,
             availableLanguages = remember(connected) { controller.availableLanguages() },
             onSelectLanguage = { locale ->
+                val tag = locale.toLanguageTag()
                 // Persist first: settings drive the UI, so the picker updates even if the
-                // service is not bound yet.
-                scope.launch { app.settings.setBookLanguage(bookId, locale.toLanguageTag()) }
-                controller.selectLanguage(locale.toLanguageTag())
+                // service is not bound yet. The variant is remembered for every book in that
+                // language; only a different language is this book's own exception.
+                scope.launch {
+                    val ownLanguage = locale.language == (declaredLocale ?: Locale.getDefault()).language
+                    app.settings.setBookLanguage(bookId, if (ownLanguage) null else tag)
+                    app.settings.setVariant(tag)
+                }
+                controller.selectLanguage(tag)
+            },
+            onUseBookLanguage = {
+                val restored = settings.copy(bookLanguages = settings.bookLanguages - bookId)
+                    .localeFor(bookId, declaredLocale ?: Locale.getDefault())
+                scope.launch { app.settings.setBookLanguage(bookId, null) }
+                controller.selectLanguage(restored.toLanguageTag())
             },
             onInstallVoiceData = { openTtsDataInstaller(context) },
             onDismiss = { showSettings = false },
@@ -533,6 +547,7 @@ fun ReaderScreen(
                 scope.launch { app.settings.setVoice(languageCode, name) }
                 controller.selectVoice(name)
             },
+            onToggleFavorite = { name -> scope.launch { app.settings.toggleFavoriteVoice(name) } },
             neuralVoices = PiperCatalog.forLanguage(activeLocale),
             otherNeuralVoices = PiperCatalog.otherLanguages(activeLocale),
             installedNeuralIds = installedNeural,
@@ -560,19 +575,6 @@ fun ReaderScreen(
     }
 }
 
-/** Every speed the reader offers, in the footer's chip and in the settings sheet. */
-val SpeedSteps = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.25f, 2.5f)
-
-/** The next speed up from [rate], wrapping round to the slowest past the top. */
-private fun nextSpeed(rate: Float): Float =
-    SpeedSteps.firstOrNull { it > rate + 0.01f } ?: SpeedSteps.first()
-
-/** "1×", "1.5×", "2.25×" — no trailing zeros, because the chip is tiny. */
-fun formatSpeed(rate: Float): String {
-    val rounded = (rate * 100).roundToInt() / 100f
-    val text = if (rounded == rounded.toInt().toFloat()) "${rounded.toInt()}" else "$rounded"
-    return "$text×"
-}
 
 /** One page of the continuous book: which chapter it belongs to, and what is on it. */
 private data class BookPage(
@@ -792,9 +794,7 @@ private fun PageView(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = blockVerticalPadding(slice.kind))
-                            .then(
-                                if (slice.kind == Block.Text.Kind.QUOTE) Modifier.padding(start = 12.dp) else Modifier,
-                            )
+                            .padding(start = blockStartIndent(slice.kind))
                             // Innermost, so pointer coordinates line up with the glyphs.
                             .pointerInput(slice, full, chapterIndex) {
                                 fun offsetInBlock(point: Offset): Int? =
@@ -1082,7 +1082,7 @@ private fun ReaderFooter(
                 // Reading speed is the setting that gets changed most, and it used to be three
                 // taps deep in the settings sheet. Here it cycles through the usual steps.
                 MonoText(
-                    text = formatSpeed(speechRate),
+                    text = SpeedSteps.format(speechRate),
                     size = 10f,
                     tracking = 0.16f,
                     color = if (speechRate == 1f) palette.secondaryText else palette.accent,

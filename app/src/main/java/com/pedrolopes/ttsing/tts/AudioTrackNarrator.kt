@@ -5,6 +5,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.epub.WordSplitter
+import com.pedrolopes.ttsing.tts.piper.PiperCatalog
 import com.pedrolopes.ttsing.tts.piper.PiperSynthesizer
 import com.pedrolopes.ttsing.tts.piper.PiperVoice
 import com.pedrolopes.ttsing.tts.piper.PiperVoices
@@ -120,21 +121,16 @@ class AudioTrackNarrator(
         tts.defaultVoice?.takeIf { it.locale.language == locale.language }?.name
     }.getOrNull()
 
-    override fun availableLanguages(): List<LanguageOption> =
-        tts.voices
-            .orEmpty()
-            .filter { it.locale.language.isNotEmpty() }
-            .groupBy { it.locale.language }
-            .map { (language, voices) ->
-                LanguageOption(
-                    locale = Locale.forLanguageTag(language),
-                    downloaded = voices.any { !it.needsDownload() },
-                )
-            }
-            .sortedWith(
-                compareByDescending<LanguageOption> { it.downloaded }
-                    .thenBy { it.locale.displayLanguage.lowercase() },
-            )
+    /**
+     * Every language variant there is a voice for — "Portuguese (Brazil)" and "Portuguese
+     * (Portugal)" apart, since a bare "pt" leaves the engine to pick one — device and neural.
+     */
+    override fun availableLanguages(): List<LanguageOption> {
+        val installedNeural = PiperVoices.available(appContext).map { it.id }.toSet()
+        val offered = tts.voices.orEmpty().map { it.locale to !it.needsDownload() } +
+            PiperCatalog.voices.map { it.locale to (it.id in installedNeural) }
+        return LanguageOption.variantsOf(offered)
+    }
 
     override fun voicesFor(locale: Locale): List<Voice> =
         (tts.voices.orEmpty() + PiperVoices.available(appContext).map { it.asEngineVoice() })
@@ -256,8 +252,8 @@ class AudioTrackNarrator(
         async(Dispatchers.Default) {
             synthesis.withLock {
                 piperVoice
-                    ?.let { piper.synthesize(ref.text, speechRate) }
-                    ?: synthesizer.synthesize(ref.text, utteranceIdFor(ref))
+                    ?.let { piper.synthesize(ref.text, speechRate, locale) }
+                    ?: synthesizer.synthesize(SpokenText.normalize(ref.text, locale), utteranceIdFor(ref))
             }
         }
 

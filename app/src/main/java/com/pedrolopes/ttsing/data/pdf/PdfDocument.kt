@@ -5,30 +5,17 @@ import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import com.pedrolopes.ttsing.data.book.BookDocument
+import com.pedrolopes.ttsing.data.pdf.PdfExtract.FigureKey
 import com.pedrolopes.ttsing.data.epub.Chapter
 import com.pedrolopes.ttsing.data.epub.TocEntry
-import com.tom_roush.pdfbox.contentstream.PDFStreamEngine
-import com.tom_roush.pdfbox.contentstream.operator.DrawObject
-import com.tom_roush.pdfbox.contentstream.operator.Operator
-import com.tom_roush.pdfbox.contentstream.operator.state.Concatenate
-import com.tom_roush.pdfbox.contentstream.operator.state.Restore
-import com.tom_roush.pdfbox.contentstream.operator.state.Save
-import com.tom_roush.pdfbox.contentstream.operator.state.SetGraphicsStateParameters
-import com.tom_roush.pdfbox.contentstream.operator.state.SetMatrix
-import com.tom_roush.pdfbox.cos.COSBase
-import com.tom_roush.pdfbox.cos.COSName
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
-import com.tom_roush.pdfbox.pdmodel.PDPage
-import com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject
-import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
-import com.tom_roush.pdfbox.text.PDFTextStripper
-import com.tom_roush.pdfbox.text.TextPosition
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineNode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.Writer
 import java.util.Locale
 
 /**
@@ -60,9 +47,11 @@ class PdfDocument private constructor(
     /** Every page's size in points as displayed: cropped, and turned by its rotation. */
     private val pageSizes: List<PageSize>,
     override val unreadableReason: String?,
+    /** Bookmark titles, for telling running heads from text ([PdfReflow.titleKey]). */
+    private val titles: Set<String>,
 ) : BookDocument {
 
-    private data class Section(val title: String, val firstPage: Int, val endPage: Int)
+    internal data class Section(val title: String, val firstPage: Int, val endPage: Int)
 
     private val lock = Any()
 
@@ -75,6 +64,9 @@ class PdfDocument private constructor(
 
     override val toc: List<TocEntry> = sections.mapIndexed { index, section -> TocEntry(section.title, index) }
 
+    override fun skipsWhenPlayingOn(section: Int): Boolean =
+        sections.getOrNull(section)?.let { PdfMetadata.isApparatus(it.title) } == true
+
     override suspend fun loadSection(index: Int, locale: Locale): Chapter = withContext(Dispatchers.IO) {
         val section = sections.getOrNull(index)
             ?: throw IllegalArgumentException("Section $index out of range")
@@ -84,7 +76,7 @@ class PdfDocument private constructor(
             // The book's running headers, plus anything that repeats within this section only
             // (a chapter title used as its own running header).
             val furniture = book.furniture + PdfReflow.detectFurniture(pages)
-            PdfReflow.reflow(pages, furniture, locale, book.bodySize)
+            PdfReflow.reflow(pages, furniture, locale, book.bodySize, titles)
         }
         synchronized(geometries) { geometries[index] = reflowed.geometry }
         Chapter(index, section.title, reflowed.blocks)
@@ -228,13 +220,13 @@ class PdfDocument private constructor(
                 val info = pdf.documentInformation
                 val title = PdfMetadata.title(info?.title, fallbackTitle)
                 val author = PdfMetadata.author(info?.author)
-                val language = pdf.documentCatalog?.language?.trim()?.takeIf { it.isNotEmpty() }
-                val sections = outlineSections(pdf) ?: pageRunSections(pdf.numberOfPages)
+                val language = PdfMetadata.language(pdf.documentCatalog?.language)
+                val sections = sections(pdf)
                 val pageSizes = pdf.pages.map { page ->
                     val box = page.cropBox
                     if (page.rotation % 180 != 0) PageSize(box.height, box.width) else PageSize(box.width, box.height)
                 }
-                return PdfDocument(file, pdf, title, author, language, sections, pageSizes, scannedReason(pdf))
+                return PdfDocument(file, pdf, title, author, language, sections, pageSizes, scannedReason(pdf), outlineTitles(pdf))
             } catch (e: Exception) {
                 pdf.close()
                 throw e
@@ -265,19 +257,35 @@ class PdfDocument private constructor(
             }
         }.getOrNull()
 
-        /** Top-level bookmarks as sections, or null when there are too few to be useful. */
+        /** The PDF's sections: its bookmarks, or runs of pages when it has too few. */
+        internal fun sections(pdf: PDDocument): List<Section> =
+            outlineSections(pdf) ?: pageRunSections(pdf.numberOfPages)
+
+        /**
+         * Bookmarks as sections, or null when there are too few to be useful. A section should
+         * be a chapter: long enough to settle into, short enough to find your way in.
+         */
         private fun outlineSections(pdf: PDDocument): List<Section>? {
             val outline = pdf.documentCatalog?.documentOutline ?: return null
-            fun mark(item: com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem): Pair<String, Int>? {
+            val pageCount = pdf.numberOfPages
+            fun mark(item: PDOutlineItem): Pair<String, Int>? {
                 val page = runCatching { item.findDestinationPage(pdf) }.getOrNull() ?: return null
                 val index = pdf.pages.indexOf(page)
                 return if (index < 0) null else (item.title?.trim().orEmpty()) to index
             }
-            // A book's top level is often its Parts, each a hundred pages; its chapters are the
-            // next level down. So a top-level entry with children gives way to them: the part
-            // keeps only its own opening pages, and each chapter is a section.
-            val marks = outline.children().flatMap { item ->
-                listOfNotNull(mark(item)) + item.children().mapNotNull { mark(it) }
+            val top = outline.children().map { item -> mark(item) to item.children().mapNotNull { mark(it) }.sortedBy { it.second } }
+                .filter { (own, children) -> own != null || children.isNotEmpty() }
+            val starts = top.map { (own, children) -> own?.second ?: children.first().second }
+            // A book's top level is often its Parts, each a hundred pages, with the chapters
+            // one level down; then each chapter is a section and the part keeps only its own
+            // opening pages. But when the top level already is the chapters, the level below
+            // is their sub-headings, a page or two each, and the chapter stays whole.
+            val marks = top.flatMapIndexed { i, (own, children) ->
+                val next = starts.drop(i + 1).firstOrNull { it > starts[i] } ?: pageCount
+                val childPages = if (children.isEmpty()) 0f else (next - children.first().second).toFloat() / children.size
+                val descend = children.isNotEmpty() &&
+                    (own == null || partTitle.containsMatchIn(own.first) || childPages >= MIN_CHAPTER_PAGES)
+                listOfNotNull(own) + if (descend) children else emptyList()
             }
                 .sortedBy { it.second }
                 // Where a part and its first chapter open on the same page, the chapter names it.
@@ -285,11 +293,33 @@ class PdfDocument private constructor(
                 .map { (_, same) -> same.last() }
             if (marks.size < 2) return null
 
-            val starts = if (marks.first().second > 0) listOf("Start" to 0) + marks else marks
-            return starts.mapIndexed { i, (title, first) ->
-                val end = starts.getOrNull(i + 1)?.second ?: pdf.numberOfPages
+            val sections = if (marks.first().second > 0) listOf("Start" to 0) + marks else marks
+            return sections.mapIndexed { i, (title, first) ->
+                val end = sections.getOrNull(i + 1)?.second ?: pageCount
                 Section(title.ifEmpty { "Section ${i + 1}" }, first, end)
             }.filter { it.endPage > it.firstPage }
+        }
+
+        private val partTitle = Regex("^(part|parte|book|livro|volume|tomo)\\b", RegexOption.IGNORE_CASE)
+
+        /** Sub-entries shorter than this, on average, are a chapter's headings, not chapters. */
+        private const val MIN_CHAPTER_PAGES = 8f
+
+        /**
+         * Every bookmark title, at any depth, as [PdfReflow.titleKey] writes it: running heads
+         * repeat these, and that is how they are told from the text.
+         */
+        internal fun outlineTitles(pdf: PDDocument): Set<String> {
+            val outline = pdf.documentCatalog?.documentOutline ?: return emptySet()
+            val titles = HashSet<String>()
+            fun walk(node: PDOutlineNode, depth: Int) {
+                for (item in node.children()) {
+                    item.title?.let { PdfReflow.titleKey(it) }?.takeIf { it.length >= 3 }?.let { titles.add(it) }
+                    if (depth < 4) walk(item, depth + 1)
+                }
+            }
+            runCatching { walk(outline, 0) }
+            return titles
         }
 
         private fun pageRunSections(pageCount: Int): List<Section> =
@@ -313,221 +343,7 @@ class PdfDocument private constructor(
         /** Figures are drawn about this wide: sharp on a phone, light enough to keep a few. */
         private const val FIGURE_WIDTH_PX = 1200f
 
-        /** Positioned lines for pages [first, end), and with [withImages] where pictures sit. */
-        private fun extract(pdf: PDDocument, first: Int, end: Int, withImages: Boolean = false): List<PdfPage> {
-            if (end <= first) return emptyList()
-            val collector = LineCollector()
-            collector.startPage = first + 1
-            collector.endPage = end
-            collector.writeText(pdf, NullWriter)
-            if (!withImages) return collector.pages
-            return collector.pages.map { page ->
-                val images = runCatching { ImageLocator(page.index).locate(pdf.getPage(page.index)) }
-                    .getOrDefault(emptyList())
-                page.copy(images = images)
-            }
-        }
-    }
-
-    /**
-     * Collects each line PDFBox finds, with where it sits and how big it is, instead of the
-     * flat string [PDFTextStripper] normally produces. Content order rather than sorting by
-     * position, because producers write columns in reading order and sorting interleaves them.
-     */
-    private class LineCollector : PDFTextStripper() {
-        val pages = mutableListOf<PdfPage>()
-        private var lines = mutableListOf<PdfLine>()
-        private var text = StringBuilder()
-        private var lineX = 0f
-        private var lineY = 0f
-        private var lineRight = 0f
-        private val sizes = mutableListOf<Float>()
-        private var glyphs = mutableListOf<Glyph>()
-        private var pageWidth = 0f
-        private var pageHeight = 0f
-
-        /** The page's crop box size before its rotation, and the rotation it is displayed with. */
-        private var storedWidth = 0f
-        private var storedHeight = 0f
-        private var rotation = 0
-
-        init {
-            sortByPosition = false
-            suppressDuplicateOverlappingText = true
-        }
-
-        /**
-         * Reads a page turned by /Rotate as if it were upright. PDFBox lays a turned page's
-         * text out along the turned axes, which splits every line into single letters; read
-         * upright, its lines come out whole, and only the glyph boxes are turned to match the
-         * page as displayed.
-         */
-        override fun processPage(page: PDPage) {
-            rotation = ((page.rotation % 360) + 360) % 360
-            if (rotation == 0) return super.processPage(page)
-            page.rotation = 0
-            try {
-                super.processPage(page)
-            } finally {
-                page.rotation = rotation
-            }
-        }
-
-        override fun startPage(page: PDPage) {
-            super.startPage(page)
-            lines = mutableListOf()
-            resetLine()
-            // Lines are measured on the upright page (see processPage), so the page is too.
-            val box = page.cropBox
-            storedWidth = box.width
-            storedHeight = box.height
-            pageWidth = box.width
-            pageHeight = box.height
-        }
-
-        override fun writeString(string: String, textPositions: MutableList<TextPosition>) {
-            if (textPositions.isEmpty() || string.isEmpty()) return
-            val first = textPositions.first()
-            val last = textPositions.last()
-            if (text.isEmpty()) {
-                lineX = first.xDirAdj
-                lineY = first.yDirAdj
-            }
-            text.append(string)
-            lineRight = maxOf(lineRight, last.xDirAdj + last.widthDirAdj)
-            textPositions.forEach { position ->
-                val size = position.fontSizeInPt.takeIf { it > 1f } ?: position.heightDir
-                if (size > 0f) sizes.add(size)
-                addGlyphs(position, size)
-            }
-        }
-
-        /**
-         * The position's characters with their boxes as displayed. PDFBox measures from the
-         * crop box's top-left before the page's rotation, so a rotated page's boxes are turned
-         * with it. The box spans the line's ascent and descent rather than the ink, so a marked
-         * word reads as one band rather than letters of different heights.
-         */
-        private fun addGlyphs(position: TextPosition, size: Float) {
-            val height = if (size > 0f) size else return
-            val left = position.xDirAdj
-            val right = left + position.widthDirAdj
-            val top = position.yDirAdj - height * 0.8f
-            val bottom = position.yDirAdj + height * 0.22f
-            val (l, t, r, b) = when (rotation) {
-                90 -> listOf(storedHeight - bottom, left, storedHeight - top, right)
-                180 -> listOf(storedWidth - right, storedHeight - bottom, storedWidth - left, storedHeight - top)
-                270 -> listOf(top, storedWidth - right, bottom, storedWidth - left)
-                else -> listOf(left, top, right, bottom)
-            }
-            glyphs.addAll(Glyph.split(position.unicode ?: return, l, t, r, b))
-        }
-
-        override fun writeWordSeparator() {
-            if (text.isNotEmpty() && !text.last().isWhitespace()) text.append(' ')
-        }
-
-        override fun writeLineSeparator() = finishLine()
-
-        override fun endPage(page: PDPage) {
-            finishLine()
-            pages.add(PdfPage(currentPageNo - 1, pageWidth, pageHeight, lines))
-            super.endPage(page)
-        }
-
-        private fun finishLine() {
-            val content = text.toString().trim()
-            if (content.isNotEmpty()) {
-                val size = sizes.sorted().let { if (it.isEmpty()) 0f else it[it.size / 2] }
-                lines.add(PdfLine(content, lineX, lineY, lineRight, size, glyphs))
-            }
-            resetLine()
-        }
-
-        private fun resetLine() {
-            text = StringBuilder()
-            lineRight = 0f
-            sizes.clear()
-            glyphs = mutableListOf()
-        }
-    }
-
-    /**
-     * A figure's page and rectangle, in top-down points from the page's top-left corner —
-     * all the renderer needs, so the key can travel through the reader as a plain string.
-     */
-    private data class FigureKey(val page: Int, val left: Float, val top: Float, val width: Float, val height: Float) {
-        fun encode(): String = "$PREFIX$page:$left:$top:$width:$height"
-
-        companion object {
-            private const val PREFIX = "pdf-figure:"
-
-            fun parse(key: String): FigureKey? {
-                if (!key.startsWith(PREFIX)) return null
-                val parts = key.removePrefix(PREFIX).split(':')
-                if (parts.size != 5) return null
-                val page = parts[0].toIntOrNull() ?: return null
-                val numbers = parts.drop(1).map { it.toFloatOrNull() ?: return null }
-                return FigureKey(page, numbers[0], numbers[1], numbers[2], numbers[3])
-            }
-        }
-    }
-
-    /**
-     * Walks a page's drawing instructions and notes where each picture lands. A picture is
-     * drawn as a unit square stretched by the current transformation, so its rectangle on the
-     * page is that square's four corners after the transform; pictures inside form objects
-     * are followed in.
-     */
-    private class ImageLocator(private val pageIndex: Int) : PDFStreamEngine() {
-        private val found = mutableListOf<PdfImage>()
-        private var cropLeft = 0f
-        private var cropTop = 0f
-
-        init {
-            addOperator(Concatenate())
-            addOperator(DrawObject())
-            addOperator(SetGraphicsStateParameters())
-            addOperator(Save())
-            addOperator(Restore())
-            addOperator(SetMatrix())
-        }
-
-        fun locate(page: PDPage): List<PdfImage> {
-            val crop = page.cropBox
-            cropLeft = crop.lowerLeftX
-            cropTop = crop.upperRightY
-            processPage(page)
-            return found
-        }
-
-        override fun processOperator(operator: Operator, operands: MutableList<COSBase>) {
-            if (operator.name != "Do") {
-                super.processOperator(operator, operands)
-                return
-            }
-            val name = operands.firstOrNull() as? COSName ?: return
-            when (val xObject = resources?.getXObject(name)) {
-                is PDImageXObject -> {
-                    val m = graphicsState.currentTransformationMatrix
-                    val xs = listOf(0f, m.scaleX, m.shearX, m.scaleX + m.shearX).map { it + m.translateX }
-                    val ys = listOf(0f, m.shearY, m.scaleY, m.shearY + m.scaleY).map { it + m.translateY }
-                    val left = xs.min() - cropLeft
-                    val top = cropTop - ys.max()
-                    val width = xs.max() - xs.min()
-                    val height = ys.max() - ys.min()
-                    val key = FigureKey(pageIndex, left, top, width, height).encode()
-                    found.add(PdfImage(key, left, top, width, height))
-                }
-                is PDFormXObject -> showForm(xObject)
-                else -> Unit
-            }
-        }
-    }
-
-    private object NullWriter : Writer() {
-        override fun write(cbuf: CharArray, off: Int, len: Int) = Unit
-        override fun flush() = Unit
-        override fun close() = Unit
+        private fun extract(pdf: PDDocument, first: Int, end: Int, withImages: Boolean = false): List<PdfPage> =
+            PdfExtract.lines(pdf, first, end, withImages)
     }
 }
