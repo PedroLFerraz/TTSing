@@ -29,7 +29,10 @@ class TTSingApp : Application() {
      */
     val newsDatabase: NewsDatabase by lazy {
         Room.databaseBuilder(this, NewsDatabase::class.java, "ttsing-news.db")
-            .addMigrations(com.pedrolopes.ttsing.data.news.db.MIGRATION_1_2)
+            .addMigrations(
+                com.pedrolopes.ttsing.data.news.db.MIGRATION_1_2,
+                com.pedrolopes.ttsing.data.news.db.MIGRATION_2_3,
+            )
             .build()
     }
 

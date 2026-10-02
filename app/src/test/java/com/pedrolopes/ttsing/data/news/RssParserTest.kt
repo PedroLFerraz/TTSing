@@ -135,6 +135,31 @@ class RssParserTest {
     }
 
     @Test
+    fun `html entities in titles are decoded, not read aloud`() {
+        // The Verge's Atom shape: type="html" titles with entities inside CDATA.
+        val atom = """<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title type="text">Site</title>
+            <entry><title type="html"><![CDATA[Google says it&#8217;s so capable only &#8216;defenders&#8217; get it]]></title>
+              <link rel="alternate" href="https://example.com/a"/><id>a</id></entry></feed>"""
+        assertEquals("Google says it’s so capable only ‘defenders’ get it", RssParser.parse(atom)!!.items.single().title)
+
+        // WordPress RSS does the same with escaped markup.
+        val rss = """<rss><channel><title>Blog &amp;amp; News</title><item>
+            <title>Lula &lt;em&gt;sanciona&lt;/em&gt; lei &amp;#8220;X&amp;#8221;</title><link>https://example.com/b</link></item></channel></rss>"""
+        val parsed = RssParser.parse(rss)!!
+        assertEquals("Blog & News", parsed.title)
+        assertEquals("Lula sanciona lei “X”", parsed.items.single().title)
+    }
+
+    @Test
+    fun `plain titles with ampersands are left alone`() {
+        val rss = """<rss><channel><title>AT&amp;T news</title><item>
+            <title>Q&amp;A: 3 &lt; 5 &amp; other truths</title><link>https://example.com/c</link></item></channel></rss>"""
+        val parsed = RssParser.parse(rss)!!
+        assertEquals("AT&T news", parsed.title)
+        assertEquals("Q&A: 3 < 5 & other truths", parsed.items.single().title)
+    }
+
+    @Test
     fun `a feed title tag inside an item does not overwrite the channel title`() {
         val xml = """<rss version="2.0"><channel>
               <title>Channel Title</title>

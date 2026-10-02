@@ -35,7 +35,14 @@ object HttpFetcher {
 
     sealed interface Result {
         data class Success(val body: String, val finalUrl: String) : Result
-        data class Failure(val message: String) : Result
+        /** [status] is the HTTP status when the server answered at all, null for network errors. */
+        data class Failure(val message: String, val status: Int? = null) : Result {
+            /**
+             * The server refused for good (not found, forbidden, bot-blocked) rather than
+             * hiccupping. Worth remembering so the same page isn't retried on every refresh.
+             */
+            val isPermanent: Boolean get() = status != null && status in 400..499 && status != 408 && status != 429
+        }
     }
 
     suspend fun get(url: String): Result = withContext(Dispatchers.IO) {
@@ -44,7 +51,7 @@ object HttpFetcher {
             when (val step = fetchOnce(current)) {
                 is Step.Body -> return@withContext Result.Success(step.text, current)
                 is Step.Redirect -> current = step.location
-                is Step.Error -> return@withContext Result.Failure(step.message)
+                is Step.Error -> return@withContext Result.Failure(step.message, step.status)
             }
         }
         Result.Failure("Too many redirects")
@@ -98,7 +105,7 @@ object HttpFetcher {
     private sealed interface Step {
         data class Body(val text: String) : Step
         data class Redirect(val location: String) : Step
-        data class Error(val message: String) : Step
+        data class Error(val message: String, val status: Int? = null) : Step
     }
 
     private fun fetchOnce(url: String): Step {
@@ -129,11 +136,10 @@ object HttpFetcher {
                 // Location may be relative.
                 return Step.Redirect(URL(URL(url), location).toString())
             }
-            if (status !in 200..299) return Step.Error("HTTP $status")
+            if (status !in 200..299) return Step.Error("HTTP $status", status)
 
-            val stream = decoded(connection)
-            val charset = charsetOf(connection.contentType)
-            Step.Body(stream.use { it.readBoundedText(charset) })
+            val bytes = decoded(connection).use { it.readBoundedBytes() }
+            Step.Body(decodeText(bytes, connection.contentType))
         } catch (e: Exception) {
             Step.Error(e.message ?: e::class.java.simpleName)
         } finally {
@@ -150,20 +156,50 @@ object HttpFetcher {
         }
     }
 
-    /** Charset from the Content-Type header; UTF-8 is the right guess when absent. */
-    private fun charsetOf(contentType: String?): String {
-        val declared = contentType
+    /**
+     * Text of a response body in the charset it was sent in: the Content-Type header's if it
+     * names one, else whatever the document declares about itself, else UTF-8.
+     *
+     * The document's own declaration matters because plenty of feeds are served with a bare
+     * `text/xml` header and say `<?xml … encoding="ISO-8859-1"?>` inside — common on older
+     * Brazilian news sites. Decoding those as UTF-8 turned every "Política" into "Pol�tica".
+     */
+    internal fun decodeText(bytes: ByteArray, contentType: String?): String {
+        val name = charsetOf(contentType) ?: sniffCharset(bytes) ?: "UTF-8"
+        return String(bytes, charset(name))
+    }
+
+    /** Charset from the Content-Type header, or null when it names none (or a bogus one). */
+    private fun charsetOf(contentType: String?): String? =
+        contentType
             ?.split(';')
             ?.map { it.trim() }
             ?.firstOrNull { it.startsWith("charset=", ignoreCase = true) }
             ?.substringAfter('=')
-            ?.trim('"', ' ')
-        return declared?.takeIf { runCatching { charset(it) }.isSuccess } ?: "UTF-8"
+            ?.trim('"', '\'', ' ')
+            ?.takeIf { isSupported(it) }
+
+    /**
+     * The charset a document declares in its first bytes: an XML prolog's `encoding="…"`, or an
+     * HTML `<meta charset>` / `http-equiv` content type. Read as Latin-1, which maps every byte
+     * to a character, so the ASCII declaration is found whatever the real encoding is.
+     */
+    private fun sniffCharset(bytes: ByteArray): String? {
+        val head = String(bytes, 0, minOf(bytes.size, SNIFF_BYTES), Charsets.ISO_8859_1)
+        val declared = XML_ENCODING.find(head)?.groupValues?.get(1)
+            ?: META_CHARSET.find(head)?.groupValues?.get(1)
+        return declared?.takeIf { isSupported(it) }
     }
+
+    private const val SNIFF_BYTES = 2048
+    private val XML_ENCODING = Regex("""<\?xml[^>]*\bencoding\s*=\s*["']([A-Za-z0-9._-]+)["']""")
+    private val META_CHARSET = Regex("""<meta[^>]+charset\s*=\s*["']?([A-Za-z0-9._-]+)""", RegexOption.IGNORE_CASE)
+
+    private fun isSupported(name: String): Boolean = runCatching { charset(name) }.isSuccess
 
     private fun charset(name: String) = java.nio.charset.Charset.forName(name)
 
-    private fun InputStream.readBoundedText(charsetName: String): String {
+    private fun InputStream.readBoundedBytes(): ByteArray {
         val buffer = ByteArray(16 * 1024)
         val out = java.io.ByteArrayOutputStream()
         var total = 0
@@ -174,6 +210,6 @@ object HttpFetcher {
             if (total > MAX_BYTES) break
             out.write(buffer, 0, read)
         }
-        return String(out.toByteArray(), charset(charsetName))
+        return out.toByteArray()
     }
 }

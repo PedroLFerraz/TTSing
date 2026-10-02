@@ -135,11 +135,11 @@ object ArticleExtractor {
     private fun findContentRoot(doc: Document): Element? {
         val body = doc.body() ?: return null
 
-        // A single <article> is a strong, explicit signal; trust it when it has real text.
-        val articles = doc.getElementsByTag("article")
-        if (articles.size == 1 && articles.first()!!.text().length >= MIN_ARTICLE_CHARS) {
-            return articles.first()
-        }
+        // A single <article> with real text is a strong, explicit signal; trust it. Empty ones
+        // don't count: g1 wraps every embedded video player in its own <article>, which used to
+        // defeat this and let scoring pick one paragraph-sized chunk of the story instead.
+        val articles = doc.getElementsByTag("article").filter { it.text().length >= MIN_ARTICLE_CHARS }
+        if (articles.size == 1) return articles.first()
 
         val scores = mutableMapOf<Element, Double>()
         for (paragraph in body.select("p, pre, li, blockquote")) {

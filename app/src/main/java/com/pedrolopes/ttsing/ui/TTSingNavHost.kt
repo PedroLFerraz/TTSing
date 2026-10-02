@@ -9,6 +9,7 @@ import androidx.navigation.compose.rememberNavController
 import com.pedrolopes.ttsing.tts.ReadingController
 import com.pedrolopes.ttsing.ui.library.LibraryScreen
 import com.pedrolopes.ttsing.ui.news.ArticlesScreen
+import com.pedrolopes.ttsing.ui.news.DiscoverScreen
 import com.pedrolopes.ttsing.ui.news.FeedsScreen
 import com.pedrolopes.ttsing.ui.reader.ReaderScreen
 
@@ -20,6 +21,8 @@ object Routes {
     const val NEWS = "news"
     /** One feed's own stories, reached from "Manage feeds". */
     const val ARTICLES = "articles"
+    /** The topic catalogue: the biggest sources per topic, to subscribe in a tap. */
+    const val DISCOVER = "discover"
     const val ARG_BOOK_ID = "bookId"
     const val ARG_FEED_URL = "feedUrl"
 
@@ -48,13 +51,18 @@ fun TTSingNavHost(
                 onBack = { navController.popBackStack() },
                 onOpenArticle = { articleId -> navController.navigate(Routes.reader(articleId)) },
                 onManageFeeds = { navController.navigate(Routes.FEEDS) },
+                onDiscover = { navController.navigate(Routes.DISCOVER) },
             )
         }
         composable(Routes.FEEDS) {
             FeedsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenFeed = { feedUrl -> navController.navigate(Routes.articles(feedUrl)) },
+                onDiscover = { navController.navigate(Routes.DISCOVER) },
             )
+        }
+        composable(Routes.DISCOVER) {
+            DiscoverScreen(onBack = { navController.popBackStack() })
         }
         composable("${Routes.ARTICLES}/{${Routes.ARG_FEED_URL}}") { entry ->
             val feedUrl = entry.arguments?.getString(Routes.ARG_FEED_URL)?.let(Uri::decode)
@@ -64,6 +72,7 @@ fun TTSingNavHost(
                 onBack = { navController.popBackStack() },
                 onOpenArticle = { articleId -> navController.navigate(Routes.reader(articleId)) },
                 onManageFeeds = { navController.navigate(Routes.FEEDS) },
+                onDiscover = { navController.navigate(Routes.DISCOVER) },
             )
         }
         composable("${Routes.READER}/{${Routes.ARG_BOOK_ID}}") { entry ->
@@ -73,6 +82,13 @@ fun TTSingNavHost(
                 bookId = bookId,
                 onBack = { navController.popBackStack() },
                 controller = controller,
+                onFollowPlayback = { nextId ->
+                    // Replace rather than stack: Back still returns to the story list, not
+                    // through every story that played since.
+                    navController.navigate(Routes.reader(nextId)) {
+                        popUpTo(entry.destination.id) { inclusive = true }
+                    }
+                },
             )
         }
     }

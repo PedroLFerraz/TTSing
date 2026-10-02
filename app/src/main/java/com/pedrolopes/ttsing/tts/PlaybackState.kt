@@ -36,4 +36,9 @@ data class PlaybackState(
      */
     val sleepAtElapsedMs: Long? = null,
     val sleepAtChapterEnd: Boolean = false,
+    /**
+     * Set when the service played on from one news story into the next by itself: the id of
+     * the story that finished. Lets a reader screen still showing that story follow along.
+     */
+    val continuedFrom: String? = null,
 )

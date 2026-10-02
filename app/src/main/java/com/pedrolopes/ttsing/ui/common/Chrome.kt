@@ -1,6 +1,7 @@
 package com.pedrolopes.ttsing.ui.common
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -202,6 +203,26 @@ fun MonoText(
         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         modifier = modifier,
     )
+}
+
+/** Square, mono, no elevation: selected is a yellow block, everything else is an outline. */
+@Composable
+fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .background(if (selected) Ink.Live else Color.Transparent)
+            .then(if (selected) Modifier else Modifier.border(1.dp, Ink.Edge))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+    ) {
+        MonoText(
+            label,
+            size = 11f,
+            tracking = 0.14f,
+            color = if (selected) Ink.Surface else Ink.Muted,
+            weight = if (selected) FontWeight.Bold else FontWeight.Normal,
+        )
+    }
 }
 
 /** Arrangement helper so screens can declare their gaps in one place. */

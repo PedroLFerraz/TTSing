@@ -165,6 +165,27 @@ class ArticleExtractorTest {
     }
 
     @Test
+    fun `reads the whole story when empty article wrappers sit beside the real one`() {
+        // g1's shape: the story is one <article>, but every embedded video player is wrapped
+        // in an <article> of its own, and each paragraph sits in its own chunk <div>.
+        val chunks = (1..6).joinToString("\n") { n ->
+            """<div id="chunk-$n"><div class="mc-column content-text">
+                 <p class="content-text__container">Paragraph $n of the story, long enough to read as prose, with a comma.</p>
+               </div></div>"""
+        }
+        val html = """<html><body>
+            <div class="mc-article-body"><article itemprop="articleBody">
+              $chunks
+              <article class="video-player-wrapper"></article>
+            </article></div>
+            <article class="video-player-wrapper"></article>
+            <article class="video-player-wrapper"></article>
+          </body></html>"""
+        val body = paragraphs(ArticleExtractor.extract(html))
+        assertEquals((1..6).map { "Paragraph $it of the story, long enough to read as prose, with a comma." }, body)
+    }
+
+    @Test
     fun `an empty or contentless page yields no blocks rather than throwing`() {
         assertTrue(ArticleExtractor.extract("").blocks.isEmpty())
         assertTrue(ArticleExtractor.extract("<html><body></body></html>").blocks.isEmpty())

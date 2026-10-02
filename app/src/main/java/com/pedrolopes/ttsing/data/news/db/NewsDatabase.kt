@@ -24,6 +24,12 @@ data class FeedEntity(
     val language: String?,
     val lastRefreshedAt: Long = 0,
     val addedAt: Long = 0,
+    /**
+     * A [com.pedrolopes.ttsing.data.news.Topic] id when the feed came from the topic
+     * catalogue (or matches one of its feeds); null for a feed added by hand. Drives the
+     * News list's topic filter.
+     */
+    val topic: String? = null,
 )
 
 /**
@@ -83,6 +89,16 @@ interface NewsDao {
     @Query("SELECT * FROM articles ORDER BY publishedAt DESC LIMIT :limit")
     fun observeLatest(limit: Int): Flow<List<ArticleEntity>>
 
+    @Query(
+        """SELECT articles.* FROM articles JOIN feeds ON articles.feedUrl = feeds.url
+           WHERE feeds.topic = :topic ORDER BY articles.publishedAt DESC LIMIT :limit""",
+    )
+    fun observeLatestInTopic(topic: String, limit: Int): Flow<List<ArticleEntity>>
+
+    /** Stories without a usable date (`publishedAt == 0`) are never old enough to go. */
+    @Query("DELETE FROM articles WHERE publishedAt > 0 AND publishedAt < :cutoff")
+    suspend fun deleteArticlesPublishedBefore(cutoff: Long): Int
+
     @Query("SELECT * FROM articles WHERE id = :id")
     suspend fun article(id: String): ArticleEntity?
 
@@ -127,12 +143,29 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
 }
 
 /**
+ * Adds the feed's topic; every existing feed starts without one, as if added by hand (a
+ * refresh then files catalogue feeds under theirs).
+ *
+ * Also gives short stored stories one more look at their page. Earlier versions took any
+ * inline feed body of a few hundred characters as the whole story and never fetched the page,
+ * so feeds that ship teasers inline (The Verge, for one) read only the teaser. Marking them
+ * unfetched lets the next open, or the background prefetch, fetch the page and keep it if it
+ * is longer — see NewsRepository.TRUSTED_INLINE_TEXT, which this threshold mirrors.
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE feeds ADD COLUMN topic TEXT")
+        db.execSQL("UPDATE articles SET fetchedAt = 0 WHERE textLength < 2000")
+    }
+}
+
+/**
  * Kept separate from the books database on purpose. That one is
  * `fallbackToDestructiveMigration` because it is a rebuildable cache of a folder of EPUBs;
  * feed subscriptions are user-created and cannot be rebuilt, so they need a database that
  * forces real migrations instead of quietly dropping everything on a schema bump.
  */
-@Database(entities = [FeedEntity::class, ArticleEntity::class], version = 2, exportSchema = false)
+@Database(entities = [FeedEntity::class, ArticleEntity::class], version = 3, exportSchema = false)
 abstract class NewsDatabase : RoomDatabase() {
     abstract fun newsDao(): NewsDao
 }

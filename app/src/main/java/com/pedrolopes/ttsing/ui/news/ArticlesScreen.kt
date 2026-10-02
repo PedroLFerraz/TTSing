@@ -18,14 +18,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -37,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pedrolopes.ttsing.data.news.db.ArticleEntity
+import com.pedrolopes.ttsing.ui.common.ChoiceChip
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.HeaderIcon
 import com.pedrolopes.ttsing.ui.common.LocalImage
@@ -54,6 +59,7 @@ import java.util.concurrent.TimeUnit
  * The article list: either every story across every subscribed feed ([feedUrl] null — what
  * the library's News button opens directly onto), or one feed's own stories (reached from
  * "Manage feeds"). Sharing one screen keeps the row design and thumbnail handling in one place.
+ * The all-feeds view can be narrowed to one topic, and names each story's source.
  */
 @Composable
 fun ArticlesScreen(
@@ -61,6 +67,7 @@ fun ArticlesScreen(
     onBack: () -> Unit,
     onOpenArticle: (String) -> Unit,
     onManageFeeds: () -> Unit,
+    onDiscover: () -> Unit,
     viewModel: ArticlesViewModel = viewModel(
         key = feedUrl,
         factory = simpleFactory { ArticlesViewModel.create(feedUrl) },
@@ -70,6 +77,15 @@ fun ArticlesScreen(
     val feeds by viewModel.feeds.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val feedTitle by viewModel.feedTitle.collectAsStateWithLifecycle()
+    val topics by viewModel.topics.collectAsStateWithLifecycle()
+    val topic by viewModel.topic.collectAsStateWithLifecycle()
+    val feedNames = remember(feeds) { feeds.associate { it.url to it.title } }
+
+    // Unsubscribing from a topic's last feed takes its chip away; don't leave the list
+    // filtered by something that can no longer be seen or cleared.
+    LaunchedEffect(topic, topics) {
+        if (topic != null && topics.isNotEmpty() && topic !in topics) viewModel.selectTopic(null)
+    }
 
     Scaffold(containerColor = Ink.Surface) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -93,15 +109,25 @@ fun ArticlesScreen(
                     // Only the all-feeds view needs a way to subscriptions; a single feed's
                     // list is itself reached from there.
                     if (feedUrl == null) {
+                        HeaderIcon(Icons.Filled.Explore, "Discover feeds by topic", onClick = onDiscover)
                         HeaderIcon(Icons.Filled.RssFeed, "Manage feeds", onClick = onManageFeeds)
                     }
                 },
             )
 
+            if (feedUrl == null && topics.isNotEmpty()) {
+                ChipRow(modifier = Modifier.padding(top = 14.dp)) {
+                    ChoiceChip("All", selected = topic == null) { viewModel.selectTopic(null) }
+                    topics.forEach { entry ->
+                        ChoiceChip(entry.label, selected = entry == topic) { viewModel.selectTopic(entry) }
+                    }
+                }
+            }
+
             when {
-                feedUrl == null && feeds.isEmpty() -> NoFeedsYet(onManageFeeds, Modifier.weight(1f))
+                feedUrl == null && feeds.isEmpty() -> NoFeedsYet(onDiscover, onManageFeeds, Modifier.weight(1f))
                 articles.isEmpty() && !refreshing -> EmptyMessage(
-                    "Nothing here yet — this feed has no stories.",
+                    if (topic != null) "No stories in ${topic!!.label} yet." else "Nothing here yet — this feed has no stories.",
                     Modifier.weight(1f),
                 )
                 else -> {
@@ -120,8 +146,13 @@ fun ArticlesScreen(
                             Hairline()
                             ArticleRow(
                                 article = article,
+                                // One feed's own list needn't repeat its name on every row.
+                                source = if (feedUrl == null) feedNames[article.feedUrl] else null,
                                 loadImage = viewModel::imageBytes,
-                                onClick = { onOpenArticle(article.id) },
+                                onClick = {
+                                    viewModel.onOpen()
+                                    onOpenArticle(article.id)
+                                },
                             )
                         }
                         item { Hairline() }
@@ -147,7 +178,7 @@ private fun EmptyMessage(message: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun NoFeedsYet(onManageFeeds: () -> Unit, modifier: Modifier = Modifier) {
+private fun NoFeedsYet(onDiscover: () -> Unit, onManageFeeds: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 40.dp),
@@ -164,18 +195,21 @@ private fun NoFeedsYet(onManageFeeds: () -> Unit, modifier: Modifier = Modifier)
             MonoText("No feeds yet", size = 12f, tracking = 0.2f, color = Ink.Live)
             Spacer(Modifier.height(14.dp))
             Text(
-                "Add an RSS or Atom feed and its stories will be read aloud like a book — " +
-                    "full text, not just the summary.",
+                "Pick the biggest sources for a topic, or add any RSS or Atom feed, and their " +
+                    "stories will be read aloud like a book — full text, not just the summary.",
                 fontFamily = AppFonts.Grotesk,
                 fontSize = 15.sp,
                 lineHeight = 22.sp,
                 color = Ink.Muted,
                 textAlign = TextAlign.Center,
             )
+            TextButton(onClick = onManageFeeds, modifier = Modifier.padding(top = 10.dp)) {
+                MonoText("Add a feed by address", size = 11f, tracking = 0.16f, color = Ink.Live)
+            }
         }
         PillButton(
-            text = "Add a feed",
-            onClick = onManageFeeds,
+            text = "Browse topics",
+            onClick = onDiscover,
             modifier = Modifier.padding(horizontal = ScreenPadding, vertical = 14.dp),
         )
     }
@@ -184,6 +218,8 @@ private fun NoFeedsYet(onManageFeeds: () -> Unit, modifier: Modifier = Modifier)
 @Composable
 private fun ArticleRow(
     article: ArticleEntity,
+    /** The feed's name, when the list mixes several feeds. */
+    source: String?,
     loadImage: suspend (String) -> ByteArray?,
     onClick: () -> Unit,
 ) {
@@ -225,12 +261,13 @@ private fun ArticleRow(
             }
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 7.dp)) {
                 MonoText(
-                    text = buildString {
-                        append(relativeTime(article.publishedAt))
+                    text = listOfNotNull(
+                        source,
+                        relativeTime(article.publishedAt).ifEmpty { null },
                         // Once fetched we know the real length, which is a useful "is this a
                         // quick read or a long piece" signal before pressing play.
-                        if (article.textLength > 0) append(" · ${article.textLength / 1000 + 1} min read")
-                    },
+                        "${article.textLength / 1000 + 1} min read".takeIf { article.textLength > 0 },
+                    ).joinToString(" · "),
                     size = 10f,
                     tracking = 0.14f,
                     color = metaColor,

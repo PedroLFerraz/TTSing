@@ -66,7 +66,7 @@ object RssParser {
             val link = item.childText("link")
                 ?: item.getElementsByTag("guid").firstOrNull()?.text()?.takeIf { it.startsWith("http") }
                 ?: return@mapNotNull null
-            val title = item.childText("title") ?: link
+            val title = item.childTitle() ?: link
             val summary = item.childText("description")
             // content:encoded is the convention for the full body in RSS.
             val contentHtml = item.childText("content:encoded")
@@ -81,7 +81,7 @@ object RssParser {
             )
         }
         return ParsedFeed(
-            title = channel.childText("title").orEmpty().ifEmpty { "Untitled feed" },
+            title = channel.childTitle().orEmpty().ifEmpty { "Untitled feed" },
             siteLink = channel.childText("link"),
             language = channel.childText("language"),
             items = items,
@@ -96,7 +96,7 @@ object RssParser {
             val summary = entry.childText("summary")
             val contentHtml = entry.childText("content")
             FeedItem(
-                title = entry.childText("title") ?: link,
+                title = entry.childTitle() ?: link,
                 link = link,
                 summary = summary,
                 contentHtml = contentHtml,
@@ -106,7 +106,7 @@ object RssParser {
             )
         }
         return ParsedFeed(
-            title = feed.childText("title").orEmpty().ifEmpty { "Untitled feed" },
+            title = feed.childTitle().orEmpty().ifEmpty { "Untitled feed" },
             siteLink = feed.atomLink(),
             language = feed.attr("xml:lang").takeIf { it.isNotEmpty() },
             items = items,
@@ -166,6 +166,20 @@ object RssParser {
         val alternate = links.firstOrNull { it.attr("rel").let { rel -> rel.isEmpty() || rel == "alternate" } }
         return (alternate ?: links.firstOrNull())?.attr("href")?.takeIf { it.isNotEmpty() }
     }
+
+    /**
+     * The `<title>` as plain text. Titles are often HTML in disguise — Atom's `type="html"`,
+     * or WordPress RSS putting `it&#8217;s` inside CDATA — and decoding only the XML layer
+     * left the entity in place, for the voice to read out as "ampersand hash eight two one
+     * seven". Decoded as HTML whenever it carries an entity or a tag.
+     */
+    private fun Element.childTitle(): String? {
+        val raw = childText("title") ?: return null
+        if (!HTML_IN_TEXT.containsMatchIn(raw)) return raw
+        return Jsoup.parse(raw).text().trim().ifEmpty { raw }
+    }
+
+    private val HTML_IN_TEXT = Regex("""&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);|<[a-zA-Z/]""")
 
     /** Direct child by tag name — avoids picking up a same-named tag from a nested element. */
     private fun Element.childText(tag: String): String? =
