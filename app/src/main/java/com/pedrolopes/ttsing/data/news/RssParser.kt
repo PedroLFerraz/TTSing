@@ -28,6 +28,11 @@ data class FeedItem(
      * article list show a thumbnail before the page has ever been fetched.
      */
     val imageUrl: String? = null,
+    /**
+     * The publisher's own labels for the story (`<category>`), as given. Nested ones read like
+     * "Gear / Deals". Used to leave out the shopping and sponsored posts some feeds mix in.
+     */
+    val categories: List<String> = emptyList(),
 )
 
 data class ParsedFeed(
@@ -66,7 +71,7 @@ object RssParser {
             val link = item.childText("link")
                 ?: item.getElementsByTag("guid").firstOrNull()?.text()?.takeIf { it.startsWith("http") }
                 ?: return@mapNotNull null
-            val title = item.childText("title") ?: link
+            val title = item.childTitle() ?: link
             val summary = item.childText("description")
             // content:encoded is the convention for the full body in RSS.
             val contentHtml = item.childText("content:encoded")
@@ -78,10 +83,11 @@ object RssParser {
                 publishedAt = parseDate(item.childText("pubDate") ?: item.childText("dc:date")),
                 guid = item.childText("guid") ?: link,
                 imageUrl = imageUrlOf(item, link, summary, contentHtml),
+                categories = item.categories(),
             )
         }
         return ParsedFeed(
-            title = channel.childText("title").orEmpty().ifEmpty { "Untitled feed" },
+            title = channel.childTitle().orEmpty().ifEmpty { "Untitled feed" },
             siteLink = channel.childText("link"),
             language = channel.childText("language"),
             items = items,
@@ -96,17 +102,18 @@ object RssParser {
             val summary = entry.childText("summary")
             val contentHtml = entry.childText("content")
             FeedItem(
-                title = entry.childText("title") ?: link,
+                title = entry.childTitle() ?: link,
                 link = link,
                 summary = summary,
                 contentHtml = contentHtml,
                 publishedAt = parseDate(entry.childText("published") ?: entry.childText("updated")),
                 guid = entry.childText("id") ?: link,
                 imageUrl = imageUrlOf(entry, link, summary, contentHtml),
+                categories = entry.categories(),
             )
         }
         return ParsedFeed(
-            title = feed.childText("title").orEmpty().ifEmpty { "Untitled feed" },
+            title = feed.childTitle().orEmpty().ifEmpty { "Untitled feed" },
             siteLink = feed.atomLink(),
             language = feed.attr("xml:lang").takeIf { it.isNotEmpty() },
             items = items,
@@ -166,6 +173,30 @@ object RssParser {
         val alternate = links.firstOrNull { it.attr("rel").let { rel -> rel.isEmpty() || rel == "alternate" } }
         return (alternate ?: links.firstOrNull())?.attr("href")?.takeIf { it.isNotEmpty() }
     }
+
+    /**
+     * The `<title>` as plain text. Titles are often HTML in disguise — Atom's `type="html"`,
+     * or WordPress RSS putting `it&#8217;s` inside CDATA — and decoding only the XML layer
+     * left the entity in place, for the voice to read out as "ampersand hash eight two one
+     * seven". Decoded as HTML whenever it carries an entity or a tag.
+     */
+    private fun Element.childTitle(): String? {
+        val raw = childText("title") ?: return null
+        if (!HTML_IN_TEXT.containsMatchIn(raw)) return raw
+        return Jsoup.parse(raw).text().trim().ifEmpty { raw }
+    }
+
+    private val HTML_IN_TEXT = Regex("""&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);|<[a-zA-Z/]""")
+
+    /** RSS puts the label in the element's text, Atom in its `term` (or `label`) attribute. */
+    private fun Element.categories(): List<String> =
+        children()
+            .filter { it.normalName().equals("category", ignoreCase = true) }
+            .mapNotNull { category ->
+                sequenceOf(category.text(), category.attr("label"), category.attr("term"))
+                    .map { it.trim() }
+                    .firstOrNull { it.isNotEmpty() }
+            }
 
     /** Direct child by tag name — avoids picking up a same-named tag from a nested element. */
     private fun Element.childText(tag: String): String? =

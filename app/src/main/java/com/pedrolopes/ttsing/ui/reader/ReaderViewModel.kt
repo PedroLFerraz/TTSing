@@ -168,19 +168,24 @@ class ReaderViewModel(
                 _ui.value = _ui.value.copy(isLoading = false, error = "This article is no longer available.")
                 return@launch
             }
-            val locale = news.feedLocale(article.feedUrl) ?: Locale.getDefault()
+            val feedLocale = news.feedLocale(article.feedUrl) ?: Locale.getDefault()
+            // The language the user picked for this story, exactly as ReadingService resolves
+            // it: sentences are split per language, and the positions the two exchange only
+            // line up if both split the text the same way.
+            val locale = settings.settings.first().localeFor(bookId, feedLocale)
             when (val body = news.body(bookId, locale)) {
                 is NewsRepository.ArticleBody.Failed ->
                     _ui.value = _ui.value.copy(isLoading = false, title = article.title, error = body.message)
 
                 is NewsRepository.ArticleBody.Ready -> {
-                    articleLocale = locale
+                    // The declared language, as for a book: the override goes on top of it.
+                    articleLocale = feedLocale
                     _ui.value = _ui.value.copy(
                         title = article.title,
                         chapterCount = 1,
                         window = listOf(LoadedChapter(0, null, body.blocks)),
                         anchorChapter = 0,
-                        languageTag = locale.toLanguageTag(),
+                        languageTag = feedLocale.toLanguageTag(),
                         isLoading = false,
                         error = null,
                         isTruncated = body.truncated,

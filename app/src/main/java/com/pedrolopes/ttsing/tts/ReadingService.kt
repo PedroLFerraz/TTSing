@@ -81,6 +81,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
     /** Waits for a speed change to settle before the sentence is spoken again. */
     private var restartJob: Job? = null
+
+    /** Loading the next news story after one finished; see [playNextStory]. */
+    private var continueJob: Job? = null
     private var sleepChapter: Int? = null
     private var isForeground = false
 
@@ -185,6 +188,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     }
 
     fun play(bookId: String, position: ReadingPosition? = null) {
+        continueJob?.cancel()
         ensureForeground()
         // Jumping somewhere on purpose keeps a "stop at the chapter's end" timer, moved to
         // whichever chapter you jumped into.
@@ -234,6 +238,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     }
 
     fun pause() {
+        continueJob?.cancel()
         engine.pause()
         previousSentenceStartedAt = null // a paused gap is not reading time
         persistSpeed()
@@ -437,6 +442,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
                     title = article.title,
                     locale = feedLocale,
                     blocks = body.blocks,
+                    author = app.news.feed(article.feedUrl)?.title,
                 )
                 source to ReadingPosition(0, article.blockIndex, article.sentenceIndex)
             }
@@ -532,11 +538,62 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     }
 
     override fun onBookFinished() {
+        val finished = _state.value.bookId
+        if (finished == null || !NewsRepository.isArticle(finished)) {
+            finishReading()
+            return
+        }
+        // "Stop at the end of the chapter" means the end of this story: an article is a single
+        // chapter, so otherwise the timer would never fire once stories play on.
+        if (sleepChapter != null) {
+            clearSleepTimer()
+            finishReading()
+            return
+        }
+        // Played on into the next story like a book into its next chapter, so the foreground
+        // service, wake lock and audio focus are all kept rather than dropped in between.
+        _state.value = _state.value.copy(wordRange = null)
+        persistPosition() // also what marks the finished story as heard
+        continueJob?.cancel()
+        continueJob = lifecycleScope.launch {
+            if (!playNextStory(finished)) finishReading()
+        }
+    }
+
+    private fun finishReading() {
         _state.value = _state.value.copy(isSpeaking = false, wordRange = null)
         updateSessionAndNotification()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
         releaseWakeLock()
         persistPosition()
+    }
+
+    /**
+     * Starts the next unheard story after [finished] in the list it was opened from. Returns
+     * false at the end of the list, so the caller winds down as for a finished book.
+     *
+     * Each candidate's text is loaded before switching to it: a story that can't be read
+     * (offline, gone) is skipped rather than leaving the service holding nothing. Runs as
+     * [continueJob], which pausing or playing something else cancels while it loads.
+     */
+    private suspend fun playNextStory(finished: String): Boolean {
+        var after = finished
+        repeat(MAX_STORIES_SKIPPED) {
+            val next = app.news.nextUnread(after) ?: return false
+            // Cached by the repository, so opening it below re-uses this fetch.
+            if (app.news.body(next, Locale.getDefault()) is NewsRepository.ArticleBody.Failed) {
+                after = next
+                return@repeat
+            }
+            val restored = openBookIfNeeded(next) ?: return false
+            _state.value = _state.value.copy(continuedFrom = finished)
+            engine.playFrom(restored)
+            _state.value = _state.value.copy(isSpeaking = true, error = null)
+            updateMetadata()
+            updateSessionAndNotification()
+            return true
+        }
+        return false
     }
 
     override fun onEngineError(message: String) {
@@ -772,6 +829,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         const val EXTRA_BLOCK = "block"
         const val EXTRA_SENTENCE = "sentence"
         const val SAVE_EVERY_SENTENCES = 5
+
+        /** Unreadable stories skipped in a row before playing on gives up. */
+        const val MAX_STORIES_SKIPPED = 3
         const val WAKE_LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
         /** Accumulators are written after this much listening, and on pause and voice change. */
         const val SPEED_PERSIST_EVERY_MS = 30_000L

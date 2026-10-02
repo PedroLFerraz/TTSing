@@ -1,0 +1,37 @@
+﻿feed                     ours re-ext    r4j r4jExt jsonld ours-D r4jE-D  url
+Ars Technica           page fetch failed  https://arstechnica.com/gadgets/2026/10/tcl-is-right-to-question-samsungs-use-of-the-term-mini-led/
+Ars Technica           page fetch failed  https://arstechnica.com/science/2026/10/venus-mysterious-haze-is-actually-cosmic-dust/
+The Verge                3114    534   2937   3240   2409   3114   3240  https://www.theverge.com/ai-artificial-intelligence/1003925/suno-speech-ai-voice-feature-beta-availability
+The Verge                2520    595   2866   2866   1857   2520   2866  https://www.theverge.com/tech/1003877/apple-security-camera-no-video
+Wired                   12918   1386  11492  11492   9844  12918   9541  https://www.wired.com/story/best-smart-cat-tracker/
+Wired                    6047   2781   2786   2786   5609   6047   2786  https://www.wired.com/story/when-the-robotaxis-are-watching-you/
+The Guardian US           608    192    334    334      0    608    334  https://www.theguardian.com/politics/audio/2026/oct/02/can-the-democrats-take-texas-podcast
+The Guardian US           409     92    179    179      0    409    179  https://www.theguardian.com/news/audio/2026/oct/02/the-end-times-fascists-are-plotting-their-escape-from-our-world-our-mission-is-clear-podcast
+Politico Congress      page fetch failed  https://www.politico.com/news/2026/10/02/valerie-foushee-ai-deal-democrats-01104558
+Politico Congress      page fetch failed  https://www.politico.com/news/2026/10/02/a-game-changer-house-dems-aim-for-a-big-majority-that-could-ease-hakeem-jeffries-headaches-01104509
+The Atlantic           page fetch failed  https://www.theatlantic.com/politics/2026/10/gop-republicans-midterms-transgender/688837/?utm_source=feed
+The Atlantic           page fetch failed  https://www.theatlantic.com/politics/2026/10/democrats-trump-congress-investigations/688811/?utm_source=feed
+NYT Politics           page fetch failed  https://www.nytimes.com/2026/10/02/business/democrats-wealthy-taxes.html
+NYT Politics           page fetch failed  https://www.nytimes.com/2026/10/02/us/politics/aipac-midterm-elections-spending-israel.html
+WaPo Politics             282    282    735    735      0     -1     -1  https://www.washingtonpost.com/politics/2026/10/02/democrats-expand-battleground-house-reaching-into-blood-red-districts/
+WaPo Politics             132    132    498    498      0     -1     -1  https://www.washingtonpost.com/politics/2026/10/02/dems-are-running-against-one-big-beautiful-bill-what-can-they-if-they-win/
+BBC Politics             5010   2497   2510   2630      0   5010   2630  https://www.bbc.co.uk/news/articles/cq74e4jg9leno?at_medium=RSS&at_campaign=rss
+BBC Politics             5467   3567   3590   3834      0   5466   3834  https://www.bbc.co.uk/news/articles/cr0j3jdj64x7o?at_medium=RSS&at_campaign=rss
+g1 Politica              4921    299   3434   3434      0   2594   1787  https://g1.globo.com/economia/noticia/2026/10/02/maior-juro-do-mercado-uso-do-rotativo-bate-recorde-lula-quer-limitar-a-um-cartao-de-credito-por-pessoa.ghtml
+g1 Politica              5102    362   4751   4751      0   5102   4751  https://g1.globo.com/politica/eleicoes/2026/noticia/2026/10/02/ia-ataques-contra-candidatas-nas-eleicoes-de-2026.ghtml
+Folha Poder              3020   1626   1772   1772      0   3020   1772  https://redir.folha.com.br/redir/online/poder/rss091/*https://www1.folha.uol.com.br/colunas/painel/2026/10/debate-cancelado-e-desfecho-perfeito-para-campanha-dominada-pelo-judiciario-veja-video.shtml
+Folha Poder              3142   1748   1835   1835      0   3142   1835  https://redir.folha.com.br/redir/online/poder/rss091/*https://www1.folha.uol.com.br/colunas/painel/2026/10/pesquisa-mostra-que-827-dos-brasileiros-se-dizem-muito-preocupados-com-a-corrupcao.shtml
+Estadao Politica        10091  10091  10064  10064      0  10091  10064  https://www.estadao.com.br/politica/eleicoes/agronegocio-representa-13-do-eleitorado-71-se-dizem-conservadores-e-2-modernos-ou-progressistas/
+Estadao Politica        13812  13812  13523  13523      0  13812  13523  https://www.estadao.com.br/economia/denuncias-de-assedio-eleitoral-disparam-823-ate-setembro-em-relacao-a-2022-indica-mpt/
+Intercept Brasil       page fetch failed  https://www.intercept.com.br/2026/10/02/governo-extrema-direita-acelera-colapso-democracia/
+Intercept Brasil       page fetch failed  https://www.intercept.com.br/2026/10/01/direita-indigena-amazonia-legal/
+Gazeta do Povo           2925   2925   2912   3045   3069   2925   3045  https://www.gazetadopovo.com.br/eleicoes/2026/maior-bancada-congresso-bancada-agropecuaria-oficializa-apoio-flavio/
+Gazeta do Povo           2758   2758   2742   2908   2829   2758   2908  https://www.gazetadopovo.com.br/eleicoes/2026/flavio-pede-investigacao-stf-contra-deputados-pt/
+NPR Politics            20597  20300  20537  20537      0  20597  20537  https://www.npr.org/sections/planet-money/2026/10/02/g-s1-146060/san-franciscos-car-crime-has-plunged-how-much-credit-does-flock-deserve
+NPR Politics             6020   5747   5678   5678      0   6020   5678  https://www.npr.org/2026/10/02/nx-s1-5988832/christa-pike-reignites-death-penalty-debate
+Canaltech                1896    238   1916   1916   1596   1896   1916  https://canaltech.com.br/carros/byd-dolphin-mini-brilha-em-ranking-dos-mais-vendidos-de-setembro-de-2026/
+Canaltech                2109    266   2133   2133   1984   2109   2133  https://canaltech.com.br/smartphone/iphone-duo-tera-camada-da-tela-que-pode-ser-removida-e-trocada/
+Letters American        10489  10462  11680  11680      0  10489  11707  https://heathercoxrichardson.substack.com/p/october-1-2026
+Letters American          133     32    799    799      0    299   1114  https://heathercoxrichardson.substack.com/p/withdrawal-from-iraq
+Tecnoblog               12089  12089  10081  10081      0     -1     -1  https://tecnoblog.net/guias/melhor-notebook-hp/
+Tecnoblog                2035   2035   1854   1854      0     -1     -1  https://tecnoblog.net/achados/huawei-matepad-se-11-com-tela-ampla-para-leitura-cai-50-na-amazon/

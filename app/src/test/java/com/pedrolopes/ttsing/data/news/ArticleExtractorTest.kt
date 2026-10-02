@@ -164,6 +164,100 @@ class ArticleExtractorTest {
         assertEquals(3, paragraph.sentences.size)
     }
 
+    /**
+     * g1's shape: the story is one <article>, but every embedded video player is wrapped in an
+     * <article> of its own, and each paragraph sits in its own chunk <div>.
+     */
+    private val g1Page = run {
+        val chunks = (1..6).joinToString("\n") { n ->
+            """<div id="chunk-$n"><div class="mc-column content-text">
+                 <p class="content-text__container">Paragraph $n of the story, long enough to read as prose, with a comma.</p>
+               </div></div>"""
+        }
+        """<html><body>
+            <div class="mc-article-body"><article itemprop="articleBody">
+              $chunks
+              <figure><img src="/fotos/plenario.jpg" alt="Plenário"></figure>
+              <article class="video-player-wrapper"></article>
+            </article></div>
+            <article class="video-player-wrapper"></article>
+            <article class="video-player-wrapper"></article>
+          </body></html>"""
+    }
+
+    @Test
+    fun `reads the whole story when empty article wrappers sit beside the real one`() {
+        val body = paragraphs(ArticleExtractor.extract(g1Page))
+        assertEquals((1..6).map { "Paragraph $it of the story, long enough to read as prose, with a comma." }, body)
+    }
+
+    @Test
+    fun `a stored body reopens as exactly the blocks first extracted`() {
+        // The app stores contentHtml and turns it into blocks each time a story is opened.
+        // Scoring that already-trimmed body a second time kept only one chunk of it: the g1
+        // page reopened as its first paragraph.
+        val base = "https://g1.globo.com/politica/noticia/2026/10/02/story.ghtml"
+        val pt = Locale.forLanguageTag("pt-BR")
+        for ((name, html) in listOf("realistic" to realisticPage, "g1" to g1Page)) {
+            val first = ArticleExtractor.extract(html, base, pt)
+            assertEquals(name, first.blocks, ArticleExtractor.blocksOf(first.contentHtml, base, pt))
+        }
+    }
+
+    @Test
+    fun `a stored body still resolves relative image addresses against the story`() {
+        val base = "https://g1.globo.com/politica/noticia/2026/10/02/story.ghtml"
+        val blocks = ArticleExtractor.blocksOf(ArticleExtractor.extract(g1Page, base).contentHtml, base)
+        assertEquals("https://g1.globo.com/fotos/plenario.jpg", blocks.filterIsInstance<Block.Image>().single().zipPath)
+    }
+
+    /** Folha's shape: the sales pitches sit inside the same container as the story. */
+    private val folhaPage = """<html><body><div class="container j-paywall"><div class="c-news__content">
+          <div class="c-tools-share is-hidden rs_skip"><span>Salvar artigos Recurso exclusivo para assinantes</span></div>
+          <div class="c-news__body">
+            <p>A ministra do tribunal determinou nesta quinta-feira que a emissora não exiba o púlpito vazio, segundo a decisão.</p>
+            <p>Ao longo da carreira, a ministra integrou comissões de juristas e conselhos consultivos sobre tecnologia.</p>
+          </div>
+          <div class="rs_skip"><div class="c-subscribe-ads c-subscribe-ads--azul is-hidden">
+            <h3 class="c-subscribe-ads__title">sua assinatura pode valer ainda mais</h3>
+            <p class="c-subscribe-ads__description">Você já conhece as vantagens de ser assinante da Folha? Além de reportagens, newsletters exclusivas.</p>
+          </div></div>
+          <div class="u-hidden-md"><div class="c-newsletter">
+            <h4 class="c-section-title">folhajus</h4>
+            <p class="c-newsletter__subtitle">As principais notícias da semana sobre o cenário jurídico, no seu email.</p>
+          </div></div>
+        </div></div></body></html>"""
+
+    @Test
+    fun `subscription pitches and share bars inside the body are not read`() {
+        val first = ArticleExtractor.extract(folhaPage)
+        val body = text(first)
+        assertTrue(body.contains("púlpito vazio"))
+        assertTrue(body.contains("comissões de juristas"))
+        assertFalse("share bar", body.contains("Salvar artigos"))
+        assertFalse("subscription pitch", body.contains("vantagens de ser assinante"))
+        assertFalse("newsletter", body.contains("cenário jurídico"))
+        // Bodies stored before this get the same cleaning when reopened.
+        val storedBefore = """<div class="c-news__body"><p>The story itself, long enough to be read as prose.</p></div>
+            <div class="c-subscribe-ads"><p>Subscribe for more stories like this one.</p></div>"""
+        val reopened = ArticleExtractor.blocksOf(storedBefore).filterIsInstance<Block.Text>().map { it.text }
+        assertEquals(listOf("The story itself, long enough to be read as prose."), reopened)
+    }
+
+    @Test
+    fun `class names only count as furniture word by word, and never for most of the text`() {
+        val html = """<html><body><article class="article-body">
+              <div class="overflow-hidden shadow-md headroom">
+                <p>The visible article text runs for long enough to be scored as real content by the extractor.</p>
+              </div>
+              <div class="share-wrapper"><p>A body some theme happens to wrap in a share container, with most of the words.</p>
+                <p>It carries on for a second paragraph, so it clearly holds the bulk of the story.</p></div>
+            </article></body></html>"""
+        val body = text(ArticleExtractor.extract(html))
+        assertTrue(body.contains("visible article text"))
+        assertTrue(body.contains("bulk of the story"))
+    }
+
     @Test
     fun `an empty or contentless page yields no blocks rather than throwing`() {
         assertTrue(ArticleExtractor.extract("").blocks.isEmpty())
