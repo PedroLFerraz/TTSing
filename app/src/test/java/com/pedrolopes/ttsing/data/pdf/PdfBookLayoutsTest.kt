@@ -341,4 +341,94 @@ class PdfBookLayoutsTest {
         assertNull(PdfText.respaced("An ordinary line of text", emptyList(), 10f))
         assertNull(PdfText.respaced("I t was", emptyList(), 10f))
     }
+
+    // ---- drawing order ----
+
+    @Test
+    fun `a call-out drawn last is read where it sits, not in the sentence running overleaf`() {
+        val p = page(
+            0,
+            line("A raiz jurídica do problema é antiga e conhecida de todos.", 300f, end = 380f),
+            line("Esse arcabouço constitucional já tem se mostrado ineficaz, e o", 350f),
+            line("crime se modernizou na velocidade da fibra óptica, enquanto o", 362.6f),
+            line("A esse descompasso jurídico soma-se um descompasso operacional.", 327f, size = 14f, end = 400f),
+        )
+        val q = page(1, line("Estado ficou parado no tempo.", 60f, end = 200f))
+        assertEquals(
+            listOf(
+                "A raiz jurídica do problema é antiga e conhecida de todos.",
+                "A esse descompasso jurídico soma-se um descompasso operacional.",
+                "Esse arcabouço constitucional já tem se mostrado ineficaz, e o crime se modernizou na " +
+                    "velocidade da fibra óptica, enquanto o Estado ficou parado no tempo.",
+            ),
+            texts(p, q),
+        )
+    }
+
+    @Test
+    fun `a title page's title drawn after its authors is read first, and columns stay apart`() {
+        val title = page(
+            0,
+            line("Alice Zheng and Amanda Casari", 412f, end = 300f, size = 14f),
+            line("Feature Engineering for Machine Learning", 174f, end = 400f, size = 31f, bold = true),
+        )
+        assertEquals(listOf("Feature Engineering for Machine Learning", "Alice Zheng and Amanda Casari"), texts(title))
+
+        val left = line("The left column goes all the way down the page.", 500f, x = 72f, end = 240f)
+        val right = line("The right column starts at the top.", 100f, x = 260f, end = 432f)
+        assertEquals(listOf(left, right), PdfReflow.readingOrder(listOf(left, right), page(1)))
+    }
+
+    @Test
+    fun `a footer drawn first does not shuffle the page`() {
+        // How Linux Works draws the page's footer before its text, at the right-hand side only.
+        val footer = line("The Big Picture 5", 642f, x = 399f, end = 456f, size = 6f)
+        val full = line("are fairly straightforward, but describing how a process uses", 168f, x = 123f, end = 451f)
+        val short = line("normal course of operation is a bit more complex.", 180f, x = 123f, end = 342f)
+        val heading = line("1.3.1 Process Management", 128f, x = 123f, end = 248f, size = 12f, bold = true)
+        val note = line("Andrew S. Tanenbaum and Herbert Bos (Prentice Hall, 2014).", 89f, x = 123f, end = 369f)
+        val ordered = PdfReflow.readingOrder(listOf(footer, note, heading, full, short), page(0))
+        assertEquals(listOf(note, heading, full, short), ordered - footer)
+    }
+
+    @Test
+    fun `a drop cap's sunken first letter does not reorder its lines`() {
+        val first = line("E sse capítulo trata do maior problema do Brasil de hoje: a", 414.1f, x = 46f)
+        val second = line("violência, que cresce a cada ano que passa sem resposta do", 401.5f, x = 81f)
+        assertEquals(listOf(first, second), PdfReflow.readingOrder(listOf(first, second), page(0)))
+    }
+
+    // ---- captions and chapter numbers ----
+
+    @Test
+    fun `captions are shown but not read, a sentence naming a figure is read`() {
+        val p = page(
+            0,
+            line("The lifecycle has five stages, as the next figure shows.", 100f, end = 380f),
+            line("Figure 1-1. The data engineering lifecycle", 300f, end = 300f, size = 9f),
+            line("Figure 1-2 shows a snapshot of Google Trends for big data.", 340f, end = 380f),
+        )
+        val read = blocks(p)
+        assertEquals("Figure 1-1. The data engineering lifecycle", read[1].text)
+        assertTrue(read[1].sentences.isEmpty())
+        assertFalse(read[2].sentences.isEmpty())
+        assertTrue(PdfReflow.isCaptionLine("Tabela 2: Gastos por estado", 10f, 10f))
+        assertFalse(PdfReflow.isCaptionLine("Figure 1-2 shows a snapshot", 10f, 10f))
+    }
+
+    @Test
+    fun `a chapter number set alone at the chapter's head is read as Chapter N`() {
+        val p = page(
+            0,
+            line("2", 80f, size = 40f, end = 100f),
+            line("Basic Commands and Directory Hierarchy", 140f, size = 20f, end = 400f),
+            line("This chapter is a guide to the Unix commands.", 200f, end = 300f),
+        )
+        assertEquals(listOf("Chapter 2", "Basic Commands and Directory Hierarchy"), texts(p).take(2))
+        val pt = PdfReflow.reflow(listOf(p), emptySet(), Locale.forLanguageTag("pt-BR"), body).blocks
+        assertEquals("Capítulo 2", (pt.first() as Block.Text).text)
+        // Further in, a big number is just a number.
+        val later = page(0, line("Some text first.", 60f, end = 200f), line("1", 120f, size = 40f, end = 100f))
+        assertFalse(texts(later).any { it.startsWith("Chapter") })
+    }
 }

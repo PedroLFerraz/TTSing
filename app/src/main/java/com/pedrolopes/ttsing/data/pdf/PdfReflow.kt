@@ -129,7 +129,7 @@ object PdfReflow {
             return Reflowed(plates, SectionGeometry(plates.map { null }))
         }
 
-        val lineGap = medianLineGap(body.map { it.second }) ?: (bodySize * 1.2f)
+        val lineGap = medianLineGap(body.map { it.second }, bodySize) ?: (bodySize * 1.2f)
         val bodyLeft = percentile(allLines.filter { it.fontSize < bodySize * 1.2f }.map { it.x }, 0.2f) ?: 0f
         val bodyRight = percentile(allLines.map { it.right }, 0.9f) ?: Float.MAX_VALUE
         // A text set in a fixed-pitch face throughout — a typescript, or an OCR text layer —
@@ -153,6 +153,8 @@ object PdfReflow {
         var allBold = true
         // A contents entry, which ran out to its page number: the next line is the next entry.
         var contentsEntry = false
+        // A figure's or table's caption: shown, not read.
+        var inCaption = false
 
         // Pictures the reading has already passed, waiting for the paragraph they interrupt
         // to end: a figure goes *between* paragraphs, never through the middle of a sentence.
@@ -171,6 +173,7 @@ object PdfReflow {
                 // A bold line standing alone, short and unpunctuated, is a run-in heading.
                 val boldHeading = allBold && text.length <= 120 && !endsSentence(text)
                 val kind = when {
+                    inCaption -> Block.Text.Kind.QUOTE
                     // A "heading" that runs on for several lines is an introduction set large.
                     headingKind != null && text.length > 160 -> Block.Text.Kind.PARAGRAPH
                     headingKind != null -> headingKind!!
@@ -178,7 +181,8 @@ object PdfReflow {
                     else -> Block.Text.Kind.PARAGRAPH
                 }
                 if (text.isNotEmpty()) {
-                    blocks.add(Block.Text(text, kind, SentenceSplitter.split(text, locale)))
+                    val sentences = if (inCaption) emptyList() else SentenceSplitter.split(text, locale)
+                    blocks.add(Block.Text(text, kind, sentences))
                     geometry.add(TextGeometry.align(text, paragraphGlyphs.toList()))
                 }
             }
@@ -186,6 +190,7 @@ object PdfReflow {
             paragraphGlyphs.clear()
             headingKind = null
             inCode = false
+            inCaption = false
             itemTextX = null
             allBold = true
             passedFigures.forEach {
@@ -247,6 +252,13 @@ object PdfReflow {
                 if (kind != null && !looksLikeWords(text)) continue
                 // Nor is a crumb of one at text size: "1", "x?", "n n" left over from a formula.
                 if (kind == null && isCrumb(text)) continue
+                // A chapter's number set big on its own, before anything else in the chapter, is
+                // read the way a person would say it: "Chapter 2", not "two".
+                if (kind != null && pageNumber == 0 && paragraph.isEmpty() && blocks.none { it is Block.Text } &&
+                    text.matches(Regex("""\d{1,3}"""))
+                ) {
+                    text = chapterWord(locale) + " " + text
+                }
                 // A numbered heading opens a paragraph and stops short of the right margin;
                 // "1.5 million users…" wrapping onto a new line does neither.
                 if (kind == null && isNumberedHeading(text) &&
@@ -296,6 +308,7 @@ object PdfReflow {
                 if (startsNew) {
                     flush()
                     headingKind = kind
+                    inCaption = kind == null && isCaptionLine(text, line.fontSize, bodySize)
                     paragraph.append(text)
                     if (bullet != null) {
                         itemTextX = line.glyphs.firstOrNull { it.left > line.x + 1f && !it.char.isWhitespace() && it.char !in BULLETS }?.left
@@ -318,19 +331,29 @@ object PdfReflow {
     // ---- reading order ----
 
     /**
-     * [lines] in the order they are read. Content order is almost always right, but a label
-     * at the head of the page — a chapter tab, a "PREFÁCIO" box — is sometimes drawn last,
-     * and would be read at the foot of the page, splitting the sentence that runs on to the
-     * next. A line in the top band, above all the text drawn before it, goes first.
+     * [lines] in the order they are read. Content order is almost always right, but some
+     * things are drawn after the text around them: a chapter tab or a "PREFÁCIO" box at the
+     * head of the page, a call-out set in the gap between two paragraphs, a book's title
+     * after its authors' names. Read in drawing order they come at the foot of the page, in
+     * the middle of the sentence running on to the next. So a line drawn after text printed
+     * below it, in the same column, goes back in above that text. Lines side by side — the
+     * other column — don't count, and a line and a half of slack keeps a drop cap's lines,
+     * whose first letter sits low, in their order.
      */
     fun readingOrder(lines: List<PdfLine>, page: PdfPage): List<PdfLine> {
-        if (page.height <= 0f || lines.size < 2) return lines
-        val band = page.height * MARGIN_BAND
-        val raised = lines.filterIndexed { i, line ->
-            i > 0 && line.y < band &&
-                lines.subList(0, i).all { it.y < band || it.y > line.y + line.fontSize * 0.5f }
+        if (lines.size < 2) return lines
+        val ordered = ArrayList<PdfLine>(lines.size)
+        for (line in lines) {
+            val slack = maxOf(line.fontSize, 1f) * 1.5f
+            val at = ordered.indexOfFirst { earlier ->
+                earlier.y > line.y + slack && earlier.x < line.right && earlier.right > line.x
+            }
+            // Only if all it jumps over sits below it: a footer drawn first is below the whole
+            // page, and moving lines ahead of it one by one would shuffle the page's own order.
+            val late = at >= 0 && ordered.subList(at, ordered.size).all { it.y > line.y - slack }
+            if (late) ordered.add(at, line) else ordered.add(line)
         }
-        return if (raised.isEmpty()) lines else raised + (lines - raised.toSet())
+        return ordered
     }
 
     private fun sameWords(a: String, b: String): Boolean =
@@ -347,6 +370,14 @@ object PdfReflow {
 
     private fun isNumberedHeading(text: String): Boolean =
         text.length <= 80 && numberedHeading.containsMatchIn(text) && !endsSentence(text)
+
+    private fun chapterWord(locale: Locale): String = when (locale.language) {
+        "pt", "es" -> "Capítulo"
+        "fr" -> "Chapitre"
+        "de" -> "Kapitel"
+        "it" -> "Capitolo"
+        else -> "Chapter"
+    }
 
     /** A few characters with no word of two letters in them. */
     fun isCrumb(text: String): Boolean {
@@ -454,6 +485,17 @@ object PdfReflow {
     private val captionPattern = Regex("""^(Figure|Fig\.|Table|Example|Listing|Figura|Tabela|Quadro)\s+[0-9]+([-.–][0-9]+)*\.?\s""")
 
     private fun isCaption(text: CharSequence): Boolean = captionPattern.containsMatchIn(text)
+
+    /**
+     * A caption rather than a sentence that starts by naming a figure: "Figure 1-1. The data
+     * engineering lifecycle" or "Tabela 2: …", against "Figure 1-2 shows a snapshot of…". The
+     * number is followed by a stop, a colon or a dash, or the line is set smaller than the text.
+     */
+    fun isCaptionLine(text: String, fontSize: Float, bodySize: Float): Boolean =
+        captionLabel.containsMatchIn(text) || isCaption(text) && fontSize < bodySize * 0.95f
+
+    private val captionLabel =
+        Regex("""^(Figure|Fig\.|Table|Example|Listing|Figura|Tabela|Quadro|Gráfico|Imagem)\s+[0-9]+([-.–][0-9]+)*\s*[.:–—|]\s""")
 
 
     private fun isFurniture(
@@ -659,10 +701,15 @@ object PdfReflow {
         return sorted.last().first
     }
 
-    /** Typical baseline-to-baseline distance between consecutive body lines. */
-    private fun medianLineGap(pages: List<List<PdfLine>>): Float? {
+    /**
+     * Typical baseline-to-baseline distance between consecutive body lines. Only lines at the
+     * body size count: a label printed twice over, or a title, would skew it.
+     */
+    private fun medianLineGap(pages: List<List<PdfLine>>, bodySize: Float): Float? {
+        fun isBody(line: PdfLine) = line.fontSize in bodySize * 0.85f..bodySize * 1.15f
         val gaps = pages.flatMap { lines ->
-            lines.zipWithNext { a, b -> b.y - a.y }.filter { it > 0f && it < largestFont(lines) * 4 }
+            lines.zipWithNext { a, b -> if (isBody(a) && isBody(b)) b.y - a.y else -1f }
+                .filter { it > 0f && it < largestFont(lines) * 4 }
         }
         return percentile(gaps, 0.5f)
     }

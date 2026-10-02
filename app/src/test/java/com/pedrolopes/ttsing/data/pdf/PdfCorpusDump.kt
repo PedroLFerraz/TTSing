@@ -60,6 +60,45 @@ class PdfCorpusDump {
         }
     }
 
+    /**
+     * Lines read out of place: a heading-like line (bigger or bold) that the PDF draws after
+     * text printed below it in the same column, so the voice would reach it late.
+     */
+    @Test
+    fun lateLines() {
+        val dir = System.getProperty("pdfCorpus").orEmpty()
+        assumeTrue(dir.isNotEmpty())
+        val out = File(System.getProperty("pdfCorpusOut") ?: "build/pdf-corpus").apply { mkdirs() }
+        val report = StringBuilder()
+        File(dir).listFiles { f -> f.extension.equals("pdf", true) }!!.sortedBy { it.name }.forEach { file ->
+            PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly()).use { pdf ->
+                var count = 0
+                for (start in 0 until pdf.numberOfPages step 20) {
+                    val pages = PdfExtract.lines(pdf, start, minOf(start + 20, pdf.numberOfPages))
+                    val body = PdfReflow.bodyFontSize(pages) ?: 10f
+                    for (page in pages) {
+                        val lines = PdfReflow.readingOrder(page.lines, page)
+                        lines.forEachIndexed { i, line ->
+                            if (line.fontSize < body * 1.15f && !line.bold) return@forEachIndexed
+                            if (line.text.length > 100) return@forEachIndexed
+                            val below = lines.subList(0, i).firstOrNull { earlier ->
+                                earlier.y > line.y + line.fontSize * 3 && earlier.x < line.right && earlier.right > line.x &&
+                                    // Body text: not a footer, not a footnote.
+                                    earlier.y < page.height * 0.91f && earlier.y > page.height * 0.09f &&
+                                    earlier.fontSize >= body * 0.95f
+                            } ?: return@forEachIndexed
+                            count++
+                            report.appendLine("${file.nameWithoutExtension} p${page.index + 1} y=%.0f s=%.0f%s \"%s\"  after y=%.0f \"%s\"".format(
+                                line.y, line.fontSize, if (line.bold) "B" else "", line.text.take(60), below.y, below.text.take(40)))
+                        }
+                    }
+                }
+                report.appendLine("== ${file.name}: $count")
+            }
+        }
+        File(out, "late.txt").writeText(report.toString())
+    }
+
     /** The raw lines of chosen pages, with position, size and face: -PpdfRawPages=book:12,book:13 (1-based). */
     @Test
     fun raw() {
@@ -72,7 +111,7 @@ class PdfCorpusDump {
             PDDocument.load(File(dir, "$book.pdf"), MemoryUsageSetting.setupTempFileOnly()).use { pdf ->
                 val p = PdfExtract.lines(pdf, page - 1, page, withImages = true).single()
                 report.appendLine("#### $book p$page  ${p.width}x${p.height}")
-                p.lines.forEach { l ->
+                PdfReflow.readingOrder(p.lines, p).forEach { l ->
                     val flags = (if (l.bold) "B" else "-") + (if (l.monospace) "M" else "-")
                     report.appendLine("x=%6.1f y=%6.1f r=%6.1f s=%5.1f %s | %s".format(l.x, l.y, l.right, l.fontSize, flags, l.text))
                 }
