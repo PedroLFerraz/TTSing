@@ -2,7 +2,6 @@ package com.pedrolopes.ttsing.ui.reader
 
 import android.speech.tts.Voice
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -51,6 +50,7 @@ import com.pedrolopes.ttsing.tts.needsDownload
 import com.pedrolopes.ttsing.tts.piper.CatalogVoice
 import com.pedrolopes.ttsing.tts.piper.DownloadProgress
 import com.pedrolopes.ttsing.ui.common.Hairline
+import com.pedrolopes.ttsing.ui.common.ChoiceChip
 import com.pedrolopes.ttsing.ui.common.MonoText
 import com.pedrolopes.ttsing.ui.common.ThinProgress
 import com.pedrolopes.ttsing.ui.theme.AppFonts
@@ -138,7 +138,7 @@ fun ReaderSettingsSheet(
                 SpeedSteps.chunked(5).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         row.forEach { step ->
-                            ThemeChip(
+                            ChoiceChip(
                                 label = formatSpeed(step),
                                 selected = kotlin.math.abs(settings.speechRate - step) < 0.01f,
                                 onClick = { onSpeechRate(step) },
@@ -162,7 +162,7 @@ fun ReaderSettingsSheet(
                 MonoText("Theme", size = 11f, tracking = 0.16f)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ThemeOrder.forEach { theme ->
-                        ThemeChip(
+                        ChoiceChip(
                             label = theme.displayName(),
                             selected = settings.readerTheme == theme,
                             onClick = { onTheme(theme) },
@@ -274,7 +274,7 @@ fun ReaderSettingsSheet(
                         else -> sleepMinutesLeft != null && sleepMinutesLeft != CHAPTER_END &&
                             sleepMinutesLeft <= minutes && sleepMinutesLeft > minutes - 15
                     }
-                    ThemeChip(label = label, selected = selected) { onSleepTimer(minutes, chapterEnd) }
+                    ChoiceChip(label = label, selected = selected) { onSleepTimer(minutes, chapterEnd) }
                 }
             }
 
@@ -476,26 +476,6 @@ private fun ChoiceRow(
                 modifier = Modifier.padding(end = 14.dp).size(18.dp),
             )
         }
-    }
-}
-
-/** Square, mono, no elevation: selected is a yellow block, everything else is an outline. */
-@Composable
-private fun ThemeChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .background(if (selected) Ink.Live else Color.Transparent)
-            .then(if (selected) Modifier else Modifier.border(1.dp, Ink.Edge))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 9.dp),
-    ) {
-        MonoText(
-            label,
-            size = 11f,
-            tracking = 0.14f,
-            color = if (selected) Ink.Surface else Ink.Muted,
-            weight = if (selected) FontWeight.Bold else FontWeight.Normal,
-        )
     }
 }
 

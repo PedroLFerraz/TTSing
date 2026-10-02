@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material3.AlertDialog
@@ -61,6 +62,7 @@ import com.pedrolopes.ttsing.ui.theme.Ink
 fun FeedsScreen(
     onBack: () -> Unit,
     onOpenFeed: (String) -> Unit,
+    onDiscover: () -> Unit,
     viewModel: FeedsViewModel = viewModel(factory = simpleFactory { FeedsViewModel.create() }),
 ) {
     val feeds by viewModel.feeds.collectAsStateWithLifecycle()
@@ -93,6 +95,7 @@ fun FeedsScreen(
                     } else if (feeds.isNotEmpty()) {
                         HeaderIcon(Icons.Filled.Refresh, "Refresh all feeds") { viewModel.refreshAll() }
                     }
+                    HeaderIcon(Icons.Filled.Explore, "Discover feeds by topic", onClick = onDiscover)
                 },
             )
 
@@ -107,14 +110,17 @@ fun FeedsScreen(
                     MonoText("No feeds yet", size = 12f, tracking = 0.2f, color = Ink.Live)
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        "Add an RSS or Atom feed and its stories will be read aloud like a book — " +
-                            "full text, not just the summary.",
+                        "Pick the biggest sources for a topic, or add any RSS or Atom feed, and " +
+                            "their stories will be read aloud like a book — full text, not just the summary.",
                         fontFamily = AppFonts.Grotesk,
                         fontSize = 15.sp,
                         lineHeight = 22.sp,
                         color = Ink.Muted,
                         textAlign = TextAlign.Center,
                     )
+                    TextButton(onClick = { showAdd = true }, modifier = Modifier.padding(top = 10.dp)) {
+                        MonoText("Add a feed by address", size = 11f, tracking = 0.16f, color = Ink.Live)
+                    }
                 }
             } else {
                 StatusStrip(
@@ -169,9 +175,10 @@ fun FeedsScreen(
                 }
             }
 
+            // With nothing subscribed yet, the topic catalogue is the easier start.
             PillButton(
-                text = "Add a feed",
-                onClick = { showAdd = true },
+                text = if (feeds.isEmpty()) "Browse topics" else "Add a feed",
+                onClick = { if (feeds.isEmpty()) onDiscover() else showAdd = true },
                 modifier = Modifier.padding(horizontal = ScreenPadding, vertical = 14.dp),
             )
         }
@@ -228,9 +235,9 @@ private fun AddFeedDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { MonoText("Feed address", size = 10f, tracking = 0.16f) },
+                    label = { MonoText("Feed or site address", size = 10f, tracking = 0.16f) },
                     placeholder = {
-                        Text("example.com/rss", fontFamily = AppFonts.Grotesk, fontSize = 14.sp, color = Ink.Dim)
+                        Text("theverge.com", fontFamily = AppFonts.Grotesk, fontSize = 14.sp, color = Ink.Dim)
                     },
                     singleLine = true,
                     textStyle = androidx.compose.ui.text.TextStyle(
@@ -250,7 +257,8 @@ private fun AddFeedDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "RSS or Atom. The address is checked now, so you'll know straight away if it isn't a feed.",
+                    "Paste a feed or just the site's address — its feed is found for you. It's checked " +
+                        "now, so you'll know straight away if there isn't one.",
                     fontFamily = AppFonts.Grotesk,
                     fontSize = 13.sp,
                     lineHeight = 18.sp,

@@ -50,7 +50,7 @@ object ArticleExtractor {
         val leadImage = extractLeadImage(doc)
         stripJunk(doc)
 
-        val root = findContentRoot(doc)
+        val root = findContentRoot(doc)?.also { pruneFurniture(it) }
         val blocks = mutableListOf<Block>()
         if (root != null) walk(root, locale, blocks)
 
@@ -62,6 +62,21 @@ object ArticleExtractor {
             contentHtml = root?.html().orEmpty(),
             leadImageUrl = leadImage,
         )
+    }
+
+    /**
+     * The blocks of a body [extract] already found, as stored in [ExtractedArticle.contentHtml].
+     *
+     * Walks it as it is, with no scoring. Running [extract] on it again would score the
+     * already-trimmed body a second time and often keep just one sub-container of it: g1,
+     * The Verge and Canaltech stories came back as their first paragraph or two.
+     */
+    fun blocksOf(contentHtml: String, baseUri: String = "", locale: Locale = Locale.ENGLISH): List<Block> {
+        val body = Jsoup.parse(contentHtml, baseUri).body() ?: return emptyList()
+        // Bodies stored before furniture was pruned get the same treatment; on newer ones
+        // this finds nothing left to remove.
+        pruneFurniture(body)
+        return mutableListOf<Block>().also { walk(body, locale, it) }
     }
 
     // ---- Title ----
@@ -130,16 +145,53 @@ object ArticleExtractor {
         doc.select("[hidden], [aria-hidden=true], [style*=display:none]").forEach { it.remove() }
     }
 
+    /**
+     * Words in a class name that mark a box inside the body as furniture: subscription
+     * pitches, share bars, ad slots, story rails. Folha closes every story with several of
+     * these, which read aloud as a minute of sales talk.
+     *
+     * Matched against whole words of a class ("c-subscribe-ads__title" is c, subscribe, ads,
+     * title) rather than as fragments, unlike [NEGATIVE]: fragments are fine for nudging a
+     * score, but removing on them would take out a body classed "overflow-hidden".
+     */
+    private val FURNITURE_WORDS = setOf(
+        "ad", "ads", "advert", "advertisement", "sponsored", "promo", "newsletter", "newsletters",
+        "subscribe", "subscription", "share", "sharing", "social", "related", "relacionadas",
+        "recommended", "rail", "comments", "outbrain", "taboola",
+    )
+
+    /** ReadSpeaker's class for "don't read this aloud", which some publishers already set. */
+    private const val READ_ALOUD_SKIP = "rs_skip"
+
+    /**
+     * Removes furniture boxes from inside [root]. A box holding most of the text is kept
+     * whatever it's called: a body wrapped in, say, "share-content" is still the body.
+     */
+    private fun pruneFurniture(root: Element) {
+        val total = root.text().length
+        root.select("[class]")
+            .filter { it !== root && isFurniture(it) && it.text().length * 2 <= total }
+            .forEach { it.remove() }
+    }
+
+    private fun isFurniture(element: Element): Boolean =
+        element.classNames().any { name ->
+            name.equals(READ_ALOUD_SKIP, ignoreCase = true) ||
+                name.lowercase().split(CLASS_WORD_SEPARATORS).any { it in FURNITURE_WORDS }
+        }
+
+    private val CLASS_WORD_SEPARATORS = Regex("[^a-z0-9]+")
+
     // ---- Candidate scoring ----
 
     private fun findContentRoot(doc: Document): Element? {
         val body = doc.body() ?: return null
 
-        // A single <article> is a strong, explicit signal; trust it when it has real text.
-        val articles = doc.getElementsByTag("article")
-        if (articles.size == 1 && articles.first()!!.text().length >= MIN_ARTICLE_CHARS) {
-            return articles.first()
-        }
+        // A single <article> with real text is a strong, explicit signal; trust it. Empty ones
+        // don't count: g1 wraps every embedded video player in its own <article>, which used to
+        // defeat this and let scoring pick one paragraph-sized chunk of the story instead.
+        val articles = doc.getElementsByTag("article").filter { it.text().length >= MIN_ARTICLE_CHARS }
+        if (articles.size == 1) return articles.first()
 
         val scores = mutableMapOf<Element, Double>()
         for (paragraph in body.select("p, pre, li, blockquote")) {

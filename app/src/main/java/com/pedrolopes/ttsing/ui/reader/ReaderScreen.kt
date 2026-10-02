@@ -129,6 +129,8 @@ fun ReaderScreen(
     bookId: String,
     onBack: () -> Unit,
     controller: ReadingController,
+    /** Called with the next story's id when the voice plays on into it from this one. */
+    onFollowPlayback: (String) -> Unit = {},
     viewModel: ReaderViewModel = viewModel(factory = simpleFactory { ReaderViewModel.create(bookId) }),
 ) {
     val app = TTSingApp.instance
@@ -179,6 +181,19 @@ fun ReaderScreen(
     LaunchedEffect(connected) { if (connected) controller.prepare(bookId) }
 
     val isThisBook = playback.isActive && playback.bookId == bookId
+
+    // Stories play on into the next one by themselves; a screen left showing the finished
+    // one would sit there with no highlight while the voice reads something else. Only a
+    // screen that was itself playing the story follows: reopening that story later from the
+    // list must show it, even though the service still remembers moving on from it.
+    var playedHere by remember { mutableStateOf(false) }
+    LaunchedEffect(isThisBook, playback.isSpeaking) {
+        if (isThisBook && playback.isSpeaking) playedHere = true
+    }
+    LaunchedEffect(playback.bookId, playback.continuedFrom, playedHere) {
+        val next = playback.bookId
+        if (playedHere && playback.continuedFrom == bookId && next != null && next != bookId) onFollowPlayback(next)
+    }
 
     LaunchedEffect(playback.position.chapterIndex, isThisBook) {
         if (isThisBook) viewModel.syncToChapter(playback.position.chapterIndex)

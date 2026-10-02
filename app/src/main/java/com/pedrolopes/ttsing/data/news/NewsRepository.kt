@@ -9,9 +9,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 /**
  * [scope] is used only for the background prefetch in [refresh]/[addFeed]: firing full-text
@@ -24,11 +28,17 @@ class NewsRepository(
     private val scope: CoroutineScope,
 ) {
 
+    /** The list the current story was opened from, for playing on into the next one. */
+    val queue = NewsQueue()
+
     fun observeFeeds(): Flow<List<FeedEntity>> = dao.observeFeeds()
 
     fun observeArticles(feedUrl: String): Flow<List<ArticleEntity>> = dao.observeArticles(feedUrl)
 
     fun observeLatest(limit: Int = 100): Flow<List<ArticleEntity>> = dao.observeLatest(limit)
+
+    fun observeLatestInTopic(topic: Topic, limit: Int = 100): Flow<List<ArticleEntity>> =
+        dao.observeLatestInTopic(topic.id, limit)
 
     suspend fun article(id: String): ArticleEntity? = dao.article(id)
 
@@ -40,6 +50,10 @@ class NewsRepository(
             ?.let { Locale.forLanguageTag(it.trim().replace('_', '-')) }
             ?.takeIf { it.language.isNotEmpty() }
 
+    /** The next unheard story in [queue] after [articleId], or null at the end of the list. */
+    suspend fun nextUnread(articleId: String): String? =
+        queue.nextAfter(articleId) { id -> dao.article(id)?.isRead == false }
+
     sealed interface AddResult {
         data class Added(val feed: FeedEntity, val articleCount: Int) : AddResult
         data class Failed(val message: String) : AddResult
@@ -48,30 +62,57 @@ class NewsRepository(
     /**
      * Subscribes to [rawUrl]. The URL is fetched and parsed up front so a typo or a page that
      * isn't a feed fails immediately with a message, rather than showing an empty feed later.
+     *
+     * A website's address works too: when the page isn't a feed itself, the feed it advertises
+     * (or one at a conventional location like `/feed`) is subscribed instead.
+     *
+     * [topic] files the feed under a catalogue topic; when omitted, a feed that happens to be
+     * in the catalogue still gets its topic.
      */
-    suspend fun addFeed(rawUrl: String): AddResult {
+    suspend fun addFeed(rawUrl: String, topic: Topic? = null): AddResult {
         val url = normalizeUrl(rawUrl) ?: return AddResult.Failed("That doesn't look like a web address")
 
-        return when (val response = HttpFetcher.get(url)) {
-            is HttpFetcher.Result.Failure -> AddResult.Failed("Couldn't load the feed: ${response.message}")
-            is HttpFetcher.Result.Success -> {
-                val parsed = RssParser.parse(response.body)
-                    ?: return AddResult.Failed("That address isn't an RSS or Atom feed")
-                val now = System.currentTimeMillis()
-                val feed = FeedEntity(
-                    url = url,
-                    title = parsed.title,
-                    siteLink = parsed.siteLink,
-                    language = parsed.language,
-                    lastRefreshedAt = now,
-                    addedAt = now,
-                )
-                dao.upsertFeed(feed)
-                val fresh = storeItems(url, parsed.items)
-                prefetchBodies(url)
-                AddResult.Added(feed, fresh)
-            }
+        val response = HttpFetcher.get(url)
+        if (response is HttpFetcher.Result.Failure) return AddResult.Failed("Couldn't load the feed: ${response.message}")
+        val page = response as HttpFetcher.Result.Success
+
+        val (feedUrl, parsed) = RssParser.parse(page.body)?.let { url to it }
+            ?: discoverFeed(page)
+            ?: return AddResult.Failed("That address isn't a feed, and the page doesn't point to one")
+
+        val catalogued = FeedCatalog.find(feedUrl)
+        val now = System.currentTimeMillis()
+        val feed = FeedEntity(
+            url = feedUrl,
+            // "Folha Poder" rather than "Folha de S.Paulo - Poder - Principal": the name goes
+            // on every story row and the lock screen, where a feed's own title rarely fits.
+            title = catalogued?.title ?: parsed.title,
+            siteLink = parsed.siteLink,
+            language = catalogued?.language ?: parsed.language,
+            lastRefreshedAt = now,
+            addedAt = now,
+            topic = (topic ?: catalogued?.topic)?.id,
+        )
+        dao.upsertFeed(feed)
+        val fresh = storeItems(feedUrl, parsed.items)
+        prefetchBodies(feedUrl)
+        return AddResult.Added(feed, fresh)
+    }
+
+    /**
+     * The feed behind a web page: first what the page advertises, then the usual locations on
+     * its site. Stops at the first address that parses.
+     */
+    private suspend fun discoverFeed(page: HttpFetcher.Result.Success): Pair<String, ParsedFeed>? {
+        val candidates = (
+            FeedDiscovery.advertisedFeeds(page.body, page.finalUrl).take(MAX_ADVERTISED_TRIES) +
+                FeedDiscovery.conventionalFeeds(page.finalUrl)
+            ).distinct()
+        for (candidate in candidates) {
+            val response = HttpFetcher.get(candidate) as? HttpFetcher.Result.Success ?: continue
+            RssParser.parse(response.body)?.let { return candidate to it }
         }
+        return null
     }
 
     suspend fun removeFeed(url: String) {
@@ -81,6 +122,9 @@ class NewsRepository(
 
     /** Re-reads every subscribed feed. Returns how many new stories arrived. */
     suspend fun refreshAll(): Int {
+        // News goes stale; without this the database only ever grows, a full article body
+        // per story. Stories already heard or half-heard go too — a month on, they're history.
+        dao.deleteArticlesPublishedBefore(retentionCutoff())
         var added = 0
         for (feed in dao.feeds()) {
             added += refresh(feed.url)
@@ -92,12 +136,16 @@ class NewsRepository(
         val fresh = when (val response = HttpFetcher.get(feedUrl)) {
             is HttpFetcher.Result.Success -> RssParser.parse(response.body)?.let { parsed ->
                 dao.feed(feedUrl)?.let { existing ->
+                    val catalogued = FeedCatalog.find(feedUrl)
                     dao.upsertFeed(
                         existing.copy(
-                            title = parsed.title.ifEmpty { existing.title },
+                            title = catalogued?.title ?: parsed.title.ifEmpty { existing.title },
                             siteLink = parsed.siteLink ?: existing.siteLink,
-                            language = parsed.language ?: existing.language,
+                            // The catalogue knows better than feeds that all claim "en".
+                            language = catalogued?.language ?: parsed.language ?: existing.language,
                             lastRefreshedAt = System.currentTimeMillis(),
+                            // Feeds subscribed before topics existed pick theirs up here.
+                            topic = existing.topic ?: catalogued?.topic?.id,
                         ),
                     )
                 }
@@ -114,7 +162,12 @@ class NewsRepository(
     /** Inserts stories not seen before, returning how many; existing ones keep their text and position. */
     private suspend fun storeItems(feedUrl: String, items: List<FeedItem>): Int {
         val known = dao.articleIds(feedUrl).toSet()
+        val cutoff = retentionCutoff()
         val fresh = items
+            // Older than what refreshAll() keeps: storing it would only bring a deleted story
+            // back as unread, to be deleted again next time.
+            .filter { it.publishedAt == 0L || it.publishedAt >= cutoff }
+            .filterNot { isAd(it) }
             .map { it to articleId(feedUrl, it.guid) }
             .filter { (_, id) -> id !in known }
 
@@ -123,19 +176,24 @@ class NewsRepository(
         dao.upsertArticles(
             fresh.map { (item, id) ->
                 // Some feeds ship the whole body inline, which saves fetching the page at all.
+                // Others ship a few paragraphs of teaser in the same element, so a short inline
+                // body is kept to read from but the page is still fetched (fetchedAt stays 0)
+                // and wins if it turns out longer.
                 val inline = item.contentHtml?.takeIf { it.isNotBlank() }
                 val extracted = inline?.let { ArticleExtractor.extract(it, item.link) }
+                val readable = extracted != null && extracted.textLength >= MIN_FULL_TEXT
+                val trusted = extracted != null && extracted.textLength >= TRUSTED_INLINE_TEXT
                 ArticleEntity(
                     id = id,
                     feedUrl = feedUrl,
                     title = item.title,
                     link = item.link,
                     summary = item.summary?.let { stripHtml(it) },
-                    contentHtml = extracted?.contentHtml?.takeIf { extracted.textLength >= MIN_FULL_TEXT },
+                    contentHtml = extracted?.contentHtml?.takeIf { readable },
                     imageUrl = leadImageOf(item.imageUrl, extracted),
                     publishedAt = item.publishedAt,
-                    fetchedAt = if (extracted != null) System.currentTimeMillis() else 0,
-                    textLength = extracted?.textLength ?: 0,
+                    fetchedAt = if (trusted) System.currentTimeMillis() else 0,
+                    textLength = if (readable) extracted!!.textLength else 0,
                 )
             },
         )
@@ -168,27 +226,38 @@ class NewsRepository(
         val article = dao.article(articleId) ?: return
         if (article.fetchedAt > 0L) return // already attempted
 
-        val response = HttpFetcher.get(article.link)
-        // Leave fetchedAt at 0 on a failed fetch so a transient error is retried next refresh.
-        if (response !is HttpFetcher.Result.Success) return
+        when (val response = HttpFetcher.get(article.link)) {
+            // Leave fetchedAt at 0 on a transient failure so it is retried next refresh; a
+            // site that refuses outright (some block every app) is marked tried, or its
+            // stories would be re-requested on every single refresh forever.
+            is HttpFetcher.Result.Failure ->
+                if (response.isPermanent) dao.upsertArticle(article.copy(fetchedAt = System.currentTimeMillis()))
 
-        // Locale doesn't matter here: only contentHtml and the lead image are kept. body()
-        // re-extracts from this cached HTML in the real reading locale when the article is
-        // actually opened, which is cheap since it no longer needs the network.
-        val extracted = ArticleExtractor.extract(response.body, article.link)
-        val hasBody = extracted.textLength >= MIN_FULL_TEXT && extracted.blocks.isNotEmpty()
+            // Locale doesn't matter here: only contentHtml and the lead image are kept. body()
+            // turns this cached HTML into blocks in the real reading locale when the article
+            // is actually opened, which is cheap since it no longer needs the network.
+            is HttpFetcher.Result.Success ->
+                dao.upsertArticle(withFetchedPage(article, ArticleExtractor.extract(response.body, article.link)))
+        }
+    }
 
-        dao.upsertArticle(
-            article.copy(
-                // Only keep a body substantial enough to read; a thin one leaves contentHtml
-                // null so opening the story still falls back to the feed summary. The
-                // thumbnail is saved either way — it doesn't depend on the body being good.
-                contentHtml = if (hasBody) extracted.contentHtml else article.contentHtml,
-                fetchedAt = System.currentTimeMillis(),
-                textLength = if (hasBody) extracted.textLength else article.textLength,
-                title = if (hasBody) extracted.title?.takeIf { it.isNotBlank() } ?: article.title else article.title,
-                imageUrl = leadImageOf(article.imageUrl, extracted),
-            ),
+    /**
+     * [article] once its page has been fetched and extracted. The page's body replaces what
+     * is stored only if it is real text *and* longer — a feed's inline teaser loses to the
+     * full page, but a full inline body never loses to a page the extractor read badly. The
+     * thumbnail is taken either way; it doesn't depend on the body being good.
+     */
+    private fun withFetchedPage(article: ArticleEntity, extracted: ExtractedArticle): ArticleEntity {
+        val better = extracted.textLength >= MIN_FULL_TEXT &&
+            extracted.blocks.isNotEmpty() &&
+            extracted.textLength > article.textLength
+        return article.copy(
+            contentHtml = if (better) extracted.contentHtml else article.contentHtml,
+            fetchedAt = System.currentTimeMillis(),
+            textLength = if (better) extracted.textLength else article.textLength,
+            // Publishers often give the headline better here than in the feed.
+            title = if (better) extracted.title?.takeIf { it.isNotBlank() } ?: article.title else article.title,
+            imageUrl = leadImageOf(article.imageUrl, extracted),
         )
     }
 
@@ -207,45 +276,51 @@ class NewsRepository(
         data class Failed(val message: String) : ArticleBody
     }
 
+    /** One lock per article, so the reader screen and the playback service never race a fetch. */
+    private val bodyLocks = ConcurrentHashMap<String, Mutex>()
+
     /**
      * The article's blocks, fetching and extracting the full page the first time it is opened.
      *
      * Falls back to the feed's summary when the page can't be reached or the extractor finds
      * too little to be a real article, so opening a story always gives *something* to read —
      * flagged [ArticleBody.Ready.truncated] so the UI can say the text is only the teaser.
+     *
+     * The reader screen and the playback service both call this for the same story, and the
+     * sentence positions they exchange only line up if both get identical blocks. So it is
+     * serialised per article, and every path reads its blocks from the stored body rather
+     * than returning a fresh page extraction directly: whoever comes second sees exactly what
+     * the first one saved.
      */
     suspend fun body(articleId: String, locale: Locale): ArticleBody = withContext(Dispatchers.Default) {
-        val article = dao.article(articleId) ?: return@withContext ArticleBody.Failed("Article not found")
+        bodyLocks.getOrPut(articleId) { Mutex() }.withLock { loadBody(articleId, locale) }
+    }
 
-        article.contentHtml?.takeIf { it.isNotBlank() }?.let { cached ->
-            val blocks = ArticleExtractor.extract(cached, article.link, locale).blocks
-            if (blocks.isNotEmpty()) return@withContext ArticleBody.Ready(blocks, truncated = false)
-        }
+    private suspend fun loadBody(articleId: String, locale: Locale): ArticleBody {
+        var article = dao.article(articleId) ?: return ArticleBody.Failed("Article not found")
 
-        when (val response = HttpFetcher.get(article.link)) {
-            is HttpFetcher.Result.Success -> {
-                val extracted = ArticleExtractor.extract(response.body, article.link, locale)
-                if (extracted.textLength >= MIN_FULL_TEXT && extracted.blocks.isNotEmpty()) {
-                    // Belt and braces: the background prefetch in refresh()/addFeed() usually
-                    // gets here first, but an article opened before its turn came up (or one
-                    // whose feed still had no thumbnail metadata) is backfilled right here too.
-                    dao.upsertArticle(
-                        article.copy(
-                            contentHtml = extracted.contentHtml,
-                            fetchedAt = System.currentTimeMillis(),
-                            textLength = extracted.textLength,
-                            // Publishers often give the headline better here than in the feed.
-                            title = extracted.title?.takeIf { it.isNotBlank() } ?: article.title,
-                            imageUrl = leadImageOf(article.imageUrl, extracted),
-                        ),
-                    )
-                    ArticleBody.Ready(extracted.blocks, truncated = false)
-                } else {
-                    summaryBody(article, locale)
+        // Not tried yet means the stored body, if any, may only be the feed's teaser: give
+        // the page its chance first. The background prefetch usually got here already.
+        if (article.fetchedAt == 0L) {
+            when (val response = HttpFetcher.get(article.link)) {
+                is HttpFetcher.Result.Success -> {
+                    article = withFetchedPage(article, ArticleExtractor.extract(response.body, article.link))
+                    dao.upsertArticle(article)
+                }
+                is HttpFetcher.Result.Failure -> if (response.isPermanent) {
+                    article = article.copy(fetchedAt = System.currentTimeMillis())
+                    dao.upsertArticle(article)
                 }
             }
-            is HttpFetcher.Result.Failure -> summaryBody(article, locale)
         }
+
+        article.contentHtml?.takeIf { it.isNotBlank() }?.let { stored ->
+            val blocks = ArticleExtractor.blocksOf(stored, article.link, locale)
+            if (blocks.isNotEmpty()) {
+                return ArticleBody.Ready(withHeadline(blocks, article.title, locale), truncated = false)
+            }
+        }
+        return summaryBody(article, locale)
     }
 
     private fun summaryBody(article: ArticleEntity, locale: Locale): ArticleBody {
@@ -269,11 +344,26 @@ class NewsRepository(
         const val MIN_FULL_TEXT = 400
 
         /**
+         * An inline feed body at least this long is taken as the whole story without fetching
+         * the page. Shorter ones are often teasers (The Verge ships ~650 characters inline for
+         * stories three times that), so their page is fetched and the longer text kept.
+         */
+        const val TRUSTED_INLINE_TEXT = 2_000
+
+        /**
          * Ceiling on how many new stories get their body/thumbnail prefetched per refresh.
          * Protects against a first-ever subscribe to a feed with a long backlog turning into
          * dozens of immediate page fetches; the rest still get fetched normally on open.
          */
         const val MAX_PREFETCH_PER_REFRESH = 20
+
+        /** How long stories are kept, counted from when they were published. */
+        val RETENTION_MS = TimeUnit.DAYS.toMillis(30)
+
+        /** A page can advertise a handful of feeds (per category, per author); try the first few. */
+        private const val MAX_ADVERTISED_TRIES = 3
+
+        private fun retentionCutoff(): Long = System.currentTimeMillis() - RETENTION_MS
 
         /** Ids are stable across refreshes so reading positions survive. */
         fun articleId(feedUrl: String, guid: String): String = ARTICLE_PREFIX + sha1("$feedUrl|$guid")
@@ -286,6 +376,33 @@ class NewsRepository(
             MessageDigest.getInstance("SHA-1")
                 .digest(value.toByteArray())
                 .joinToString("") { "%02x".format(it) }
+
+        /**
+         * Whether [item] is shopping or a paid post rather than news: coupon codes, deal
+         * roundups, buying guides, sponsored content. Some otherwise good feeds mix these in
+         * (half of Wired's main feed, at one point), and none is worth listening to.
+         */
+        fun isAd(item: FeedItem): Boolean =
+            AD_TITLE.containsMatchIn(item.title) ||
+                item.categories.any { category -> category.split('/', '>', '|', '›').any { AD_CATEGORY.matches(it.trim()) } }
+
+        /**
+         * A whole category label, or one level of a nested one ("Gear / Deals"). Matched whole
+         * so "Mergers and deals" stays news.
+         */
+        private val AD_CATEGORY = Regex(
+            "coupons?|cupons?|deals?|sponsored|patrocinado|webinars?|whitepapers?|guia de compras|buying guides?|ofertas?",
+            RegexOption.IGNORE_CASE,
+        )
+
+        /**
+         * Words only shopping and paid posts put in a headline. Bare "deal" and "preço" are
+         * left out on purpose: trade deals and price rises are news.
+         */
+        private val AD_TITLE = Regex(
+            """\b(promo codes?|coupons?|cupom|cupons|ofertas? do dia|daily deals?|patrocinado|publieditorial)\b""",
+            RegexOption.IGNORE_CASE,
+        )
 
         /** Accepts what people actually paste: bare hosts, feed:// links, stray whitespace. */
         fun normalizeUrl(raw: String): String? {
@@ -301,5 +418,41 @@ class NewsRepository(
         /** Feed summaries are usually HTML; the reader wants plain text. */
         fun stripHtml(value: String): String =
             org.jsoup.Jsoup.parse(value).text().trim()
+
+        /**
+         * [blocks] with the story's headline in front, unless it already opens with it. Pages
+         * often keep the headline outside the body the extractor picks, and without it the
+         * voice starts mid-story — when stories play back to back, the headline is the only
+         * cue that a new one has begun.
+         */
+        fun withHeadline(blocks: List<Block>, title: String, locale: Locale): List<Block> {
+            val headline = title.trim()
+            if (headline.isEmpty()) return blocks
+            val alreadyThere = blocks.filterIsInstance<Block.Text>()
+                .take(LEADING_BLOCKS_CHECKED)
+                .filter { it.kind != Block.Text.Kind.PARAGRAPH && it.kind != Block.Text.Kind.QUOTE }
+                .any { isSameHeadline(it.text, headline) }
+            if (alreadyThere) return blocks
+            val heading = Block.Text(headline, Block.Text.Kind.HEADING_1, SentenceSplitter.split(headline, locale))
+            return listOf(heading) + blocks
+        }
+
+        /**
+         * Whether two headlines are the same one, give or take punctuation and a site name
+         * tacked on ("Title | The Verge") — one must contain the other and be most of it.
+         */
+        private fun isSameHeadline(a: String, b: String): Boolean {
+            val x = comparable(a)
+            val y = comparable(b)
+            if (x.isEmpty() || y.isEmpty()) return false
+            val (short, long) = if (x.length <= y.length) x to y else y to x
+            return short in long && short.length * 2 > long.length
+        }
+
+        /** Letters and digits only, lowercased: survives curly quotes, dashes and spacing. */
+        private fun comparable(text: String): String =
+            text.lowercase().filter { it.isLetterOrDigit() }
+
+        private const val LEADING_BLOCKS_CHECKED = 3
     }
 }

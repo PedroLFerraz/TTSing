@@ -32,9 +32,9 @@ class ArticleContentSource(
     override val title: String,
     override val locale: Locale,
     val blocks: List<Block>,
+    /** The feed's name, shown where a book would show its author: notification, lock screen. */
+    override val author: String? = null,
 ) : ReadableContent {
-
-    override val author: String? = null
 
     override val sectionCount: Int = 1
 

@@ -1,0 +1,415 @@
+## The Verge | https://www.theverge.com/rss/index.xml
+   status=200 err=None n=10 ads30=0 all=0/10 bodysponsor=0 inline=[684, 682, 682] page=[2780, 2180, 1672]
+   newest=2026-10-02T05:42:19-04:00 oldest=2026-10-01T09:58:11-04:00
+   cats: [('Tech', 9), ('News', 6), ('AI', 3), ('Google', 3), ('Gaming', 3), ('Android', 2)]
+   titles: ['AI music maker Suno now generates spoken words', 'Apple’s reportedly developing a smart home camera that doesn’t record ', 'Google’s new Guided Vision feature can help you read the fine print', 'Android Central &#8216;will continue&#8217; despite laying off its sta']
+## Ars Technica | https://feeds.arstechnica.com/arstechnica/index
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[727, 1316, 682] page=['405', '405', '405']
+   newest=Fri, 02 Oct 2026 10:30:11 +0000 oldest=Wed, 30 Sep 2026 19:53:33 +0000
+   cats: [('Science', 5), ('Tech', 3), ('Space', 3), ('Biz & IT', 3), ('AI', 3), ('Policy', 3)]
+   titles: ['TCL is right to question Samsung’s use of the term “Mini LED”', "Venus' mysterious haze is actually cosmic dust", 'SpaceX describes surgical intervention before launch of latest crew mi', 'Hacks of 2 federal agencies in a month have spilled a bonanza of sensi']
+## TechCrunch | https://techcrunch.com/feed/
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[70, 154, 154] page=[5190, 7266, 4384]
+   newest=Fri, 02 Oct 2026 00:57:57 +0000 oldest=Thu, 01 Oct 2026 13:00:00 +0000
+   cats: [('AI', 10), ('Transportation', 4), ('Startups', 3), ('Security', 3), ('Tesla', 2), ('TechCrunch Disrupt', 2)]
+   titles: ['Robotaxi operators will face fines for blocking first responders', 'The founder’s guide to TechCrunch Disrupt 2026: Everything you need to', 'Lyft is paying $272.5M to settle lawsuit over how it classified driver', 'Kevin Mandia’s new ‘agent swarm’ security startup Armadin raises $255.']
+## Wired Business | https://www.wired.com/feed/category/business/latest/rss
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[176, 98, 186] page=[9818, 5095, 42182]
+   newest=Fri, 02 Oct 2026 09:30:00 +0000 oldest=Tue, 22 Sep 2026 13:00:00 +0000
+   cats: [('Business', 20), ('Business / Artificial Intelligence', 14), ('Business / Big Tech', 2), ('Model Behavior', 2), ('Business / Regulation', 2), ('AI Lab', 2)]
+   titles: ['Health Care Workers Are Tired of Cleaning Up Palantir’s Mess', 'Whatever AI Safety Is, It’s Not This', 'Trump’s ‘Morally Binding’ AI ‘Accord,’ the Rise of AI Agents, and Extr', 'Trump’s AI Safety ‘Accord’ Is a Fancy Pinky-Swear']
+## Wired Security | https://www.wired.com/feed/category/security/latest/rss
+   status=200 err=None n=20 ads30=1 all=1/20 bodysponsor=0 inline=[178, 143, 176] page=[3978, 0, 20121]
+   newest=Fri, 02 Oct 2026 09:45:00 +0000 oldest=Mon, 14 Sep 2026 16:50:00 +0000
+   AD: ['6 Best VPN Services (2026), Tested and Reviewed']
+   cats: [('Security', 19), ('Security / Cyberattacks and Hacks', 11), ('Security / Privacy', 7), ('The Big Story', 2), ('Choke Points', 2), ('Kernel Panic', 2)]
+   titles: ['A Flaw in ChatGPT’s Mac App Could Have Let Hackers Grab Sensitive Data', 'Experience What It’s Like to Travel in the Occupied West Bank', 'The Secrets of the US Spyware King', 'How Israeli Checkpoints Choke Palestinian Life in the Occupied West Ba']
+## Wired Science | https://www.wired.com/feed/category/science/latest/rss
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[159, 161, 186] page=[8129, 19957, 8350]
+   newest=Thu, 01 Oct 2026 12:00:00 +0000 oldest=Sat, 19 Sep 2026 10:00:00 +0000
+   cats: [('Science', 20), ('Science / Health', 5), ('Science / Environment', 5), ('Science / Space', 5), ('Science / Biotech', 3), ('Science / Physics and Math', 2)]
+   titles: ['Measles Is Forcing Hospitals to Adapt to a New Normal', 'There Are Plenty of Reasons to Be Concerned About Bioweapons Developme', 'A Biotech Founder Makes the Moral Case for Gene-Editing Human Embryos', 'Anthropic Says It Discovered a Crispr-Like System. Now What?']
+## Wired (current) | https://www.wired.com/feed/rss
+   status=200 err=None n=50 ads30=18 all=28/50 bodysponsor=0 inline=[128, 120, 144] page=[10981, 6654, 5061]
+   newest=Fri, 02 Oct 2026 11:35:00 +0000 oldest=Thu, 01 Oct 2026 11:30:00 +0000
+   AD: ['Best Smart Cat Trackers of 2026: Fi Mini vs. Tractive', '31 Best STEM Toys for Kids (2026): Learning Made Fun', 'Columbia Promo Codes: 15% Off | October 2026', 'Uber Eats Promo Codes: $15 Off│October 2026', 'Peacock Promo Codes: 40% Off October 2026', 'Wayfair Coupons: Up to 80% Off October 2026']
+   cats: [('Gear', 21), ('Coupons', 11), ('Gear / Deals', 8), ('Gear / Buying Guides', 4), ('Gear / Gear News and Events', 3), ('Business', 3)]
+   titles: ['Best Smart Cat Trackers of 2026: Fi Mini vs. Tractive', 'Your Driverless Cab Is Spying on You', 'Election Deniers Think the GOP’s Terrible Midterm Polling Is a ‘Psyop’', 'A Flaw in ChatGPT’s Mac App Could Have Let Hackers Grab Sensitive Data']
+## MIT TR | https://www.technologyreview.com/feed/
+   status=200 err=None n=10 ads30=1 all=1/10 bodysponsor=0 inline=[7442, 8250, 5574] page=[7913, 8641, 5921]
+   newest=Fri, 02 Oct 2026 09:00:00 +0000 oldest=Tue, 29 Sep 2026 10:43:45 +0000
+   AD: ['Making AI an asset, not an expense']
+   cats: [('App', 6), ('Summary', 3), ('Artificial intelligence', 3), ('The Download', 3), ('Biotechnology and health', 2), ('Climate change and energy', 2)]
+   titles: ['A new contest pits competitors against each other in a race to biologi', 'Don’t be fooled—LLMs don’t reason', 'The Download: AI “mind-reading” and creative uses for small batteries', 'An AI “mind-reading” tool can reconstruct what you’re looking at from ']
+## IEEE Spectrum | https://spectrum.ieee.org/feeds/feed.rss
+   status=200 err=None n=30 ads30=8 all=8/30 bodysponsor=0 inline=[2003, 3393, 9636] page=[0, 4499, 10103]
+   newest=Fri, 02 Oct 2026 10:00:03 +0000 oldest=Mon, 07 Feb 2022 16:12:05 +0000
+   AD: ['Engineering Multipole Resonances in Dielectric Metasurfaces for Transm', 'Unveiling IC-STAR: Full-Flow Autonomy from Digital to Analog', 'Engineering the Substation Exit for Reliability, Capacity, and Expansi', 'The Future Is Fanless: 100% Heat Capture for Liquid Cooled AI Servers', 'Parallel Reads and Write Optimization for Large-Scale Data Replication', 'Rethinking Robot Safety in the Age of AI']
+   cats: [('Type-ti', 6), ('Type-departments', 5), ('Artificial-intelligence', 4), ('Ai', 4), ('Type-webinar', 3), ('Careers', 3)]
+   titles: ['Engineering Multipole Resonances in Dielectric Metasurfaces for Transm', 'Electricity Theft Is Rampant, but Delhi Found a Fix', 'IEEE Celebrates Innovators Shaping the Future', 'A Brief History of the Bloomberg Terminal']
+## The Register | https://www.theregister.com/headlines.atom
+   status=200 err=None n=50 ads30=3 all=5/50 bodysponsor=2 inline=[3674, 2019, 2313] page=[5571, 3922, 4214]
+   newest=Fri, 02 Oct 2026 13:43:35 +0200 oldest=Thu, 01 Oct 2026 09:30:00 +0200
+   AD: ["UK spending watchdog opens investigation into Capita's pension fiasco", "Palantir's Tom Watson lectures MP on accuracy, citing selective data", "Sopra Steria widens legal challenge to Capita's Whitehall outsourcing "]
+   cats: [('security', 10), ('ai and ml', 5), ('public sector', 3), ('software', 2), ('offbeat', 2), ('cyber-crime', 1)]
+   titles: ['Teen suspected of running KillSec ransomware group as cops seize serve', 'Once a $35 computer, the 2 GB Raspberry Pi 4 now costs $67.50', 'Fortinet sounds the alarm over actively exploited FortiMail zero-day', "UK spending watchdog opens investigation into Capita's pension fiasco"]
+## Rest of World | https://restofworld.org/feed/latest
+   status=200 err=None n=12 ads30=0 all=0/12 bodysponsor=0 inline=[212, 208, 216] page=[5360, '429', '429']
+   newest=Fri, 02 Oct 2026 10:00:00 +0000 oldest=Wed, 16 Sep 2026 10:00:00 +0000
+   cats: []
+   titles: ['Who gets to decide if AI is safe? Africa wants a say', 'Awkward: Saudi Arabia’s new EV brand takes on the U.S. rival it alread', 'AI companies want to embed safety evaluators, but countries need their', 'The open-source AI platforms vying to become China’s Hugging Face']
+## 404 Media | https://www.404media.co/rss/
+   status=200 err=None n=15 ads30=0 all=0/15 bodysponsor=0 inline=[2207, 10215, 1497] page=[2207, 10215, 1497]
+   newest=Thu, 01 Oct 2026 14:31:43 GMT oldest=Mon, 28 Sep 2026 13:37:16 GMT
+   cats: [('News', 4), ('Newsletters', 3), ('Hacking', 2), ('AI', 2), ('Flock', 2), ('FOIA', 1)]
+   titles: ["'Everything but censorship'", 'How Schools and Universities Try to Censor Student Journalists', 'Cops Can Bypass iPhone’s Automatic Reboot to Get Into Locked Phones, L', 'Someone ‘Torturing’ LLMs in a Robot Prison Has Triggered the Dumbest D']
+## BBC Technology | https://feeds.bbci.co.uk/news/technology/rss.xml
+   status=200 err=None n=21 ads30=0 all=0/21 bodysponsor=0 inline=[92, 103, 109] page=[2693, 5963, 2998]
+   newest=Fri, 02 Oct 2026 08:20:32 GMT oldest=Sat, 05 Sep 2026 01:00:18 GMT
+   cats: []
+   titles: ["OpenAI fires workers for 'mishandling sensitive information'", "Crypto thieves attack man in home and threaten to kill pregnant wife's", "Trump's AI rebrand causes 'unprecedented' demand for Slovenian website", 'AI boom could trigger market shocks, Bank of England boss warns']
+## Engadget | https://www.engadget.com/rss.xml
+   status=200 err=None n=20 ads30=2 all=2/20 bodysponsor=0 inline=[0, 0, 0] page=[2392, 2912, 1957]
+   newest=Fri, 02 Oct 2026 11:19:29 +0000 oldest=Thu, 01 Oct 2026 14:58:44 +0000
+   AD: ['The Steam Autumn Sale has deals on Resident Evil Requiem and 007 First', "Engadget's best of 2026"]
+   cats: [('News', 5), ('AI', 4), ('Cybersecurity', 2), ('Samsung', 2), ('PC Gaming', 2), ('PlayStation', 2)]
+   titles: ['FDA approves artificial heart valve for kids that grows as they do', "Balcony solar installations will soon be legal in America's most popul", 'New Mexico wants Meta to pay $40 billion in penalties for Cambridge An', 'Florida county finds 11 unpermitted Flock cameras with unidentified ow']
+## Platformer | https://www.platformer.news/rss/
+   status=200 err=None n=15 ads30=0 all=0/15 bodysponsor=3 inline=[11407, 90, 13070] page=[11714, 315, 13370]
+   newest=Wed, 30 Sep 2026 01:20:57 GMT oldest=Fri, 14 Aug 2026 00:12:33 GMT
+   cats: [('Meta', 4), ('AI Safety', 4), ('OpenAI', 3), ('Productivity', 3), ('AI', 2), ('Platformer Pod', 2)]
+   titles: ['OpenAI connects the Dots', 'Following: OpenAI taps the brakes', 'Can Muse make us forget the metaverse?', 'Muse is having a moment']
+## Big Technology | https://www.bigtechnology.com/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[5644, 4663, 38126] page=[5652, 4639, 38135]
+   newest=Mon, 28 Sep 2026 20:20:52 GMT oldest=Mon, 01 Jun 2026 22:32:11 GMT
+   cats: []
+   titles: ['Here’s Everything OpenAI’s Bots (And Others) Have Hacked Or Considered', 'What I Got Wrong About Meta’s Muse, And The Deeper Threat To Frontier ', 'YouTube CEO Neal Mohan: Why We’re Betting On AI And Not Afraid Of It', 'It’s Time to Bring Some Sanity to the AI Risk Conversation']
+## Benedict Evans | https://www.ben-evans.com/benedictevans?format=rss
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[13301, 14765, 10069] page=[13301, 14765, 10069]
+   newest=Thu, 03 Sep 2026 21:26:04 +0000 oldest=Sat, 23 Mar 2024 19:18:28 +0000
+   cats: [('Artificial Intelligence', 18), ('Productivity', 3), ('Apple', 3), ('Policy', 3), ('Discovery', 2), ('Ecommerce', 1)]
+   titles: ['AI, tools and transformation', 'Ways to think about token pricing', 'Predicting AI job exposure', 'How will OpenAI compete?']
+## One Useful Thing | https://www.oneusefulthing.org/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[10503, 11156, 13315] page=[10783, 11628, 14860]
+   newest=Thu, 01 Oct 2026 10:54:12 GMT oldest=Thu, 11 Sep 2025 20:37:39 GMT
+   cats: []
+   titles: ['The Dot and the Swarm', 'The Overhang', 'Agency and Agents', 'An opinionated guide to which AI to use to do stuff']
+## Import AI | https://importai.substack.com/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=6 inline=[21227, 24761, 19637] page=[23373, 25722, 19976]
+   newest=Mon, 28 Sep 2026 12:32:03 GMT oldest=Mon, 04 May 2026 12:32:09 GMT
+   cats: []
+   titles: ['Import AI 474: Platonic mindspace; TPUs in space; Zhipu starts an oute', "Import AI 473: The US's superintelligence strategy; human brain in a m", "Import AI 472: DeepMind's cheating math agents; populist AI policies; ", 'Import AI 471: Why Hugging Face worries me; space mining; FIve Eyes on']
+## Pragmatic Engineer | https://newsletter.pragmaticengineer.com/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[1103, 12421, 17133] page=[1093, 12421, 17123]
+   newest=Thu, 01 Oct 2026 16:43:19 GMT oldest=Fri, 14 Aug 2026 16:55:55 GMT
+   cats: []
+   titles: ['The Pulse: Firebase’s global outage & poor response', 'Distributed databases with Peter Mattis', 'Why has Shopify dropped React Native?', 'The Pulse: RoR creator sparks new “death of coding by hand” debate']
+## Exponential View | https://www.exponentialview.co/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[1175, 4650, 2642] page=[1205, 4779, 2636]
+   newest=Tue, 29 Sep 2026 15:54:57 GMT oldest=Sat, 22 Aug 2026 13:23:14 GMT
+   cats: []
+   titles: ['🚨 The first existential IPO', '📈 Monday data: Damming the slop floods', '🔮 The pros and cons of collective AI #603', '🔮 Safety in numbness']
+## Tecnoblog noticias | https://tecnoblog.net/noticias/feed/
+   status=200 err=None n=50 ads30=0 all=0/50 bodysponsor=3 inline=[2801, 2119, 2759] page=[3213, 2628, 3081]
+   newest=Thu, 01 Oct 2026 20:19:10 +0000 oldest=Tue, 29 Sep 2026 18:53:37 +0000
+   cats: [('Inteligência Artificial (IA)', 6), ('Samsung', 5), ('Brasil', 5), ('Inteligência Artificial', 5), ('Gadgets', 4), ('Amazon', 4)]
+   titles: ['Galaxy Buds On: Samsung anuncia fone de ouvido em formato de brinco', 'Amazon anuncia controle remoto para avançar página no Kindle', 'Galaxy S26 sofre reajuste e fica até R$ 1.300 mais caro', 'Raspberry Pi anuncia mais um reajuste de preços']
+## Tecnoblog (current) | https://tecnoblog.net/feed/
+   status=200 err=None n=50 ads30=7 all=13/50 bodysponsor=16 inline=[7014, 1759, 2282] page=[8065, 2028, 2786]
+   newest=Thu, 01 Oct 2026 22:16:36 +0000 oldest=Wed, 30 Sep 2026 19:21:53 +0000
+   AD: ['iPhone 15 (256 GB) volta a cair de preço com cupom exclusivo Amazon Pr', 'Dia das Crianças: Nintendo Switch 2 surge em oferta por até 12x sem ju', 'Galaxy Tab S11 Ultra registra desconto agressivo após anúncio do S12 U', 'Nintendo Switch OLED tem 2.ª melhor oferta do ano antes do Dia das Cri', 'Galaxy S25 (256 GB) com 12 GB de RAM tem maior desconto com cupom', 'iPhone 16e finalmente baixa de preço em oferta com 43% OFF no Mercado ']
+   cats: [('Pix', 9), ('Celulares', 6), ('Computadores', 5), ('Amazon', 5), ('Samsung', 5), ('Jogos', 4)]
+   titles: ['Melhor Notebook HP: 7 modelos para comprar em 2026', 'Huawei MatePad SE 11 com tela ampla para leitura cai 50% na Amazon', 'iPhone 15 (256 GB) volta a cair de preço com cupom exclusivo Amazon Pr', 'Galaxy Buds On: Samsung anuncia fone de ouvido em formato de brinco']
+## Canaltech | https://feeds.feedburner.com/canaltechbr
+   status=200 err=None n=50 ads30=1 all=1/50 bodysponsor=0 inline=[1494, 1956, 2081] page=[1513, 1987, 2111]
+   newest=Fri, 02 Oct 2026 10:07:00 +0000 oldest=Thu, 01 Oct 2026 13:52:56 +0000
+   AD: ['SUV da Kia em promoção sai mais barato que rivais de BYD e GWM']
+   cats: []
+   titles: ['BYD Dolphin Mini brilha em ranking dos mais vendidos de setembro de 20', 'iPhone Duo terá camada da tela que pode ser removida e trocada', 'Samsung inicia a produção do Galaxy S27 e prepara quatro modelos', 'Mod faz o inimaginável e traz DLSS 4.5 para placas de vídeo AMD']
+## g1 Tecnologia | https://g1.globo.com/rss/g1/tecnologia/
+   status=200 err=None n=100 ads30=0 all=0/100 bodysponsor=0 inline=[10534, 2061, 2610] page=[12677, 3666, 4040]
+   newest=Fri, 02 Oct 2026 06:00:00 -0000 oldest=Mon, 28 Sep 2026 16:55:45 -0000
+   cats: [('G1', 30)]
+   titles: ['Veja o que só os celulares dobráveis conseguem fazer; g1 testou Moto R', 'Polícia espanhola prende adolescente de 16 anos suspeito de liderar gr', 'Agentes de IA tentam invadir site do governo do Canadá; caso acende al', 'Inteligência artificial muda planos de carreira dos jovens; veja profi']
+## Folha Tec | https://feeds.folha.uol.com.br/tec/rss091.xml
+   status=200 err=None n=100 ads30=0 all=1/100 bodysponsor=0 inline=[219, 175, 326] page=[2692, 3978, 10014]
+   newest=02 Oct 2026 08:43:00 -0300 oldest=28 Sep 2026 15:46:00 -0300
+   cats: []
+   titles: ['OpenAI demite três funcionários por manuseio incorreto de informações ', 'Martha Gabriel, especialista em tecnologia e futurista, é nova colunis', 'CEO do Xbox tenta reverter crise da divisão da Microsoft', 'Estudo diz que só 13% das empresas estão no caminho certo ao adotarem ']
+## Estadao Tecnologia | https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/economia/tecnologia/
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[1530, 11247, 4616] page=[2122, 11624, 4631]
+   newest=Fri, 02 Oct 2026 11:34:54 +0000 oldest=Thu, 01 Oct 2026 20:00:00 +0000
+   cats: []
+   titles: ['Embraer entrega 66 aeronaves no 3° trimestre e tem melhor desempenho p', 'Denúncias de assédio eleitoral disparam 823% até setembro em relação a', 'IA muda a lógica de modernização dos ambientes SAP', 'Reunião sobre comércio do G-20 termina com avanço tímido e dissenso en']
+## Meio Bit | https://meiobit.com/feed/
+   status=200 err=None n=10 ads30=0 all=0/10 bodysponsor=0 inline=[6460, 6362, 14420] page=[6680, 6546, 14629]
+   newest=Thu, 01 Oct 2026 19:10:04 +0000 oldest=Tue, 22 Sep 2026 17:29:39 +0000
+   cats: [('Games', 3), ('IA', 3), ('Inteligência Artificial', 3), ('Engenharia', 2), ('NASA', 2), ('Robótica e IA', 2)]
+   titles: ['Sony, PS5, hacking, emulação e "quem planta vento..."', 'NASA mantém Starliner e se prepara para dar adeus à Dragon', '8 tecnologias ÓBVIAS que foram inventadas tarde demais', 'Nvidia pode fazer uma graninha com a China, afinal']
+## Mobile Time | https://www.mobiletime.com.br/feed/
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[3893, 1731, 5630] page=[4502, 2283, 6175]
+   newest=Fri, 02 Oct 2026 02:07:10 +0000 oldest=Wed, 30 Sep 2026 17:20:37 +0000
+   cats: [('Notícias', 19), ('Terra externa', 19), ('Dow Jones', 18), ('IA', 6), ('inteligência artificial', 5), ('Artificial', 3)]
+   titles: ['Sua empresa sabe quem usa IA e quais dados são compartilhados?', 'Claro compra controle da Desktop por R$ 1,7 bilhão', 'Senado do México aprova chamada “Lei antimemes” e abre debate sobre li', 'D2D: maior desafio regulatório é a interferência de radiofrequência']
+## Olhar Digital (current) | https://olhardigital.com.br/feed/
+   status=200 err=None n=10 ads30=2 all=2/10 bodysponsor=0 inline=[1907, 2932, 1985] page=[1781, 2905, 1883]
+   newest=Fri, 02 Oct 2026 11:20:00 +0000 oldest=Fri, 02 Oct 2026 07:02:00 +0000
+   AD: ['Hora de renovar a sala: TVs QLED com tecnologia de ponta estão em ofer', 'Hora de renovar a sala: Smart TVs 4K em promoção na Amazon']
+   cats: [('Ciência e Espaço', 3), ('Pro', 3), ('Guia de Compras', 2), ('produtos', 2), ('Internet e Redes Sociais', 2), ('futebol', 2)]
+   titles: ['Hora de renovar a sala: TVs QLED com tecnologia de ponta estão em ofer', 'Eleição terá domingo com temporais e ventos fortes no Centro-Sul', 'Hora de renovar a sala: Smart TVs 4K em promoção na Amazon', 'Jogos de hoje (02/10/26): onde assistir futebol ao vivo e horários das']
+## MacMagazine (current) | https://macmagazine.com.br/feed/
+   status=200 err=None n=20 ads30=1 all=1/20 bodysponsor=2 inline=[3144, 377, 489] page=[3168, 401, 513]
+   newest=Fri, 02 Oct 2026 11:30:00 +0000 oldest=Thu, 01 Oct 2026 11:30:00 +0000
+   AD: ['Promoções na App Store: El Hijo, Is This Seat Taken?, A Enciclopédia d']
+   cats: [('Apple', 15), ('Software', 7), ('Destaques', 6), ('Mac', 5), ('Gadgets', 5), ('Hardware', 5)]
+   titles: ['Estreias no Apple TV: documentário “K2 — O Desafio Final” e 2ª tempora', 'Como adicionar uma descrição em arquivos no Pré-Visualização do Mac', 'Como desativar a sugestão de nomes de arquivos no Finder', 'Promoções na App Store: El Hijo, Is This Seat Taken?, A Enciclopédia d']
+## Manual do Usuario | https://manualdousuario.net/feed/
+   status=200 err=None n=15 ads30=2 all=2/15 bodysponsor=0 inline=[532, 330, 3559] page=[1245, 645, 4547]
+   newest=Thu, 01 Oct 2026 18:20:08 +0000 oldest=Thu, 24 Sep 2026 21:00:15 +0000
+   AD: ['Firefox 157 traz a nova interface “Nova”', 'Instalar bloqueador de anúncios é um gesto de amor']
+   cats: [('Blog', 15), ('standard', 8), ('aside', 4), ('Textões', 4), ('Links legais', 3), ('link', 3)]
+   titles: ['Reddit restringe leiaute clássico e encerrará feeds RSS', 'Atualização #1 da “vaquinha” para o processo da Folha de S.Paulo', 'A mesa de trabalho do Arlon', '56k.rip: A experiência da internet discada em 1996']
+## Nucleo | https://nucleo.jor.br/feed/
+   status=200 err=None n=15 ads30=2 all=2/15 bodysponsor=0 inline=[13460, 904, 1024] page=[13707, 1151, 10022]
+   newest=Fri, 02 Oct 2026 11:00:25 GMT oldest=Sun, 27 Sep 2026 16:15:54 GMT
+   AD: ['Ubu Editora oferece desconto a assinantes do Núcleo', 'Como uma rede extremista no X articulou a falsa associação de Lula à p']
+   cats: [('Jogo Rápido', 4), ('Eleições 2026', 3), ('Institucional', 3), ('LIE - Laboratório de Investigação Eleitoral', 2), ('Reportagens', 2), ('monitorA', 1)]
+   titles: ['IA é usada em 25% das imagens ofensivas contra candidatas no X', 'Ubu Editora oferece desconto a assinantes do Núcleo', 'Hard Fork deu uma repaginada', 'Ferramentaria Gourmet #16']
+## NPR Politics | https://feeds.npr.org/1014/rss.xml
+   status=200 err=None n=10 ads30=0 all=0/10 bodysponsor=0 inline=[250, 231, 227] page=[20492, 5707, 8880]
+   newest=Fri, 02 Oct 2026 06:30:00 -0400 oldest=Thu, 01 Oct 2026 05:00:00 -0400
+   cats: []
+   titles: ["San Francisco's car crime has plunged. How much credit does Flock dese", "Failed 'torturous' execution attempt on Christa Pike reignites death p", 'The U.S. Senate is up for grabs. Can this Ohio Democrat win back worki', "A judge permanently dismisses former Olympian's Reflecting Pool charge"]
+## PBS NewsHour Politics | https://www.pbs.org/newshour/feeds/rss/politics
+   status=200 err=None n=20 ads30=1 all=1/20 bodysponsor=0 inline=[289, 399, 399] page=[16673, 7635, 6622]
+   newest=Thu, 01 Oct 2026 19:41:57 -0400 oldest=Wed, 30 Sep 2026 18:35:49 -0400
+   AD: ['Karl Rove and David Axelrod give their midterm predictions']
+   cats: [('Donald Trump news', 7), ('Vote 2026', 4), ('Israel', 3), ('dubai', 2), ('FlyDubai', 2), ('news wrap', 2)]
+   titles: ["A fact-checked guide to Trump's talking points and falsehoods at midte", "What we know about Tennessee's botched execution of Christa Pike", 'Investigators search for motive after alleged attack by FlyDubai co-pi', 'News Wrap: Supreme Court to review mandatory detention policy for migr']
+## BBC Politics | https://feeds.bbci.co.uk/news/politics/rss.xml
+   status=200 err=None n=62 ads30=1 all=1/62 bodysponsor=0 inline=[117, 100, 119] page=[4988, 5681, 6060]
+   newest=Fri, 02 Oct 2026 08:26:39 GMT oldest=Tue, 29 Sep 2026 16:07:50 GMT
+   AD: ["First minister demands 'new deal' for Wales, before Plaid Cymru confer"]
+   cats: []
+   titles: ['Zack Polanski to call for three-year cap on private rent rises', "First minister demands 'new deal' for Wales, before Plaid Cymru confer", "Man City not 'above the rules', says No 10 after backlash to Burnham r", "Chris Mason: Why Andy Burnham's about-turn on Manchester City matters"]
+## BBC US-Canada | https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml
+   status=200 err=None n=24 ads30=0 all=0/24 bodysponsor=0 inline=[108, 124, 162] page=[6865, 7034, 431]
+   newest=Fri, 02 Oct 2026 10:00:24 GMT oldest=Sat, 26 Sep 2026 23:04:08 GMT
+   cats: []
+   titles: ["A 'dark cloud' and 'dismal' mood: How it feels on Cornell campus right", 'US death row inmate survives execution attempt after two lethal inject', 'What we know about Christa Pike’s condition after failed execution', "Cornell accuser was 'failed' by university healthcare system, lawyer s"]
+## Guardian US politics | https://www.theguardian.com/us-news/us-politics/rss
+   status=200 err=None n=17 ads30=1 all=1/17 bodysponsor=0 inline=[652, 551, 262] page=[9410, 551, 262]
+   newest=Fri, 02 Oct 2026 11:30:41 GMT oldest=Fri, 25 Sep 2026 12:00:49 GMT
+   AD: ['The US midterm races that will decide control of Congress – mapped']
+   cats: [('US politics', 17), ('US news', 14), ('Donald Trump', 12), ('Trump administration', 11), ('US midterm elections 2026', 5), ('Capital punishment', 5)]
+   titles: ['The US midterm races that will decide control of Congress – mapped', 'Can the Democrats take Texas? – podcast', 'The end times fascists are plotting their escape from our world. Our m', 'Trump doesn’t rule out sending ICE to polling sites; US supreme court ']
+## Politico Congress | https://rss.politico.com/congress.xml
+   status=200 err=None n=30 ads30=2 all=2/30 bodysponsor=2 inline=[7795, 5767, 1274] page=['403', '403', '403']
+   newest=Fri, 02 Oct 2026 04:45:00 EDT oldest=Tue, 29 Sep 2026 04:52:00 EDT
+   AD: ['Paxton secures $20M ad buy', 'The source of Brian Fitzpatrick’s campaign ad attack fodder: A guest a']
+   cats: [('Congress', 58), ('DC', 30), ('2026 Elections', 5), ('Appropriations', 3), ('Donald Trump', 3), ('Jon Husted', 3)]
+   titles: ['The low-profile Democrat helping shape her party’s AI agenda', '‘A game-changer’: House Dems aim for a big majority that could ease Ha', "Top Democratic appropriator wants White House to pay for airing 'propa", 'Barrage of lawsuits targets Trump’s funding cancellation']
+## Roll Call | https://rollcall.com/feed/
+   status=200 err=None n=10 ads30=6 all=6/10 bodysponsor=0 inline=[7184, 6298, 4555] page=[7184, 6298, 4555]
+   newest=2026-10-02 05:00:00 oldest=2026-10-01 06:00:00
+   AD: ['Guns, voting and immigration on deck for Supreme Court', '‘Pain in the ass’: Trump again shows annoyance with Paxton after leake', 'Bill easing seniors’ wheelchair upgrade costs clears Senate', 'Vulnerable Republican senators stick with Trump on votes since 2025', 'Lame-duck effort brewing to protect NIH grantmaking', 'Florida Democrat is latest candidate to unveil anticorruption plan']
+   cats: [('Uncategorized', 9), ('Congress', 9), ('Donald J. Trump', 8), ('Donald Trump', 8), ('Elections', 8), ('Executive Branch', 8)]
+   titles: ['Guns, voting and immigration on deck for Supreme Court', '‘Pain in the ass’: Trump again shows annoyance with Paxton after leake', 'Rare out-of-session hearing draws top Banking Democrat’s ire', 'Bill easing seniors’ wheelchair upgrade costs clears Senate']
+## CBS politics | https://www.cbsnews.com/latest/rss/politics
+   status=200 err=None n=30 ads30=0 all=0/30 bodysponsor=0 inline=[126, 231, 187] page=[5390, 2870, 2490]
+   newest=Fri, 02 Oct 2026 07:34:33 -0400 oldest=Wed, 16 Sep 2026 14:23:00 -0400
+   cats: []
+   titles: ['Trump vows Iran war to end "very quickly" as more troops head to Midea', 'Trump likely to pick Jay Clayton for AI czar, sources say', 'Homan defends ICE crackdown: "Give me an example of where we went too ', 'Trump promotes tariffs, tries to shore up support for Ken Paxton in Te']
+## ABC politics | https://abcnews.go.com/abcnews/politicsheadlines
+   status=200 err=None n=25 ads30=0 all=0/25 bodysponsor=0 inline=[159, 100, 140] page=[4225, 5911, 7301]
+   newest=Thu, 01 Oct 2026 14:38:15 -0400 oldest=Fri, 25 Sep 2026 06:42:14 -0400
+   cats: [('Politics', 25)]
+   titles: ['World ski body eyes financial reset after overspending and wants to ad', 'Iowa lawmakers to vote on raising tax incentive cap for a $15B steel p', 'Trump and Vance hit the campaign trail in deep-red areas where GOP can', 'Pete Hegseth creates a Pentagon Office of Religious Affairs reporting ']
+## NBC politics | https://feeds.nbcnews.com/nbcnews/public/politics
+   status=200 err=None n=25 ads30=1 all=1/25 bodysponsor=0 inline=[243, 264, 340] page=[6230, 7596, 6958]
+   newest=Fri, 02 Oct 2026 09:00:00 GMT oldest=Thu, 01 Oct 2026 14:00:41 GMT
+   AD: ["Customs and Border Protection leaders cut out of Trump's PSA ad buy"]
+   cats: []
+   titles: ['Democrats regain ground on voter registration in key states after stee', 'Vance talks 2028, Ted Cruz and a tough midterm climate that could affe', 'As Trump pushes for data centers, voters in key midterm races say they', "‘Fed up with a war they didn't want’: Midwestern voters air frustratio"]
+## CSM politics | https://rss.csmonitor.com/feeds/politics
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[167, 242, 147] page=[10375, 10120, 10097]
+   newest=Thu, 01 Oct 2026 17:38:00 -0400 oldest=Mon, 31 Aug 2026 05:00:00 -0400
+   cats: []
+   titles: ['Republicans are losing support among Latinos. It might cost them the H', 'In Ohio, Sherrod Brown tests an old model of working-class appeal for ', 'Afrikaners, Trump’s priority refugees, settle into American life', 'Trump is moving fast and breaking things. He could pay in November.']
+## DW English world | https://rss.dw.com/xml/rss-en-all
+   status=200 err=None n=135 ads30=0 all=1/135 bodysponsor=0 inline=[193, 202, 216] page=[6381, 6645, 6974]
+   newest=Fri, 2 Oct 2026 11:42:00 GMT oldest=Wed, 30 Sep 2026 12:45:00 GMT
+   cats: [('News', 14), ('World', 6), ('Germany', 3), ('Sports', 3), ('Business', 1), ('TOP STORIES', 1)]
+   titles: ['Lost aviator Amelia Earhart: Can the mystery be solved?', 'ARD-Deutschlandtrend survey: Germans unite in frustration over the gov', "Germany news: Reform row raises fears for Merz's coalition", 'Ukraine: Kyiv bridges shut after fatal Russian drone assault']
+## Vox Politics | https://www.vox.com/rss/politics/index.xml
+   status=200 err=None n=10 ads30=0 all=0/10 bodysponsor=0 inline=[2486, 4417, 10228] page=[3345, 5502, 11201]
+   newest=2026-10-01T18:22:30-04:00 oldest=2026-09-28T16:47:44-04:00
+   cats: [('Politics', 10), ('Midterm Elections 2026', 5), ('World Politics', 4), ('Donald Trump', 3), ('Today, Explained newsletter', 3), ('Podcasts', 3)]
+   titles: ['Trump’s “Most EXCLUSIVE DINNER IN THE WORLD”', 'How both parties have changed since 2024', 'The Democrats who bet wrong on ICE', 'What Democrats are still getting wrong about voters']
+## Atlantic Politics | https://www.theatlantic.com/feed/channel/politics/
+   status=200 err=None n=25 ads30=0 all=0/25 bodysponsor=2 inline=[10965, 12265, 12039] page=['403', '403', '403']
+   newest=2026-10-02T07:00:00-04:00 oldest=2026-09-12T14:32:33-04:00
+   cats: []
+   titles: ['The GOP’s Culture-War Hail Mary', 'Here’s Who Democrats Want to Impeach Next', 'The Problem With Trump’s Crime Claims', 'What Is Trump Doing?']
+## Reason | https://reason.com/feed/
+   status=200 err=None n=48 ads30=4 all=5/48 bodysponsor=2 inline=[5295, 144, 6589] page=[5507, 467, 6987]
+   newest=Fri, 02 Oct 2026 11:30:41 +0000 oldest=Thu, 01 Oct 2026 11:00:26 +0000
+   AD: ['Newsom-Pention-Bill-Cost-v1', 'Bid (1)', 'RSNInt-BetrayMyown', 'Nicotine-Products']
+   cats: [('Politics', 5), ('Trump Administration', 4), ('Immigration', 3), ('Law & Government', 3), ('Today in Supreme Court History', 2), ('Department of Health and Human Services', 2)]
+   titles: ['Newsom-Pention-Bill-Cost-v1', 'Today in Supreme Court History: October 2, 1967', 'rise in woman gun ownership', 'RFK _ Real Food Show']
+## Fox (current) | https://moxie.foxnews.com/google-publisher/politics.xml
+   status=200 err=None n=25 ads30=5 all=5/25 bodysponsor=2 inline=[5959, 4793, 3241] page=[7313, 5841, 4091]
+   newest=Fri, 02 Oct 2026 07:00:02 -0400 oldest=Thu, 01 Oct 2026 07:00:19 -0400
+   AD: ["Inside the House GOP's 4-week battle plan to save its majority", 'EXCLUSIVE: 128 GOP lawmakers call for federal probe into Planned Paren', 'Sleeper Senate race emerges as unexpected headache for Republicans ahe', 'Fox News Poll: It’s a Lone Star Senate showdown between Talarico and P', 'FAA breaks controller hiring record after chief warned system was ‘chr']
+   cats: [('fox-news/politics', 45), ('fnc', 25), ('Fox News', 25), ('article', 25), ('fox-news/politics/elections/midterm-elections', 7), ('fox-news/person/donald-trump', 7)]
+   titles: ["'DSA jihadi': LA mayoral candidate torched after defending 'genocide' ", "Inside the House GOP's 4-week battle plan to save its majority", 'Trump’s first-year government overhaul delivers change Washington hasn', 'Iraq sounds alarm on terror threat from Syria one day after US troops ']
+## NYPost (current) | https://nypost.com/politics/feed/
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[153, 206, 189] page=[2324, 4181, 1572]
+   newest=Fri, 02 Oct 2026 07:45:58 -0400 oldest=Thu, 01 Oct 2026 15:35:43 -0400
+   cats: []
+   titles: ['House Democrats add eight seats to midterm target map month before ele', 'Kyrsten Sinema’s ex-bodyguard allegedly said he’d ‘take down’ former p', 'NY GOP Rep. Mike Lawler leads Dem Cait Conley in key battleground Hous', 'Here’s the real reason President Trump invited all those AI moguls to ']
+## Tangle | https://www.readtangle.com/archive/rss/
+   status=200 err=None n=15 ads30=3 all=3/15 bodysponsor=1 inline=[19894, 58, 21833] page=[20144, 301, 22079]
+   newest=Thu, 01 Oct 2026 15:51:56 GMT oldest=Wed, 23 Sep 2026 15:52:33 GMT
+   AD: ['The ACA cancelations.', 'The Sunday — September 27', 'The U.S.–Greenland Deal.']
+   cats: [('Medicare', 2), ('China', 2), ('United Nations', 2), ('Iran war', 2), ('Greenland Deal', 2), ('GLP-1', 2)]
+   titles: ['The Protect College Sports Act passes the Senate.', 'Jack Smith Was Accused of Perjury Over THIS?', 'The ACA cancelations.', 'The 2026 midterms preview.']
+## Silver Bulletin | https://www.natesilver.net/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[1745, 2691, 2528] page=[1735, 2667, 2504]
+   newest=Thu, 01 Oct 2026 18:56:21 GMT oldest=Wed, 09 Sep 2026 20:18:10 GMT
+   cats: []
+   titles: ['FLIPR 2026 midterm election forecast', 'How popular is Donald Trump?', 'Who’s ahead on the generic congressional ballot?', 'How popular is the Iran War?']
+## Persuasion | https://www.persuasion.community/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=2 inline=[8744, 7269, 19241] page=[8725, 7264, 20651]
+   newest=Thu, 01 Oct 2026 10:15:42 GMT oldest=Fri, 18 Sep 2026 22:01:46 GMT
+   cats: []
+   titles: ['The Boys Are Alright-Looking But Not Actually Alright', 'Has Vučić Overplayed His Hand?', 'How To Actually Talk About Patriotism', 'DEI Demeans Minorities']
+## Slow Boring | https://www.slowboring.com/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[17158, 9, 251] page=[17242, 107, 346]
+   newest=Fri, 02 Oct 2026 10:02:03 GMT oldest=Tue, 22 Sep 2026 22:00:53 GMT
+   cats: []
+   titles: ['How blue-state Republicans can be relevant again', 'Thursday discussion post', '“The Argument” podcast, ad free: Europe’s liberals are losing on immig', 'Who lost Afghanistan?']
+## The Dispatch | https://thedispatch.com/feed/
+   status=200 err=None n=10 ads30=3 all=3/10 bodysponsor=0 inline=[220, 53, 56] page=[2229, 4671, 1361]
+   newest=Fri, 02 Oct 2026 10:30:06 +0000 oldest=Thu, 01 Oct 2026 05:01:00 +0000
+   AD: ['We Need More Regret in Our Politics', 'Impeaching Pete', 'How Big Could a Blue Wave Be?']
+   cats: [('Donald Trump', 7), ('Politics', 5), ('Opinion', 5), ('Republican Party', 3), ('Iran War', 3), ('Trump Administration', 2)]
+   titles: ['Are Trump’s TV Ads Legal?', 'Sen. Schmitt’s Failed Attack on Jack Smith', 'Tennessee Poison', 'We Need More Regret in Our Politics']
+## Free Press | https://www.thefp.com/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[9266, 366, 366] page=[9265, 365, 365]
+   newest=Fri, 02 Oct 2026 10:03:36 GMT oldest=Wed, 30 Sep 2026 03:04:43 GMT
+   cats: []
+   titles: ['TGIF: No Fatties, No Beardos, No Weirdos', 'What the Dutch Empire Reveals About America Today', 'Taylor Swift Got Her Happy Ending. It May Have Killed Her Music.', 'Can an Execution Be Ethical?']
+## HCR | https://heathercoxrichardson.substack.com/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=1 inline=[11681, 148, 8051] page=[21973, 148, 8589]
+   newest=Fri, 02 Oct 2026 07:22:23 GMT oldest=Thu, 24 Sep 2026 01:02:24 GMT
+   cats: []
+   titles: ['October 1, 2026', 'Withdrawal from Iraq', 'September 30, 2026', 'A Scene before the Senate Judiciary Committee']
+## Krugman | https://paulkrugman.substack.com/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[3668, 7628, 5685] page=[4190, 7628, 6241]
+   newest=Fri, 02 Oct 2026 10:31:31 GMT oldest=Tue, 15 Sep 2026 11:59:40 GMT
+   cats: []
+   titles: ['A “Who You Gonna Believe?” Election', 'A Globalist Comeback?', 'One More Reason Americans Hate AI: It Does Nothing for Them', 'The Beclowning of Scott Bessent']
+## Racket | https://www.racket.news/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[297, 5873, 4389] page=[439, 5849, 4365]
+   newest=Thu, 01 Oct 2026 16:54:13 GMT oldest=Mon, 31 Aug 2026 17:13:37 GMT
+   cats: []
+   titles: ['Listen to This Article: Marriage is Wonderful (He Said Controversially', 'Writing is Good (He Said Controversially)', 'Marriage is Wonderful (He Said Controversially)', 'Free Speech Discussion: A Recording of an Interview With Russian Journ']
+## Dish | https://andrewsullivan.substack.com/feed
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=1 inline=[9026, 9522, 12433] page=[9016, 9512, 12423]
+   newest=Sat, 26 Sep 2026 04:10:15 GMT oldest=Fri, 07 Aug 2026 16:44:24 GMT
+   cats: []
+   titles: ['VFYW: The Oil Engine That Could', 'Jacob Weisberg On Trump’s Collaborators', 'Transcript: Jake Weisberg On Trump’s Collaborators', 'VFYW: An Architectural Eden']
+## g1 Politica | https://g1.globo.com/rss/g1/politica/
+   status=200 err=None n=100 ads30=0 all=0/100 bodysponsor=0 inline=[3798, 5227, 8001] page=[6508, 6848, 9703]
+   newest=Fri, 02 Oct 2026 11:19:43 -0000 oldest=Thu, 01 Oct 2026 22:08:53 -0000
+   cats: [('G1', 30)]
+   titles: ['Maior juro do mercado, uso do rotativo bate recorde; Lula quer limitar', 'IA impulsiona produção de ataques contra candidatas mulheres nas eleiç', 'MPT investiga prefeito de Cotia após denúncia de pressão sobre servido', 'Trabalhar nas eleições dá direito a folga? Quanto ganha um mesário? Ve']
+## Folha Poder | https://feeds.folha.uol.com.br/poder/rss091.xml
+   status=200 err=None n=100 ads30=1 all=1/100 bodysponsor=0 inline=[166, 213, 249] page=[4592, 4671, 10309]
+   newest=02 Oct 2026 07:02:00 -0300 oldest=01 Oct 2026 19:21:00 -0300
+   AD: ['Datafolha: 68% apoiam oferta gratuita de canetas emagrecedoras pelo SU']
+   cats: []
+   titles: ['Debate cancelado é desfecho perfeito para campanha dominada pelo Judic', 'Pesquisa mostra que 82,7% dos brasileiros se dizem muito preocupados c', 'Pagamentos de emendas da Saúde disparam antes de campanhas eleitorais,', 'Candidatos novatos tentam enfrentar peso das emendas no Nordeste com r']
+## Estadao Politica | https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/politica/
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[8744, 11247, 5644] page=[9601, 11624, 6056]
+   newest=Thu, 01 Oct 2026 19:18:02 +0000 oldest=Fri, 02 Oct 2026 00:48:47 +0000
+   cats: []
+   titles: ['Agronegócio representa 13% do eleitorado; 71% se dizem conservadores e', 'Denúncias de assédio eleitoral disparam 823% até setembro em relação a', 'Decisões do TSE e do STF protegem Lula, matam debate na Globo e sugere', 'Abstenção está diretamente ligada à crise das instituições e ‘preço ba']
+## BBC Brasil | https://feeds.bbci.co.uk/portuguese/rss.xml
+   status=200 err=None n=42 ads30=0 all=0/42 bodysponsor=0 inline=[182, 170, 209] page=[15021, 14686, 29555]
+   newest=Fri, 02 Oct 2026 07:52:47 GMT oldest=Thu, 01 Oct 2026 18:56:21 GMT
+   cats: []
+   titles: ['Vorcaro forneceu jatinho e Moët Chandon a desembargador para viagem a ', 'Globo cancela debate e cita decisões de Gilmar Mendes, do STF, e Estel', "Esquerda que ri de 'CEO de MEI' não entende os sonhos do novo trabalha", 'As reações ao cancelamento do debate da Globo - e outros acontecimento']
+## Agencia Brasil Politica | https://agenciabrasil.ebc.com.br/rss/politica/feed.xml
+   status=200 err=None n=10 ads30=0 all=0/10 bodysponsor=0 inline=[9206, 3283, 2194] page=[9361, 3169, 2194]
+   newest=Fri, 02 Oct 2026 07:30:00 -0300 oldest=Wed, 30 Sep 2026 17:59:00 -0300
+   cats: [('Política', 10), ('eleições 2026', 9), ('agenda dos presidenciáveis 2026', 3), ('campanha eleitoral 2026', 2), ('eleições', 2), ('bets', 1)]
+   titles: ['Origem das bets passa por lobby estrangeiro e “jabutis” no Congresso', 'Lives e cancelamento de debate marcam quinta-feira dos candidatos', 'Trump diz acompanhar de perto eleição brasileira e não declara apoio', 'Entidades sugerem políticas de proteção a crianças e adolescentes']
+## Poder360 | https://www.poder360.com.br/feed/
+   status=200 err=None n=10 ads30=1 all=1/10 bodysponsor=0 inline=[938, 1825, 1097] page=[2127, 2958, 2217]
+   newest=Fri, 02 Oct 2026 11:42:44 +0000 oldest=Fri, 02 Oct 2026 10:06:06 +0000
+   AD: ['Justiça suspende patrocínio da Fatal Fans ao Corinthians']
+   cats: [('Poder Eleições', 8), ('Poder Eleições 2026', 8), ('eleições 2026', 8), ('eleições', 6), ('Luiz Inácio Lula da Silva', 6), ('Lula', 6)]
+   titles: ['Gilmar interrompe ministros e diz que não se pode citar Nossa Senhora', '“Vamos proibir bancos de dar mais que 1 cartão” por pessoa, diz Lula', 'Lula diz que Congresso não deve barrar proibição de bets', 'Embaixada dos EUA emite alerta de segurança e suspende serviços no Bra']
+## Congresso em Foco | https://congressoemfoco.uol.com.br/feed/
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[197, 155, 60] page=[1741, 1879, 3135]
+   newest=Fri, 02 Oct 2026 08:07:27 -0300 oldest=Thu, 01 Oct 2026 17:00:48 -0300
+   cats: []
+   titles: ['Mochila arremessada perto do STF não continha bomba, diz PM', 'EUA suspendem serviços consulares no Brasil por "questão de segurança"', 'Candidatos lamentam cancelamento de debate: "frustrante"', 'Flávio Bolsonaro faz live após desistir de debate']
+## Intercept Brasil | https://www.intercept.com.br/feed/
+   status=200 err=None n=40 ads30=1 all=1/40 bodysponsor=0 inline=[22022, 11177, 9269] page=['403', '403', '403']
+   newest=Fri, 02 Oct 2026 10:00:00 +0000 oldest=Fri, 04 Sep 2026 19:00:00 +0000
+   AD: ['ÁUDIO: Cantor gospel propõe usar ONG como ‘laranja’ para receber dinhe']
+   cats: [('Poder', 24), ('Flávio Bolsonaro', 8), ('Eleições 2026', 7), ('André Mendonça', 7), ('STF', 6), ('Dark Horse', 6)]
+   titles: ['Eleições 2026: ‘Um novo governo de extrema direita vai acelerar o cola', 'Ideologia, identidade e voto: a direita indígena na Amazônia Legal', 'Gustavo Gayer recebeu mais de R$ 400 mil em doações de empresário denu', 'Plano da rede trumpista Rockbridge no Brasil mostra que campo progress']
+## Veja Politica | https://veja.abril.com.br/politica/feed/
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[841, 5454, 3223] page=[1536, 6246, 4015]
+   newest=Fri, 02 Oct 2026 11:30:02 +0000 oldest=Thu, 01 Oct 2026 22:14:18 +0000
+   cats: [('Política', 20), ('Eleições 2026', 16), ('Luiz Inácio Lula da Silva', 12), ('Flávio Bolsonaro', 11), ('Revista', 6), ('Maquiavel', 6)]
+   titles: ['A aposta do PT para manter militância mobilizada e conquistar votos na', 'Pesquisas eleitorais mostram a distância entre Lula e Flávio após núme', 'O Brasil que sai das urnas', 'Eleição diferente']
+## CartaCapital Politica | https://www.cartacapital.com.br/politica/feed/
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[91, 70, 49] page=[1805, 1390, 1582]
+   newest=Fri, 02 Oct 2026 07:47:59 -0300 oldest=Thu, 01 Oct 2026 17:57:54 -0300
+   cats: [('Política', 20), ('Eleições 2026', 16), ('Lula', 7), ('Flávio Bolsonaro', 6), ('Datafolha', 6), ('CartaExpressa', 4)]
+   titles: ['Lucas Ribeiro lidera e pode ser reeleito em 1º turno na Paraíba, indic', 'Marina JHC, Renan e Lira disputam as duas cadeiras de Alagoas no Senad', 'Pesquisa Real Time mostra empate entre Renan Filho e JHC às vésperas d', 'Paes pode ser eleito em 1º turno no Rio de Janeiro, indica Paraná Pesq']
+## Gazeta Republica | https://www.gazetadopovo.com.br/feed/rss/republica.xml
+   status=200 err=None n=70 ads30=0 all=0/70 bodysponsor=0 inline=[131, 164, 141] page=[3308, 3138, 2285]
+   newest=Fri, 02 Oct 2026 11:23:21 GMT oldest=Thu, 01 Oct 2026 14:11:55 GMT
+   cats: []
+   titles: ['Maior bancada do Congresso, bancada da agropecuária oficializa apoio a', 'Flávio pede investigação ao STF contra deputados do PT', 'EUA suspendem atendimento em embaixada e consulados no Brasil por ques', 'Associações de imprensa criticam “intervenção judicial” no debate da G']
+## Agencia Publica | https://apublica.org/feed/
+   status=200 err=None n=10 ads30=0 all=0/10 bodysponsor=0 inline=[802, 13864, 12792] page=[2023, 17086, 16036]
+   newest=Fri, 02 Oct 2026 11:00:00 +0000 oldest=Wed, 30 Sep 2026 19:52:06 +0000
+   cats: [('Português', 10), ('política', 8), ('eleições 2026', 7), ('redes sociais', 2), ('direitos humanos', 2), ('Flávio Bolsonaro', 2)]
+   titles: ['Eleições 2026 além da disputa presidencial – com Tathiana Chicarino', 'Dos clubes de tiro ao poder: segmento de armas injeta quase R$ 1,5 mil', 'Se não pelas mulheres, por quem? O que defendem deputados que se opõem', 'Morta por PMs, juíza Patrícia Acioli “humilhava policiais”, disse Fláv']
+## piaui | https://piaui.folha.uol.com.br/feed/
+   status=200 err=None n=30 ads30=0 all=0/30 bodysponsor=0 inline=[4, 104, 45] page=[1573, 30536, 47763]
+   newest=Fri, 02 Oct 2026 00:34:09 +0000 oldest=Fri, 04 Sep 2026 12:20:21 +0000
+   cats: [('', 30)]
+   titles: ['No lugar de debate sem Flávio Bolsonaro, Globo vai exibir debate entre', 'A corte de prazeres de Vorcaro', 'O que esses brasileiros sabem', '“Ele guardou R$ 20 bi no exterior”']
+## Aos Fatos | https://www.aosfatos.org/noticias/feed/
+   status=200 err=None n=48 ads30=0 all=0/48 bodysponsor=0 inline=[8180, 3992, 14921] page=[5262, 2381, 5976]
+   newest=Thu, 01 Oct 2026 19:01:36 GMT oldest=Wed, 30 Sep 2026 17:12:54 GMT
+   cats: [('Eleições 2026', 30), ('Checagem', 25), ('Institucional', 3), ('Reportagem', 2)]
+   titles: ['É falso que Simone Tebet criticou Lula por fala sobre ‘tomar toque’', 'É falso que fogo em imagem de Nossa Senhora em GO foi obra de evangéli', 'Posts simulam capas da ‘Veja’ para associar Janja e Hilton a medidas r', 'Lula não homenageou médium João de Deus em nome de hospital no Pará']
+## Lupa | https://lupa.news/feed/
+   status=200 err=None n=10 ads30=0 all=0/10 bodysponsor=0 inline=[18378, 11230, 7044] page=[19585, 12412, 8046]
+   newest=Fri, 02 Oct 2026 01:10:58 +0000 oldest=Tue, 29 Sep 2026 21:44:07 +0000
+   cats: [('Eleições', 8), ('Jornalismo', 8), ('eleições 2026', 6), ('Lula', 4), ('Política', 4), ('Verificação', 4)]
+   titles: ['Em live, Flávio e aliados repetem antigas ‘fakes’ e voltam a associar ', 'No Flow, Lula repete erro sobre PIB e ao falar de Flávio Bolsonaro', 'Erros e acertos dos candidatos que disputam a presidência do Brasil em', 'VigIA: 1º turno tem quase um conteúdo eleitoral com IA por hora nas re']
+## Estadao Verifica | https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/estadao-verifica/
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[4080, 3401, 1872] page=[4145, 3233, 2269]
+   newest=Thu, 01 Oct 2026 18:05:11 +0000 oldest=Tue, 29 Sep 2026 19:36:05 +0000
+   cats: []
+   titles: ['Lula não apagou registro de consagração a Nossa Senhora; regra eleitor', 'Seis jornalistas de veículo de fact-checking são presos no Egito', 'Não é verdade que reajuste do Bolsa Família foi maior que o do salário', 'Votos transmitidos via Starlink serão criptografados, e provedor não c']
+## Nexo | https://www.nexojornal.com.br/rss.xml
+   status=200 err=None n=20 ads30=0 all=0/20 bodysponsor=0 inline=[9, 9, 9] page=[0, 0, 0]
+   newest=Fri, 02 Oct 2026 01:05:35 GMT oldest=Mon, 28 Sep 2026 18:32:08 GMT
+   cats: [('Expresso', 9), ('Colunistas', 4), ('Externo', 3), ('Podcast', 1), ('Acadêmico', 1), ('Gráfico', 1)]
+   titles: ['A implosão do debate presidencial da Globo a 3 dias do 1º turno', 'Bolsonaro 2 será pior que Bolsonaro 1', 'Hora do voto: quando o brasileiro se vê diante da urna', 'As mulheres antifeministas na política brasileira']
+## Politize | https://www.politize.com.br/feed/
+   status=200 err=None n=10 ads30=0 all=0/10 bodysponsor=0 inline=[3599, 4693, 8748] page=[3996, 5089, 9143]
+   newest=Wed, 30 Sep 2026 13:00:00 +0000 oldest=Sat, 19 Sep 2026 12:00:00 +0000
+   cats: [('Eleições e partidos', 9), ('eleições', 3), ('eleições municipais 2026', 1), ('dia da votação', 1), ('documentos', 1), ('documentos para votar', 1)]
+   titles: ['Aprenda a votar na urna eletrônica em 5 passos', 'Documentos para votar: do título de eleitor à votação', 'Quem não fez biometria pode votar?', 'Você conhece o partido Missão?']
