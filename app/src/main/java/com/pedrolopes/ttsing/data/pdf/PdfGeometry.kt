@@ -146,7 +146,8 @@ class TextGeometry private constructor(
                 if (c.isWhitespace()) continue
                 var j = cursor
                 val limit = minOf(glyphs.size, cursor + LOOKAHEAD)
-                while (j < limit && normal(glyphs[j].glyph.char) != c) j++
+                // Case aside: small caps are evened out ("BasiC" is read "Basic").
+                while (j < limit && !normal(glyphs[j].glyph.char).equals(c, ignoreCase = true)) j++
                 if (j >= limit) continue
                 val g = glyphs[j]
                 pages[i] = g.page

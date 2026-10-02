@@ -2,6 +2,7 @@ package com.pedrolopes.ttsing.data.pdf
 
 import com.pedrolopes.ttsing.data.epub.Block
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.util.Locale
@@ -114,7 +115,7 @@ class PdfGeometryTest {
     }
 
     @Test
-    fun `footnotes keep their own place on the page`() {
+    fun `footnotes stay on the page, unread and unmarked`() {
         val reflowed = PdfReflow.reflow(
             listOf(
                 page(
@@ -135,8 +136,10 @@ class PdfGeometryTest {
             Locale.ENGLISH,
             bodySize = body,
         )
-        val note = reflowed.blocks.indexOfFirst { it is Block.Text && it.kind == Block.Text.Kind.QUOTE }
-        val rect = reflowed.geometry.rects(note, 0..0).single()
-        assertEquals(693f, rect.top)
+        val texts = reflowed.blocks.filterIsInstance<Block.Text>().map { it.text }
+        assertTrue(texts.toString(), texts.none { it.contains("The note itself") })
+        // Nothing read is marked down where the note is printed.
+        val marked = reflowed.blocks.indices.flatMap { reflowed.geometry.rects(it, 0..Int.MAX_VALUE - 1) }
+        assertTrue(marked.toString(), marked.none { it.top >= 690f })
     }
 }

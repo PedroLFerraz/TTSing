@@ -30,6 +30,12 @@ interface BookDocument : Closeable {
 
     fun locale(): Locale = localeForTag(language)
 
+    /**
+     * Whether reading straight on from the section before should pass over [section]: the
+     * copyright page, the contents, the index. Opened on purpose, it still reads.
+     */
+    fun skipsWhenPlayingOn(section: Int): Boolean = false
+
     suspend fun loadSection(index: Int, locale: Locale = locale()): Chapter
 
     /** Bytes for an image block's key, or null when the format carries no images. */

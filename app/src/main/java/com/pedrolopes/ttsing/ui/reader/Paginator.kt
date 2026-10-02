@@ -2,6 +2,7 @@ package com.pedrolopes.ttsing.ui.reader
 
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
@@ -36,6 +37,7 @@ fun blockFontSizeSp(kind: Block.Text.Kind): Float = when (kind) {
     Block.Text.Kind.HEADING_3 -> 19f
     Block.Text.Kind.QUOTE -> 17f
     Block.Text.Kind.PARAGRAPH -> 19f
+    Block.Text.Kind.CODE -> 15f
 }
 
 fun blockVerticalPadding(kind: Block.Text.Kind): Dp = when (kind) {
@@ -51,13 +53,14 @@ fun blockStartIndent(kind: Block.Text.Kind): Dp = when (kind) {
 
 fun blockTextStyle(kind: Block.Text.Kind, fontScale: Float): TextStyle {
     val sizeValue = blockFontSizeSp(kind) * fontScale
-    val isBody = kind == Block.Text.Kind.PARAGRAPH || kind == Block.Text.Kind.QUOTE
+    val isBody = kind == Block.Text.Kind.PARAGRAPH || kind == Block.Text.Kind.QUOTE || kind == Block.Text.Kind.CODE
     return TextStyle(
         fontSize = sizeValue.sp,
         lineHeight = (sizeValue * LINE_HEIGHT_EM).sp,
         fontWeight = if (isBody) FontWeight.Normal else FontWeight.SemiBold,
-        // The whole page is the book's own voice, headings included, so it is all serif.
-        fontFamily = AppFonts.Serif,
+        // The whole page is the book's own voice, headings included, so it is all serif;
+        // only code keeps the fixed pitch it is written in.
+        fontFamily = if (kind == Block.Text.Kind.CODE) FontFamily.Monospace else AppFonts.Serif,
     )
 }
 

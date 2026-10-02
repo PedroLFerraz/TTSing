@@ -374,7 +374,7 @@ class PdfReflowTest {
     }
 
     @Test
-    fun `footnotes drawn first neither pull the figure up nor break into the text`() {
+    fun `footnotes drawn first neither pull the figure up nor break into the text, and are not read`() {
         // As an O'Reilly page is drawn: the footnote first, then the body, then the caption.
         val p = pageWith(
             0,
@@ -394,7 +394,6 @@ class PdfReflowTest {
                     "The type of architecture seen in Figure 1-1.",
                 "[fig]",
                 "Figure 1-1. The over-general swamp, held together by glue",
-                "4 This is literally what they were called.",
                 "The problem with the swamp is how hard it is to change.",
             ),
             flow(PdfReflow.toBlocks(listOf(p, next), emptySet(), Locale.ENGLISH, body)),

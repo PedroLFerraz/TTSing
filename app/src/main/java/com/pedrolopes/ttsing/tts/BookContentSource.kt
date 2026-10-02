@@ -58,6 +58,7 @@ class BookContentSource(
                 sentenceIndex = 0
             }
             chapterIndex++
+            while (chapterIndex < document.sectionCount && document.skipsWhenPlayingOn(chapterIndex)) chapterIndex++
             blockIndex = 0
             sentenceIndex = 0
         }
@@ -86,6 +87,7 @@ class BookContentSource(
                 blockIndex--
             }
             chapterIndex--
+            while (chapterIndex >= 0 && document.skipsWhenPlayingOn(chapterIndex)) chapterIndex--
             blockIndex = Int.MAX_VALUE
         }
         return null
