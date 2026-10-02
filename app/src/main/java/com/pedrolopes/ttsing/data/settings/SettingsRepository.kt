@@ -15,6 +15,9 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
 
 enum class ReaderTheme { SYSTEM, LIGHT, SEPIA, DARK }
 
+/** A PDF shown as its own pages, with the spoken text marked on them, or reflowed like a book. */
+enum class PdfView { PAGES, TEXT }
+
 /**
  * Collects the string preferences whose key starts with [prefix], stripped of it — the way
  * per-language and per-book entries are stored, since their key set isn't known up front.
@@ -48,7 +51,13 @@ data class AppSettings(
     /** Cached AnkiDroid ids for the TTSing deck and note type; null until first card. */
     val ankiDeckId: Long? = null,
     val ankiModelId: Long? = null,
+    /** How each PDF is shown (book id → [PdfView] name), for the ones not on the default. */
+    val pdfViews: Map<String, String> = emptyMap(),
 ) {
+    /** Pages as printed unless the user switched this PDF to reflowed text. */
+    fun pdfViewFor(bookId: String): PdfView =
+        pdfViews[bookId]?.let { runCatching { PdfView.valueOf(it) }.getOrNull() } ?: PdfView.PAGES
+
     /** The stored voice for a language, or null to use the engine's default. */
     fun voiceFor(languageCode: String): String? = voices[languageCode]
 
@@ -86,6 +95,9 @@ class SettingsRepository(private val context: Context) {
         /** Per-voice speaking-speed accumulators, keyed by voice name. */
         const val SPEED_PREFIX = "speed_"
 
+        /** How each PDF is shown, one key per book, e.g. `pdfview_<sha1>`. */
+        const val PDF_VIEW_PREFIX = "pdfview_"
+
         fun voice(languageCode: String) = stringPreferencesKey("$VOICE_PREFIX$languageCode")
 
         fun bookLanguage(bookId: String) = stringPreferencesKey("$BOOK_LANGUAGE_PREFIX$bookId")
@@ -109,6 +121,7 @@ class SettingsRepository(private val context: Context) {
             speeds = prefs.stringsWithPrefix(Keys.SPEED_PREFIX),
             ankiDeckId = prefs[Keys.ankiDeckId],
             ankiModelId = prefs[Keys.ankiModelId],
+            pdfViews = prefs.stringsWithPrefix(Keys.PDF_VIEW_PREFIX),
         )
     }
 
@@ -152,6 +165,13 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit {
             val key = Keys.voice(languageCode)
             if (voiceName == null) it.remove(key) else it[key] = voiceName
+        }
+    }
+
+    suspend fun setPdfView(bookId: String, view: PdfView) {
+        context.dataStore.edit {
+            val key = stringPreferencesKey(Keys.PDF_VIEW_PREFIX + bookId)
+            if (view == PdfView.PAGES) it.remove(key) else it[key] = view.name
         }
     }
 

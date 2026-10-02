@@ -86,6 +86,7 @@ import com.pedrolopes.ttsing.anki.CardDraft
 import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.settings.AppSettings
+import com.pedrolopes.ttsing.data.settings.PdfView
 import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.ReadingController
 import com.pedrolopes.ttsing.tts.piper.PiperCatalog
@@ -114,7 +115,7 @@ private val DefaultSettings = AppSettings(
 )
 
 /** The page on screen, as the pager reports it: where it is in its chapter, and where it starts. */
-private data class VisiblePage(
+internal data class VisiblePage(
     val chapterIndex: Int,
     val pageInChapter: Int,
     val pagesInChapter: Int,
@@ -184,6 +185,11 @@ fun ReaderScreen(
         if (isThisBook) viewModel.syncToChapter(playback.position.chapterIndex)
     }
 
+    // A PDF shows its own pages unless this book was switched to reflowed text.
+    val pdf = viewModel.pdf
+    val pdfView = if (pdf != null) settings.pdfViewFor(bookId) else null
+    val showsPdfPages = pdf != null && pdfView == PdfView.PAGES
+
     val visibleChapter = visible?.chapterIndex ?: ui.anchorChapter
     val visibleTitle = ui.window.firstOrNull { it.index == visibleChapter }?.title
 
@@ -191,7 +197,8 @@ fun ReaderScreen(
 
     // Stored counts for the book, with the chapter on screen corrected to what the pager
     // actually laid out. A single-section article needs no counting: its pages are all here.
-    val pageCounts: List<Int>? = ui.pageCounts
+    // A PDF's own pages need no counting either.
+    val pageCounts: List<Int>? = (if (showsPdfPages) ui.pdfSectionPages.takeIf { it.isNotEmpty() } else ui.pageCounts)
         ?.let { counts ->
             counts.toMutableList().also { m ->
                 visible?.let { v -> if (v.chapterIndex in m.indices) m[v.chapterIndex] = v.pagesInChapter }
@@ -219,7 +226,9 @@ fun ReaderScreen(
     val secondsPerChar = remember(fromChapter, bookChars > 0, settings.speechRate, isThisBook) {
         TimeLeft.secondsPerChar(listenedMs, listenedChars, voiceCps) / settings.speechRate.coerceAtLeast(0.1f)
     }
-    val secondsPerPage = remember(fromChapter, pagesKnown, bookChars, settings.speechRate, isThisBook) {
+    // Also refreshed when a PDF switches between its own pages and reflowed ones: a page
+    // holds a different amount of text in each.
+    val secondsPerPage = remember(fromChapter, pagesKnown, bookChars, settings.speechRate, isThisBook, showsPdfPages) {
         pageCounts?.let { counts ->
             TimeLeft.secondsPerPage(listenedMs, listenedChars, voiceCps, bookChars, BookPages.total(counts), settings.speechRate)
         }
@@ -368,6 +377,30 @@ fun ReaderScreen(
                         )
                     ui.window.isEmpty() ->
                         CircularProgressIndicator(color = palette.accent, modifier = Modifier.align(Alignment.Center))
+                    showsPdfPages && pdf != null -> PdfPageView(
+                        pdf = pdf,
+                        jump = ui.jump,
+                        background = palette.background,
+                        voiceChapter = voiceChapter.takeIf { isThisBook },
+                        activeBlockIndex = playback.position.blockIndex.takeIf { isThisBook },
+                        sentenceRange = playback.sentenceRange.takeIf { isThisBook },
+                        wordRange = playback.wordRange.takeIf { isThisBook },
+                        onTap = { page, x, y ->
+                            scope.launch {
+                                viewModel.pdfPositionAt(page, x, y)?.let { (position, _) -> controller.play(bookId, position) }
+                            }
+                        },
+                        onLongPress = { page, x, y ->
+                            scope.launch {
+                                viewModel.pdfPositionAt(page, x, y)?.let { (position, offset) ->
+                                    cardDraft = viewModel.draftFor(position.chapterIndex, position.blockIndex, offset)
+                                }
+                            }
+                        },
+                        onVisiblePage = { page -> visible = page },
+                        onVoicePage = { page -> voicePage = page },
+                        onSettledChapter = viewModel::onVisibleChapter,
+                    )
                     else -> PagedBook(
                         window = ui.window,
                         jump = ui.jump,
@@ -471,6 +504,12 @@ fun ReaderScreen(
                 scope.launch { app.settings.setFontScale((scale * 20).roundToInt() / 20f) }
             },
             onTheme = { theme -> scope.launch { app.settings.setReaderTheme(theme) } },
+            pdfView = pdfView,
+            onPdfView = { view ->
+                scope.launch { app.settings.setPdfView(bookId, view) }
+                // The other view opens where this one was.
+                visible?.let { viewModel.jumpTo(it.chapterIndex, it.firstBlockIndex) }
+            },
             onSelectDefaultVoice = {
                 scope.launch { app.settings.setVoice(languageCode, null) }
                 controller.selectVoice(null)

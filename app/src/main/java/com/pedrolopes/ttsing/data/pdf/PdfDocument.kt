@@ -44,6 +44,10 @@ import java.util.Locale
  * and the platform renderer draws that rectangle of the page when the reader asks for it — so
  * a figure looks exactly as it does in the PDF, masks and all, whatever format it is stored in.
  *
+ * The same reflow also feeds the page view, which shows the pages themselves: each block
+ * remembers where its characters are printed ([SectionGeometry]), so the sentence being read
+ * can be marked on the page while positions, the voice and flashcards still work on blocks.
+ *
  * PDFBox is not thread-safe, so every call into it holds [lock]; the renderer has its own.
  */
 class PdfDocument private constructor(
@@ -53,6 +57,8 @@ class PdfDocument private constructor(
     override val author: String?,
     override val language: String?,
     private val sections: List<Section>,
+    /** Every page's size in points as displayed: cropped, and turned by its rotation. */
+    private val pageSizes: List<PageSize>,
     override val unreadableReason: String?,
 ) : BookDocument {
 
@@ -72,15 +78,73 @@ class PdfDocument private constructor(
     override suspend fun loadSection(index: Int, locale: Locale): Chapter = withContext(Dispatchers.IO) {
         val section = sections.getOrNull(index)
             ?: throw IllegalArgumentException("Section $index out of range")
-        val blocks = synchronized(lock) {
+        val reflowed = synchronized(lock) {
             val pages = extract(pdf, section.firstPage, section.endPage, withImages = true)
             val book = sample()
             // The book's running headers, plus anything that repeats within this section only
             // (a chapter title used as its own running header).
             val furniture = book.furniture + PdfReflow.detectFurniture(pages)
-            PdfReflow.toBlocks(pages, furniture, locale, book.bodySize)
+            PdfReflow.reflow(pages, furniture, locale, book.bodySize)
         }
-        Chapter(index, section.title, blocks)
+        synchronized(geometries) { geometries[index] = reflowed.geometry }
+        Chapter(index, section.title, reflowed.blocks)
+    }
+
+    // ---- pages, for the page view ----
+
+    /** Where each section's text sits on its pages, for the last few sections loaded. */
+    private val geometries = object : LinkedHashMap<Int, SectionGeometry>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, SectionGeometry>) = size > 8
+    }
+
+    // Page sizes are read when the file opens, not here: the page view asks for them on the
+    // main thread, which must never wait on [lock] while a section is being extracted.
+    val pageCount: Int get() = pageSizes.size
+
+    fun pageSize(page: Int): PageSize = pageSizes.getOrElse(page) { PageSize(612f, 792f) }
+
+    /** The section [page] belongs to: sections are runs of whole pages. */
+    fun sectionOfPage(page: Int): Int = sections.indexOfLast { it.firstPage <= page }.coerceAtLeast(0)
+
+    fun firstPageOf(section: Int): Int = sections.getOrNull(section)?.firstPage ?: 0
+
+    fun sectionPageCounts(): List<Int> = sections.map { it.endPage - it.firstPage }
+
+    /** [section]'s text positions, reading the section if it hasn't been read lately. */
+    suspend fun geometry(section: Int): SectionGeometry {
+        synchronized(geometries) { geometries[section] }?.let { return it }
+        loadSection(section, locale())
+        return synchronized(geometries) { geometries[section] } ?: SectionGeometry(emptyList())
+    }
+
+    /** Pages drawn lately, by page and width; bounded by memory rather than count. */
+    private val pageBitmaps = object : android.util.LruCache<String, Bitmap>(PAGE_CACHE_BYTES) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
+
+    /** Draws [page] [widthPx] wide, on white, exactly as the PDF looks. */
+    suspend fun renderPage(page: Int, widthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
+        val key = "$page@$widthPx"
+        pageBitmaps.get(key)?.let { return@withContext it }
+        synchronized(renderLock) {
+            runCatching {
+                val pages = openRenderer()
+                if (page !in 0 until pages.pageCount) return@runCatching null
+                pages.openPage(page).use { p ->
+                    val heightPx = (widthPx.toFloat() * p.height / p.width).toInt().coerceAtLeast(1)
+                    val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
+                    bitmap.eraseColor(Color.WHITE)
+                    p.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    bitmap
+                }
+            }.getOrNull()
+        }?.also { pageBitmaps.put(key, it) }
+    }
+
+    private fun openRenderer(): PdfRenderer = renderer ?: run {
+        val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        rendererFile = fd
+        PdfRenderer(fd).also { renderer = it }
     }
 
     // ---- figures ----
@@ -104,11 +168,7 @@ class PdfDocument private constructor(
 
     /** Draws just [figure]'s rectangle of its page, at a size that stays sharp on a phone. */
     private fun renderFigure(figure: FigureKey): ByteArray? = runCatching {
-        val pages = renderer ?: run {
-            val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-            rendererFile = fd
-            PdfRenderer(fd).also { renderer = it }
-        }
+        val pages = openRenderer()
         if (figure.page !in 0 until pages.pageCount) return null
         pages.openPage(figure.page).use { page ->
             val scale = (FIGURE_WIDTH_PX / figure.width).coerceIn(1f, 4f)
@@ -148,9 +208,15 @@ class PdfDocument private constructor(
             .also { bookSample = it }
     }
 
+    /** A page's size in points, as displayed. */
+    data class PageSize(val width: Float, val height: Float)
+
     companion object {
         const val PAGES_PER_SECTION = 10
         private const val SAMPLE_PAGES = 40
+
+        /** A few phone-width pages: enough to scroll back and forth without redrawing. */
+        private const val PAGE_CACHE_BYTES = 48 * 1024 * 1024
 
         /** Fewer non-space characters than this per page, on average, means no text layer. */
         private const val SCANNED_CHARS_PER_PAGE = 20
@@ -164,7 +230,11 @@ class PdfDocument private constructor(
                 val author = PdfMetadata.author(info?.author)
                 val language = pdf.documentCatalog?.language?.trim()?.takeIf { it.isNotEmpty() }
                 val sections = outlineSections(pdf) ?: pageRunSections(pdf.numberOfPages)
-                return PdfDocument(file, pdf, title, author, language, sections, scannedReason(pdf))
+                val pageSizes = pdf.pages.map { page ->
+                    val box = page.cropBox
+                    if (page.rotation % 180 != 0) PageSize(box.height, box.width) else PageSize(box.width, box.height)
+                }
+                return PdfDocument(file, pdf, title, author, language, sections, pageSizes, scannedReason(pdf))
             } catch (e: Exception) {
                 pdf.close()
                 throw e
@@ -272,22 +342,47 @@ class PdfDocument private constructor(
         private var lineY = 0f
         private var lineRight = 0f
         private val sizes = mutableListOf<Float>()
+        private var glyphs = mutableListOf<Glyph>()
         private var pageWidth = 0f
         private var pageHeight = 0f
+
+        /** The page's crop box size before its rotation, and the rotation it is displayed with. */
+        private var storedWidth = 0f
+        private var storedHeight = 0f
+        private var rotation = 0
 
         init {
             sortByPosition = false
             suppressDuplicateOverlappingText = true
         }
 
+        /**
+         * Reads a page turned by /Rotate as if it were upright. PDFBox lays a turned page's
+         * text out along the turned axes, which splits every line into single letters; read
+         * upright, its lines come out whole, and only the glyph boxes are turned to match the
+         * page as displayed.
+         */
+        override fun processPage(page: PDPage) {
+            rotation = ((page.rotation % 360) + 360) % 360
+            if (rotation == 0) return super.processPage(page)
+            page.rotation = 0
+            try {
+                super.processPage(page)
+            } finally {
+                page.rotation = rotation
+            }
+        }
+
         override fun startPage(page: PDPage) {
             super.startPage(page)
             lines = mutableListOf()
             resetLine()
+            // Lines are measured on the upright page (see processPage), so the page is too.
             val box = page.cropBox
-            val sideways = page.rotation % 180 != 0
-            pageWidth = if (sideways) box.height else box.width
-            pageHeight = if (sideways) box.width else box.height
+            storedWidth = box.width
+            storedHeight = box.height
+            pageWidth = box.width
+            pageHeight = box.height
         }
 
         override fun writeString(string: String, textPositions: MutableList<TextPosition>) {
@@ -303,7 +398,29 @@ class PdfDocument private constructor(
             textPositions.forEach { position ->
                 val size = position.fontSizeInPt.takeIf { it > 1f } ?: position.heightDir
                 if (size > 0f) sizes.add(size)
+                addGlyphs(position, size)
             }
+        }
+
+        /**
+         * The position's characters with their boxes as displayed. PDFBox measures from the
+         * crop box's top-left before the page's rotation, so a rotated page's boxes are turned
+         * with it. The box spans the line's ascent and descent rather than the ink, so a marked
+         * word reads as one band rather than letters of different heights.
+         */
+        private fun addGlyphs(position: TextPosition, size: Float) {
+            val height = if (size > 0f) size else return
+            val left = position.xDirAdj
+            val right = left + position.widthDirAdj
+            val top = position.yDirAdj - height * 0.8f
+            val bottom = position.yDirAdj + height * 0.22f
+            val (l, t, r, b) = when (rotation) {
+                90 -> listOf(storedHeight - bottom, left, storedHeight - top, right)
+                180 -> listOf(storedWidth - right, storedHeight - bottom, storedWidth - left, storedHeight - top)
+                270 -> listOf(top, storedWidth - right, bottom, storedWidth - left)
+                else -> listOf(left, top, right, bottom)
+            }
+            glyphs.addAll(Glyph.split(position.unicode ?: return, l, t, r, b))
         }
 
         override fun writeWordSeparator() {
@@ -322,7 +439,7 @@ class PdfDocument private constructor(
             val content = text.toString().trim()
             if (content.isNotEmpty()) {
                 val size = sizes.sorted().let { if (it.isEmpty()) 0f else it[it.size / 2] }
-                lines.add(PdfLine(content, lineX, lineY, lineRight, size))
+                lines.add(PdfLine(content, lineX, lineY, lineRight, size, glyphs))
             }
             resetLine()
         }
@@ -331,6 +448,7 @@ class PdfDocument private constructor(
             text = StringBuilder()
             lineRight = 0f
             sizes.clear()
+            glyphs = mutableListOf()
         }
     }
 

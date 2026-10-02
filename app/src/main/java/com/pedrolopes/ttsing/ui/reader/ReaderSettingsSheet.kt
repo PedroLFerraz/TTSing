@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pedrolopes.ttsing.data.settings.AppSettings
+import com.pedrolopes.ttsing.data.settings.PdfView
 import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.LanguageOption
 import com.pedrolopes.ttsing.tts.needsDownload
@@ -90,6 +91,9 @@ fun ReaderSettingsSheet(
     onSpeechRate: (Float) -> Unit,
     onFontScale: (Float) -> Unit,
     onTheme: (ReaderTheme) -> Unit,
+    /** How this PDF is shown, or null when the book isn't a PDF. */
+    pdfView: PdfView?,
+    onPdfView: (PdfView) -> Unit,
     onSelectLanguage: (Locale) -> Unit,
     onInstallVoiceData: () -> Unit,
     onSelectDefaultVoice: () -> Unit,
@@ -147,16 +151,40 @@ fun ReaderSettingsSheet(
                     }
                 }
             }
+            if (pdfView != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    MonoText("Show PDF as", size = 11f, tracking = 0.16f)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ThemeChip("Pages", selected = pdfView == PdfView.PAGES, onClick = { onPdfView(PdfView.PAGES) })
+                        ThemeChip("Text", selected = pdfView == PdfView.TEXT, onClick = { onPdfView(PdfView.TEXT) })
+                    }
+                    Text(
+                        text = if (pdfView == PdfView.PAGES) {
+                            "The pages as printed, with what's being read marked on them."
+                        } else {
+                            "Reflowed like a book, so font size and theme apply."
+                        },
+                        fontFamily = AppFonts.Grotesk,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = Ink.Muted,
+                    )
+                }
+            }
+
             // In 5% steps: every font size is its own page layout, counted across the whole
             // book, so a continuous slider would recount it for every hair of movement.
-            HardSlider(
-                "Font size",
-                settings.fontScale,
-                "%.0f%%".format(settings.fontScale * 100),
-                0.8f..1.8f,
-                onFontScale,
-                steps = 19,
-            )
+            // A PDF's own pages have their own type, so there it has nothing to change.
+            if (pdfView != PdfView.PAGES) {
+                HardSlider(
+                    "Font size",
+                    settings.fontScale,
+                    "%.0f%%".format(settings.fontScale * 100),
+                    0.8f..1.8f,
+                    onFontScale,
+                    steps = 19,
+                )
+            }
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 MonoText("Theme", size = 11f, tracking = 0.16f)
