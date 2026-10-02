@@ -3,11 +3,14 @@ package com.pedrolopes.ttsing.data.pdf
 import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.SentenceSplitter
 import java.util.Locale
+import kotlin.math.abs
 
 /**
  * One line of text as it sits on a PDF page. Coordinates are in points with y growing
  * downwards (PDFBox's "direction-adjusted" space), [y] being the baseline. [glyphs] are its
  * characters' boxes, for marking spoken text on the page; empty when nobody needs them.
+ * [bold] and [monospace] say the line is (almost) all set in such a face: a run-in heading,
+ * or a line of code.
  */
 data class PdfLine(
     val text: String,
@@ -16,6 +19,8 @@ data class PdfLine(
     val right: Float,
     val fontSize: Float,
     val glyphs: List<Glyph> = emptyList(),
+    val bold: Boolean = false,
+    val monospace: Boolean = false,
 )
 
 /**
@@ -92,22 +97,31 @@ object PdfReflow {
         furniture: Set<String>,
         locale: Locale,
         bodySize: Float? = null,
-    ): List<Block> = reflow(pages, furniture, locale, bodySize).blocks
+        titles: Set<String> = emptySet(),
+    ): List<Block> = reflow(pages, furniture, locale, bodySize, titles).blocks
 
     /** Blocks and, for each, where its text sits on the pages. */
     class Reflowed(val blocks: List<Block>, val geometry: SectionGeometry)
 
     /**
      * [toBlocks], plus each text block's characters lined up with the glyphs they came from,
-     * so the page view can mark what is being read on the page itself.
+     * so the page view can mark what is being read on the page itself. [titles] are the
+     * book's outline titles ([titleKey]), which running headers repeat.
      */
     fun reflow(
         pages: List<PdfPage>,
         furniture: Set<String>,
         locale: Locale,
         bodySize: Float? = null,
+        titles: Set<String> = emptySet(),
     ): Reflowed {
-        val body = pages.map { page -> page to page.lines.filterNot { isFurniture(it, page, furniture) } }
+        val bodySize = bodySize
+            ?: weightedMedian(pages.flatMap { page -> page.lines.map { it.fontSize to it.text.length } })
+            ?: 10f
+        val furniture = furniture + runningTitles(pages, titles, bodySize)
+        val body = pages.map { page ->
+            page to readingOrder(page.lines, page).filterNot { isFurniture(it, page, furniture, titles, bodySize) }
+        }
         val allLines = body.flatMap { it.second }
         if (allLines.isEmpty()) {
             // A run of plates: pictures and no text.
@@ -115,10 +129,15 @@ object PdfReflow {
             return Reflowed(plates, SectionGeometry(plates.map { null }))
         }
 
-        val bodySize = bodySize ?: weightedMedian(allLines.map { it.fontSize to it.text.length }) ?: 10f
         val lineGap = medianLineGap(body.map { it.second }) ?: (bodySize * 1.2f)
         val bodyLeft = percentile(allLines.filter { it.fontSize < bodySize * 1.2f }.map { it.x }, 0.2f) ?: 0f
         val bodyRight = percentile(allLines.map { it.right }, 0.9f) ?: Float.MAX_VALUE
+        // A text set in a fixed-pitch face throughout — a typescript, or an OCR text layer —
+        // is not code; code is the fixed-pitch minority among proportional text.
+        val codeFace = allLines.count { it.monospace } < allLines.size * 0.5f
+        // Likewise bold only stands out against text that isn't.
+        val boldFace = allLines.count { it.bold } < allLines.size * 0.5f
+        fun PdfLine.isBold() = boldFace && bold
 
         val blocks = mutableListOf<Block>()
         val geometry = mutableListOf<TextGeometry?>()
@@ -127,26 +146,48 @@ object PdfReflow {
         val paragraphGlyphs = mutableListOf<PagedGlyph>()
         var headingKind: Block.Text.Kind? = null
         var previous: PdfLine? = null
+        // What the paragraph being built is: a listing of code, a bulleted item (and where
+        // its text, past the bullet, starts), or all in bold so far.
+        var inCode = false
+        var itemTextX: Float? = null
+        var allBold = true
+        // A contents entry, which ran out to its page number: the next line is the next entry.
+        var contentsEntry = false
 
         // Pictures the reading has already passed, waiting for the paragraph they interrupt
         // to end: a figure goes *between* paragraphs, never through the middle of a sentence.
         val passedFigures = mutableListOf<PdfImage>()
-        // Footnotes wait the same way, and are read once the paragraph that cites them is done.
-        val passedNotes = mutableListOf<Note>()
-
-        fun addText(text: String, kind: Block.Text.Kind, glyphs: List<PagedGlyph>) {
-            blocks.add(Block.Text(text, kind, SentenceSplitter.split(text, locale)))
-            geometry.add(TextGeometry.align(text, glyphs))
-        }
 
         fun flush() {
-            val text = paragraph.toString().replace(Regex("\\s+"), " ").trim()
+            if (inCode) {
+                val code = paragraph.lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
+                // Shown, but never read: no sentences, so the voice goes straight past it.
+                if (code.isNotEmpty()) {
+                    blocks.add(Block.Text(code, Block.Text.Kind.CODE, emptyList()))
+                    geometry.add(TextGeometry.align(code, paragraphGlyphs.toList()))
+                }
+            } else {
+                val text = paragraph.toString().replace(Regex("\\s+"), " ").trim()
+                // A bold line standing alone, short and unpunctuated, is a run-in heading.
+                val boldHeading = allBold && text.length <= 120 && !endsSentence(text)
+                val kind = when {
+                    // A "heading" that runs on for several lines is an introduction set large.
+                    headingKind != null && text.length > 160 -> Block.Text.Kind.PARAGRAPH
+                    headingKind != null -> headingKind!!
+                    boldHeading -> Block.Text.Kind.HEADING_3
+                    else -> Block.Text.Kind.PARAGRAPH
+                }
+                if (text.isNotEmpty()) {
+                    blocks.add(Block.Text(text, kind, SentenceSplitter.split(text, locale)))
+                    geometry.add(TextGeometry.align(text, paragraphGlyphs.toList()))
+                }
+            }
             paragraph.setLength(0)
-            if (text.isNotEmpty()) addText(text, headingKind ?: Block.Text.Kind.PARAGRAPH, paragraphGlyphs.toList())
             paragraphGlyphs.clear()
             headingKind = null
-            passedNotes.forEach { note -> addText(note.text, Block.Text.Kind.QUOTE, note.glyphs) }
-            passedNotes.clear()
+            inCode = false
+            itemTextX = null
+            allBold = true
             passedFigures.forEach {
                 blocks.add(Block.Image(it.key, null))
                 geometry.add(null)
@@ -157,12 +198,20 @@ object PdfReflow {
         for ((pageNumber, pageAndLines) in body.withIndex()) {
             val (page, pageLines) = pageAndLines
             val figures = ArrayDeque(figuresOn(page))
+            // Footnotes are left to the page: the voice reads the text, not its apparatus.
+            // Their numbers still tell which markers in the text to take out.
             val notes = footnotesOn(pageLines, page, bodySize)
             val noteNumbers = notes.mapNotNull { noteNumber.find(clean(it.text))?.groupValues?.get(1) }.toSet()
             val lines = pageLines - notes.toSet()
             for ((lineNumber, line) in lines.withIndex()) {
-                val text = stripNoteMarkers(clean(line.text), noteNumbers)
+                // Code is set at text size; a cover title in a typewriter face is still a title.
+                val code = codeFace && line.monospace && line.fontSize <= bodySize * 1.2f
+                var text = if (code) line.text.trim() else stripNoteMarkers(clean(line.text), noteNumbers)
                 if (text.isEmpty()) continue
+                if (!code && isMath(text)) continue
+                // The same words drawn twice over — a label printed at two sizes, fake bold —
+                // are read once.
+                if (!code && previous != null && sameWords(text, previous!!.text)) continue
                 // Reaching a line below a figure's top edge means the reader has got to it. The
                 // space the figure takes up is not paragraph spacing: text that resumes under a
                 // picture is often the same paragraph, carrying on.
@@ -172,11 +221,45 @@ object PdfReflow {
                     passedFigures.add(figure)
                     figureSpace += figure.height + lineGap * 2
                 }
-                val kind = headingKindFor(line, text, bodySize)
                 val prev = previous
+                val gap = if (prev == null) 0f else gapBetween(prev, line) - figureSpace
+                // A page break, or a jump back up the page to the next column.
+                val turned = prev != null && (lineNumber == 0 && pageNumber > 0 || line.y < prev.y)
 
+                if (code) {
+                    if (!inCode) {
+                        flush()
+                        inCode = true
+                    } else if (paragraph.isNotEmpty()) {
+                        paragraph.append('\n')
+                    }
+                    paragraph.append(text)
+                    line.glyphs.mapTo(paragraphGlyphs) { PagedGlyph(page.index, it) }
+                    previous = line
+                    continue
+                }
+
+                val bullet = bulletPattern.find(text)
+                if (bullet != null) text = text.substring(bullet.range.last + 1)
+                if (text.isEmpty()) continue
+                var kind = headingKindFor(line, text, bodySize)
+                // Big type that isn't words — a stray letter, a mangled formula — is not a title.
+                if (kind != null && !looksLikeWords(text)) continue
+                // Nor is a crumb of one at text size: "1", "x?", "n n" left over from a formula.
+                if (kind == null && isCrumb(text)) continue
+                // A numbered heading opens a paragraph and stops short of the right margin;
+                // "1.5 million users…" wrapping onto a new line does neither.
+                if (kind == null && isNumberedHeading(text) &&
+                    (prev == null || endsSentence(paragraph) || gap > lineGap * 1.3f || turned) &&
+                    line.right < bodyRight - bodySize * 2
+                ) {
+                    kind = Block.Text.Kind.HEADING_3
+                }
+
+                val entry = leaders.containsMatchIn(line.text)
                 val startsNew = when {
-                    prev == null -> true
+                    prev == null || inCode -> true
+                    bullet != null || entry || contentsEntry -> true
                     // Headings stand alone, and a run of heading lines at one size is one heading.
                     // Measured against the heading's own size: titles are set with more
                     // leading than body text, and "Why Platform Engineering Is" / "Becoming
@@ -186,12 +269,22 @@ object PdfReflow {
                     isCaption(text) || isCaption(paragraph) &&
                         (lineNumber == 0 || line.y < prev.y || gapBetween(prev, line) > lineGap * 1.3f) -> true
                     kind != null || headingKind != null ->
-                        kind != headingKind || gapBetween(prev, line) > maxOf(lineGap * 1.6f, line.fontSize * 1.9f)
+                        kind != headingKind || gapBetween(prev, line) > maxOf(lineGap * 1.6f, line.fontSize * 1.9f) ||
+                            // A chapter label over its title: two sizes, two headings.
+                            abs(line.fontSize - prev.fontSize) > prev.fontSize * 0.15f
+                    // A bold line after plain text opens a heading; plain text after a short
+                    // bold line closes one.
+                    line.isBold() && !allBold && (endsSentence(paragraph) || gap > lineGap * 1.3f || turned) -> true
+                    !line.isBold() && allBold && paragraph.length <= 120 && !endsSentence(paragraph) -> true
+                    // A sentence that hasn't ended goes on, whatever the layout does: the rest
+                    // of a word broken at a page turn, or a note's text set off from its label.
+                    !endsSentence(paragraph) && text.first().isLowerCase() && (turned || gap < lineGap * 2.5f) -> false
+                    // A bulleted item's wrapped lines hang under its text, not under the bullet.
+                    itemTextX != null && abs(line.x - itemTextX!!) < bodySize * 0.6f && !turned && gap < lineGap * 1.45f -> false
                     // A page break, or a jump back up the page (the next column), only ends the
                     // paragraph if the text there reads as ended.
-                    lineNumber == 0 && pageNumber > 0 -> endsSentence(paragraph) || isIndented(line, bodyLeft, bodySize)
-                    line.y < prev.y -> endsSentence(paragraph) || isIndented(line, bodyLeft, bodySize)
-                    gapBetween(prev, line) - figureSpace > lineGap * 1.45f -> true
+                    turned -> endsSentence(paragraph) || isIndented(line, bodyLeft, bodySize)
+                    gap > lineGap * 1.45f -> true
                     // A first-line indent is an indent relative to the line above: an epigraph
                     // or a block quote set in from the margin keeps all its lines together.
                     isIndentedFrom(line, prev, bodySize) -> true
@@ -204,18 +297,96 @@ object PdfReflow {
                     flush()
                     headingKind = kind
                     paragraph.append(text)
+                    if (bullet != null) {
+                        itemTextX = line.glyphs.firstOrNull { it.left > line.x + 1f && !it.char.isWhitespace() && it.char !in BULLETS }?.left
+                    }
                 } else {
                     appendLine(paragraph, text)
                 }
+                allBold = allBold && line.isBold()
+                contentsEntry = entry
                 line.glyphs.mapTo(paragraphGlyphs) { PagedGlyph(page.index, it) }
                 previous = line
             }
             // Whatever sits below the page's last line comes after it.
             passedFigures.addAll(figures)
-            passedNotes.addAll(joinNotes(notes, page.index))
         }
         flush()
         return Reflowed(blocks, SectionGeometry(geometry))
+    }
+
+    // ---- reading order ----
+
+    /**
+     * [lines] in the order they are read. Content order is almost always right, but a label
+     * at the head of the page — a chapter tab, a "PREFÁCIO" box — is sometimes drawn last,
+     * and would be read at the foot of the page, splitting the sentence that runs on to the
+     * next. A line in the top band, above all the text drawn before it, goes first.
+     */
+    fun readingOrder(lines: List<PdfLine>, page: PdfPage): List<PdfLine> {
+        if (page.height <= 0f || lines.size < 2) return lines
+        val band = page.height * MARGIN_BAND
+        val raised = lines.filterIndexed { i, line ->
+            i > 0 && line.y < band &&
+                lines.subList(0, i).all { it.y < band || it.y > line.y + line.fontSize * 0.5f }
+        }
+        return if (raised.isEmpty()) lines else raised + (lines - raised.toSet())
+    }
+
+    private fun sameWords(a: String, b: String): Boolean =
+        signature(clean(a)).filterNot { it.isWhitespace() } == signature(clean(b)).filterNot { it.isWhitespace() }
+
+    // ---- lists, headings, maths ----
+
+    // "¢" is how OCR tends to read a round bullet.
+    private const val BULLETS = "•●▪■◦‣▸►➢❖✓✔○∙¢"
+    private val bulletPattern = Regex("^[$BULLETS]\\s*")
+
+    /** "2.2.1 The Shell Window": a numbered section heading, set at body size. */
+    private val numberedHeading = Regex("""^\d{1,2}(\.\d{1,2}){1,3}\.?\s+\p{L}""")
+
+    private fun isNumberedHeading(text: String): Boolean =
+        text.length <= 80 && numberedHeading.containsMatchIn(text) && !endsSentence(text)
+
+    /** A few characters with no word of two letters in them. */
+    fun isCrumb(text: String): Boolean {
+        val trimmed = text.trim()
+        return trimmed.length <= 4 && trimmed.split(' ').none { token -> token.count { it.isLetter() } >= 2 }
+    }
+
+    /** Something a person would call a title: a real word, a chapter number, an acronym. */
+    fun looksLikeWords(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.matches(Regex("""(?i)\d{1,3}|[ivxlcdm]{1,7}"""))) return true
+        val tokens = trimmed.split(Regex("\\s+"))
+        if (tokens.any { token -> token.count { it.isLetter() } >= 4 }) return true
+        return tokens.any { token -> token.length >= 2 && token.all { it.isLetter() && it.isUpperCase() } }
+    }
+
+    private const val MATH_SYMBOLS = "=+−×÷∑∏∫√∞∂∆∇≤≥≈≠±^|{}<>"
+
+    /**
+     * A formula, or what an OCR'd formula turns into: mostly symbols and fragments, with an
+     * equals sign or barely a word in it. Read aloud it is noise, so it is left to the page.
+     */
+    fun isMath(text: String): Boolean {
+        val tokens = text.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return false
+        val words = tokens.count { token ->
+            val core = token.trim { !it.isLetter() }
+            core.length >= 3 && core.all { it.isLetter() || it == '’' || it == '\'' || it == '-' }
+        }
+        val letters = text.count { it.isLetter() }
+        val symbols = text.count { it in MATH_SYMBOLS }
+        val digits = text.count { it.isDigit() }
+        return when {
+            words >= 4 -> false
+            // Not one word in it, and a bracket or an operator: "P(B|A)P(A)", "n!".
+            words == 0 && text.any { it in "()[]{}|!^=+*/" } -> true
+            symbols > 0 && (text.contains('=') || symbols >= 2) && words <= 2 -> true
+            text.length < 60 && symbols + digits > letters && symbols > 0 -> true
+            else -> false
+        }
     }
 
     // ---- figures ----
@@ -258,24 +429,12 @@ object PdfReflow {
         val below = lines
             .filter { it.y > lowestBody && it.fontSize <= bodySize * 0.9f && it.y > page.height * 0.5f }
             .sortedBy { it.y }
-        if (below.isEmpty() || !noteNumber.containsMatchIn(clean(below.first().text))) return emptyList()
-        return below
-    }
-
-    /** A footnote's text, and the glyphs of the lines it was joined from. */
-    private class Note(val text: String, val glyphs: List<PagedGlyph>)
-
-    /** Footnote lines on page [pageIndex], one [Note] per note. */
-    private fun joinNotes(lines: List<PdfLine>, pageIndex: Int): List<Note> {
-        val notes = mutableListOf<Pair<StringBuilder, MutableList<PagedGlyph>>>()
-        for (line in lines) {
-            val text = clean(line.text)
-            if (text.isEmpty()) continue
-            if (notes.isEmpty() || noteNumber.containsMatchIn(text)) notes.add(StringBuilder(text) to mutableListOf())
-            else appendLine(notes.last().first, text)
-            line.glyphs.mapTo(notes.last().second) { PagedGlyph(pageIndex, it) }
-        }
-        return notes.map { (text, glyphs) -> Note(text.toString(), glyphs) }
+        // Small type can sit between the text and its notes — a quotation set in 9 pt — so the
+        // notes start at the first numbered line, and run on in type no bigger than it.
+        val first = below.indexOfFirst { noteNumber.containsMatchIn(clean(it.text)) }
+        if (first < 0) return emptyList()
+        val noteSize = below[first].fontSize
+        return below.drop(first).filter { it.fontSize <= noteSize + 0.5f }
     }
 
     /**
@@ -297,11 +456,98 @@ object PdfReflow {
     private fun isCaption(text: CharSequence): Boolean = captionPattern.containsMatchIn(text)
 
 
-    private fun isFurniture(line: PdfLine, page: PdfPage, furniture: Set<String>): Boolean {
+    private fun isFurniture(
+        line: PdfLine,
+        page: PdfPage,
+        furniture: Set<String>,
+        titles: Set<String> = emptySet(),
+        bodySize: Float = Float.MAX_VALUE,
+    ): Boolean {
         if (isBarcode(line.text)) return true
         if (!inMarginBand(line, page)) return false
-        return isPageNumber(line.text) || signature(line.text) in furniture
+        if (isPageNumber(line.text) || signature(line.text) in furniture) return true
+        // Headings are set larger than the running heads that repeat them.
+        if (line.fontSize > bodySize * 1.15f) return false
+        return isRunningHead(clean(line.text), titles)
     }
+
+    // ---- running heads ----
+
+    // Front matter is numbered in lower-case roman; upper case would take "CIVIC" for a folio.
+    private val folioLead = Regex("""^(?:\d{1,4}|[ivxlcdm]{1,7})\s*[|·•]?\s+""")
+    private val folioTail = Regex("""\s+[|·•]?\s*(?:\d{1,4}|[ivxlcdm]{1,7})$""")
+    private val pipeFolio = Regex("""^\d{1,4}\s*\|\s*\S|\S\s*\|\s*\d{1,4}$""")
+    private val chapterPrefix = Regex(
+        """^(chapter|chap\.|cap[íi]tulo|cap\.|part|parte|appendix|ap[êe]ndice|section|se[çc][ãa]o)\s+[\divxlc]+\s*[:.\-–—]?\s*""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val numbering = Regex("""^\d+(\.\d+)*\.?\s+""")
+
+    /** "12 Chapter 2", "Chapter 2 13": a chapter number and a page number, nothing else. */
+    private val chapterFolio = Regex(
+        """^\d{1,4}\s+(chapter|cap[íi]tulo|part|parte)\s+[\divxlc]+|(chapter|cap[íi]tulo|part|parte)\s+[\divxlc]+\s+\d{1,4}""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * An outline title as a running head would print it: "Chapter 1. Data Engineering
+     * Described" and "2.2 Using the Shell" become "data engineering described" and "using the
+     * shell".
+     */
+    fun titleKey(title: String): String =
+        title.trim().lowercase()
+            .replace(chapterPrefix, "")
+            .replace(numbering, "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .trimEnd('.', ':')
+
+    /** A running head's title, and whether a page number is printed beside it. */
+    private fun runningKey(text: String): Pair<String, Boolean> {
+        var rest = text.trim()
+        var folio = false
+        folioLead.find(rest)?.let {
+            rest = rest.substring(it.range.last + 1)
+            folio = true
+        }
+        folioTail.find(rest)?.let {
+            rest = rest.substring(0, it.range.first)
+            folio = true
+        }
+        return titleKey(rest.trim().trim('|', '·', '•').trim()) to folio
+    }
+
+    /**
+     * A head or foot line that carries a page number with a title — "4 | Chapter 1: Data
+     * Engineering Described", "What Is Data Engineering? | 5", "Basic Commands and Directory
+     * Hierarchy 15", "12 Chapter 2". The title has to be one of the book's own ([titles]),
+     * unless it is set off by the bar O'Reilly-style books use.
+     */
+    fun isRunningHead(text: String, titles: Set<String>): Boolean {
+        if (pipeFolio.containsMatchIn(text)) return true
+        if (chapterFolio.matches(text)) return true
+        val (key, folio) = runningKey(text)
+        return folio && key.isNotEmpty() && key in titles
+    }
+
+    /**
+     * Running heads without a page number — "CHAPTER 5 : PROBABILITY" — told from the title
+     * printed once where its chapter opens by recurring: the book's own titles, in the head or
+     * foot band of two pages or more.
+     */
+    private fun runningTitles(pages: List<PdfPage>, titles: Set<String>, bodySize: Float): Set<String> {
+        if (titles.isEmpty()) return emptySet()
+        val seenOn = HashMap<String, MutableSet<Int>>()
+        for (page in pages) for (line in page.lines) {
+            if (!inMarginBand(line, page) || line.fontSize > bodySize * 1.3f) continue
+            val key = runningKey(clean(line.text)).first
+            if (key.isNotEmpty() && key in titles) seenOn.getOrPut(signature(line.text)) { HashSet() }.add(page.index)
+        }
+        return seenOn.filterValues { it.size >= 2 }.keys
+    }
+
+    /** A contents line's dot leaders and page number: "Preface ........ xvii". */
+    private val leaders = Regex("""\s*(?:[.·…]\s*){3,}\s*(?:\d{1,4}|[ivxlcdm]{1,7})?\s*$""", RegexOption.IGNORE_CASE)
 
     /**
      * The digits printed under a barcode — "9 7 8 1 0 9 8 1 5 3 6 4 9" on a back cover — which
@@ -395,6 +641,7 @@ object PdfReflow {
             .replace('\u2010', '-')
             .replace('\u2011', '-')
             .replace(Regex("[​-‍﻿]"), "")
+            .replace(leaders, "")
             .replace(Regex("\\s+"), " ")
             .trim()
 

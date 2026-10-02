@@ -38,7 +38,8 @@ sealed interface Block {
         val kind: Kind,
         val sentences: List<SentenceSpan>,
     ) : Block {
-        enum class Kind { PARAGRAPH, HEADING_1, HEADING_2, HEADING_3, QUOTE }
+        /** [CODE] is shown but not read: a listing has no sentences for the voice. */
+        enum class Kind { PARAGRAPH, HEADING_1, HEADING_2, HEADING_3, QUOTE, CODE }
 
         /**
          * Index of the sentence containing [offset] (a char offset into [text]). Spans are

@@ -38,6 +38,18 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        // PDFBox-Android builds clip paths with android.graphics.Path, which text extraction
+        // never reads; the PDF tests need those calls to be no-ops rather than errors.
+        unitTests.isReturnDefaultValues = true
+        unitTests.all { test ->
+            // PdfCorpusDump reads a folder of real PDFs: -PpdfCorpus=<folder>.
+            (project.findProperty("pdfCorpus") as String?)?.let { test.systemProperty("pdfCorpus", it) }
+            (project.findProperty("pdfCorpusOut") as String?)?.let { test.systemProperty("pdfCorpusOut", it) }
+            (project.findProperty("pdfRawPages") as String?)?.let { test.systemProperty("pdfRawPages", it) }
+            test.maxHeapSize = "2g"
+        }
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -80,6 +92,23 @@ dependencies {
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
+
+/**
+ * PDFBox-Android keeps its glyph lists and font metrics in the AAR's assets, which a JVM unit
+ * test cannot see; unpacked onto the test classpath, the PDF tests run the real extraction.
+ */
+val pdfboxAar: Configuration by configurations.creating
+dependencies { pdfboxAar(libs.pdfbox.android) { isTransitive = false; artifact { type = "aar" } } }
+val unpackPdfboxAssets = tasks.register<Sync>("unpackPdfboxAssets") {
+    from(pdfboxAar.elements.map { aars -> aars.map { zipTree(it.asFile) } }) {
+        include("assets/**")
+        eachFile { path = path.removePrefix("assets/") }
+        includeEmptyDirs = false
+    }
+    into(layout.buildDirectory.dir("pdfbox-test-resources"))
+}
+android.sourceSets.getByName("test").resources.srcDir(layout.buildDirectory.dir("pdfbox-test-resources"))
+tasks.matching { it.name.endsWith("UnitTestJavaRes") }.configureEach { dependsOn(unpackPdfboxAssets) }
 
 /**
  * Downloads the neural voices the app ships with. They are model files, not source, so they
