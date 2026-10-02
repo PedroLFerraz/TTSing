@@ -332,11 +332,11 @@ class ReadingService : LifecycleService(), Narrator.Listener {
      */
     private suspend fun chosenVoiceFor(locale: Locale): String? {
         val stored = app.settings.settings.first().voiceFor(locale.language) ?: return null
-        // A voice of ours whose files were deleted is no longer a choice; anything else is the
-        // engine's business and is passed through as it always was.
+        // A voice of ours whose files are missing can't read this time, but the choice is kept:
+        // clearing it here is what made the voice keep resetting to the device default.
+        // Anything else is the engine's business and is passed through as it always was.
         val ours = PiperCatalog.find(stored)
         if (ours == null || PiperVoices.find(this, stored) != null) return stored
-        app.settings.setVoice(locale.language, null)
         return null
     }
 

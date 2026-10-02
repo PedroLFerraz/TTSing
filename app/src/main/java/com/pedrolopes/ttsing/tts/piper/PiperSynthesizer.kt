@@ -6,11 +6,14 @@ import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
+import com.pedrolopes.ttsing.tts.SpeedSteps
+import com.pedrolopes.ttsing.tts.SpokenText
 import com.pedrolopes.ttsing.tts.SynthesizedSentence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Locale
 
 /**
  * Speaks with a voice the app carries itself, through sherpa-onnx.
@@ -20,8 +23,9 @@ import java.nio.ByteOrder
  * once and reports no word boundaries, so the highlight comes from
  * [com.pedrolopes.ttsing.tts.NeuralWordTiming] as it does for any engine that gives none.
  *
- * Speed is a property of the *model*: `generate(speed)` stretches or shortens the phoneme
- * durations, so 2.5× is properly faster speech rather than a pitched-up recording.
+ * Speed is a property of the *model* up to [SpeedSteps.MAX_MODEL_SPEED]: `generate(speed)`
+ * shortens the phoneme durations, so it is properly faster speech. Past that the model
+ * swallows short words, so the rest is made up by playing the audio faster, pitch kept.
  */
 class PiperSynthesizer(private val context: Context) {
 
@@ -42,6 +46,9 @@ class PiperSynthesizer(private val context: Context) {
                     model = model.absolutePath,
                     tokens = tokens.absolutePath,
                     dataDir = dataDir.absolutePath,
+                    // Less random variation in how long each sound lasts: steadier words, which
+                    // matters most when they are short and fast.
+                    noiseScaleW = DURATION_NOISE,
                 ),
                 numThreads = THREADS,
                 debug = false,
@@ -61,21 +68,23 @@ class PiperSynthesizer(private val context: Context) {
 
     /**
      * [text] spoken at [speed] (1.0 is the voice's own pace), or null if it could not be.
+     * [locale] decides how its abbreviations are said — see [SpokenText].
      *
      * A long sentence is synthesized clause by clause — see [PiperChunks] for why — and the
      * pieces are played as one, so nothing downstream knows the difference.
      */
-    suspend fun synthesize(text: String, speed: Float): SynthesizedSentence? =
+    suspend fun synthesize(text: String, speed: Float, locale: Locale): SynthesizedSentence? =
         withContext(Dispatchers.IO) {
             val engine = tts ?: return@withContext null
-            val rate = speed.coerceIn(MIN_SPEED, MAX_SPEED)
+            val split = SpeedSteps.split(speed.coerceAtLeast(MIN_SPEED))
+            val rate = split.model
             var sampleRate = 0
             var frame = 0
             var cursor = 0
             val audio = mutableListOf<FloatArray>()
             val anchors = mutableListOf<SynthesizedSentence.FrameMark>()
             PiperChunks.split(text).forEach { piece ->
-                val generated = runCatching { engine.generate(piece, 0, rate) }.getOrNull()
+                val generated = runCatching { engine.generate(SpokenText.normalize(piece, locale), 0, rate) }.getOrNull()
                 val samples = generated?.samples?.takeIf { it.isNotEmpty() }
                 // Where this piece's words sit in the sentence, for the highlight.
                 val start = text.indexOf(piece, cursor).takeIf { it >= 0 } ?: cursor
@@ -94,6 +103,7 @@ class PiperSynthesizer(private val context: Context) {
                 channelCount = 1,
                 marks = emptyList(),
                 pieces = anchors.takeIf { it.size > 1 }.orEmpty(),
+                playbackSpeed = split.playback,
             )
         }
 
@@ -112,7 +122,9 @@ class PiperSynthesizer(private val context: Context) {
 
         /** What the model will stretch to; past this the speech stops being speech. */
         const val MIN_SPEED = 0.25f
-        const val MAX_SPEED = 3f
+
+        /** sherpa's default is 0.8. */
+        const val DURATION_NOISE = 0.5f
 
         /** Float samples in [-1, 1] as the 16-bit little-endian PCM the player expects. */
         fun List<FloatArray>.toPcm16(): ByteArray {

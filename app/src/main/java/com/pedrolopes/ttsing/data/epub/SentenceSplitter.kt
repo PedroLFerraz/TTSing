@@ -130,9 +130,9 @@ object SentenceSplitter {
         "lição", "apêndice", "anexo", "tome", "partie", "chapitre", "libro", "teil", "kapitel", "band",
     )
 
-    private val OPENING_PUNCTUATION = charArrayOf('(', '[', '"', '\'', '«', '“', '‘', '—', '–', '¿', '¡')
+    internal val OPENING_PUNCTUATION = charArrayOf('(', '[', '"', '\'', '«', '“', '‘', '—', '–', '¿', '¡')
 
-    private val ROMAN_NUMERAL = Regex("^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$")
+    internal val ROMAN_NUMERAL = Regex("^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$")
 
     /**
      * Abbreviations whose full stop does not end a sentence, lower-case and without the final
@@ -141,7 +141,7 @@ object SentenceSplitter {
      * abbreviations that usually do end one ("etc.", "Ltda.", "S.A.", "Inc."); when they don't,
      * the lower-case or digit that follows catches them.
      */
-    private val ABBREVIATIONS = setOf(
+    internal val ABBREVIATIONS = setOf(
         // Titles and forms of address
         "mr", "mrs", "ms", "messrs", "dr", "dra", "drs", "dras", "sr", "sra", "srs", "sras",
         "srta", "srtas", "prof", "profa", "profs", "rev", "st", "sto", "sta", "jr", "gen", "col",

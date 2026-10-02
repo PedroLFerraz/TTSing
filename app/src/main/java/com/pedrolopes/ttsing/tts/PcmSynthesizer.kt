@@ -21,6 +21,8 @@ data class SynthesizedSentence(
      * characters it covers. Empty when the whole sentence was synthesized at once.
      */
     val pieces: List<FrameMark> = emptyList(),
+    /** How much faster than recorded the audio is to be played, pitch kept. */
+    val playbackSpeed: Float = 1f,
 ) {
     /** A word boundary reported by the engine, positioned in audio frames. */
     data class FrameMark(val frame: Int, val start: Int, val end: Int)

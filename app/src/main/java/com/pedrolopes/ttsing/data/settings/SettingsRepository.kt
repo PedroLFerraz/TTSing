@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.pedrolopes.ttsing.data.BookLanguage
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.Locale
@@ -53,6 +54,13 @@ data class AppSettings(
     val ankiModelId: Long? = null,
     /** How each PDF is shown (book id → [PdfView] name), for the ones not on the default. */
     val pdfViews: Map<String, String> = emptyMap(),
+    /**
+     * The variant each language is read in (language code → BCP-47 tag, "pt" → "pt-BR"),
+     * whatever region a book declares. Set by choosing a language in any book.
+     */
+    val variants: Map<String, String> = emptyMap(),
+    /** Voices starred in the picker (system voice names and neural voice ids). */
+    val favoriteVoices: Set<String> = emptySet(),
 ) {
     /** Pages as printed unless the user switched this PDF to reflowed text. */
     fun pdfViewFor(bookId: String): PdfView =
@@ -62,14 +70,29 @@ data class AppSettings(
     fun voiceFor(languageCode: String): String? = voices[languageCode]
 
     /**
-     * The language to read [bookId] in: the user's override if they set one, otherwise the
-     * book's own `dc:language`. Books frequently declare the wrong language (or none), and
-     * a book with passages in another language can only ever have one voice.
+     * The language to read [bookId] in, always with a region, so the engine never has to guess
+     * one (Google's guess for a bare "pt" is European Portuguese).
+     *
+     * The language is the user's override for this book if they set one, otherwise the book's
+     * own `dc:language`: books frequently declare the wrong language, or none. The region is,
+     * in order: the one the user picked for this book, the variant they read that language in
+     * everywhere, and then whatever [BookLanguage.withRegion] makes of the book's own.
      */
-    fun localeFor(bookId: String?, declared: Locale): Locale {
-        val override = bookId?.let { bookLanguages[it] } ?: return declared
-        return Locale.forLanguageTag(override).takeIf { it.language.isNotEmpty() } ?: declared
+    fun localeFor(bookId: String?, declared: Locale, device: Locale = Locale.getDefault()): Locale {
+        val override = bookId?.let { bookLanguages[it] }
+            ?.let { Locale.forLanguageTag(it) }
+            ?.takeIf { it.language.isNotEmpty() }
+        if (override != null && override.country.isNotEmpty()) return override
+        val base = override ?: declared
+        variantFor(base.language)?.let { return it }
+        return BookLanguage.withRegion(base, device)
     }
+
+    /** The variant [languageCode] is read in everywhere, if the user picked one. */
+    fun variantFor(languageCode: String): Locale? =
+        variants[languageCode]
+            ?.let { Locale.forLanguageTag(it) }
+            ?.takeIf { it.language == languageCode && it.country.isNotEmpty() }
 
     companion object {
         /** ~180 wpm at 5 chars+space per word — a reasonable prior before we measure. */
@@ -98,6 +121,12 @@ class SettingsRepository(private val context: Context) {
         /** How each PDF is shown, one key per book, e.g. `pdfview_<sha1>`. */
         const val PDF_VIEW_PREFIX = "pdfview_"
 
+        /** The variant each language is read in, e.g. `variant_pt` = `pt-BR`. */
+        const val VARIANT_PREFIX = "variant_"
+
+        /** Starred voices, one per line: voice names never contain one. */
+        val favoriteVoices = stringPreferencesKey("favorite_voices")
+
         fun voice(languageCode: String) = stringPreferencesKey("$VOICE_PREFIX$languageCode")
 
         fun bookLanguage(bookId: String) = stringPreferencesKey("$BOOK_LANGUAGE_PREFIX$bookId")
@@ -122,6 +151,8 @@ class SettingsRepository(private val context: Context) {
             ankiDeckId = prefs[Keys.ankiDeckId],
             ankiModelId = prefs[Keys.ankiModelId],
             pdfViews = prefs.stringsWithPrefix(Keys.PDF_VIEW_PREFIX),
+            variants = prefs.stringsWithPrefix(Keys.VARIANT_PREFIX),
+            favoriteVoices = splitFavorites(prefs[Keys.favoriteVoices]).toSet(),
         )
     }
 
@@ -172,6 +203,35 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit {
             val key = stringPreferencesKey(Keys.PDF_VIEW_PREFIX + bookId)
             if (view == PdfView.PAGES) it.remove(key) else it[key] = view.name
+        }
+    }
+
+    /** Stars [voiceName] in the voice picker, or unstars it if it already was. */
+    suspend fun toggleFavoriteVoice(voiceName: String) {
+        context.dataStore.edit {
+            val current = splitFavorites(it[Keys.favoriteVoices])
+            val updated = if (voiceName in current) current - voiceName else current + voiceName
+            if (updated.isEmpty()) {
+                it.remove(Keys.favoriteVoices)
+            } else {
+                it[Keys.favoriteVoices] = updated.joinToString(FAVORITES_SEPARATOR)
+            }
+        }
+    }
+
+    private fun splitFavorites(stored: String?): List<String> =
+        stored?.split(FAVORITES_SEPARATOR)?.filter { it.isNotBlank() }.orEmpty()
+
+    private companion object {
+        const val FAVORITES_SEPARATOR = "\n"
+    }
+
+    /** Reads [languageTag]'s language in its region from now on, in every book. */
+    suspend fun setVariant(languageTag: String) {
+        val locale = Locale.forLanguageTag(languageTag)
+        if (locale.language.isEmpty() || locale.country.isEmpty()) return
+        context.dataStore.edit {
+            it[stringPreferencesKey(Keys.VARIANT_PREFIX + locale.language)] = locale.toLanguageTag()
         }
     }
 

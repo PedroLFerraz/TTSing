@@ -59,6 +59,7 @@ class ReadingEstimateTest {
         assertEquals(200, ReadingEstimate.secondsFor(chars, charsPerSecond = 15f, speechRate = 1f))
         assertEquals(100, ReadingEstimate.secondsFor(chars, charsPerSecond = 15f, speechRate = 2f))
         assertEquals(80, ReadingEstimate.secondsFor(chars, charsPerSecond = 15f, speechRate = 2.5f))
+        assertEquals(67, ReadingEstimate.secondsFor(chars, charsPerSecond = 15f, speechRate = 3f))
     }
 
     @Test

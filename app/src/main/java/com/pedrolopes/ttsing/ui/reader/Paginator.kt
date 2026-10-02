@@ -43,6 +43,12 @@ fun blockVerticalPadding(kind: Block.Text.Kind): Dp = when (kind) {
     else -> 12.dp
 }
 
+/** Extra left inset a block is drawn with; measured off the width too, so pages match. */
+fun blockStartIndent(kind: Block.Text.Kind): Dp = when (kind) {
+    Block.Text.Kind.QUOTE -> 12.dp
+    else -> 0.dp
+}
+
 fun blockTextStyle(kind: Block.Text.Kind, fontScale: Float): TextStyle {
     val sizeValue = blockFontSizeSp(kind) * fontScale
     val isBody = kind == Block.Text.Kind.PARAGRAPH || kind == Block.Text.Kind.QUOTE
@@ -95,7 +101,10 @@ fun paginateChapter(
                 if (block.text.isBlank()) return@forEachIndexed
                 val style = blockTextStyle(block.kind, fontScale)
                 val vPad = with(density) { blockVerticalPadding(block.kind).toPx() } * 2
-                val layout = measurer.measure(text = block.text, style = style, constraints = widthConstraints)
+                val indentPx = with(density) { blockStartIndent(block.kind).roundToPx() }
+                val constraints = if (indentPx == 0) widthConstraints
+                else Constraints(maxWidth = (contentWidthPx - indentPx).coerceAtLeast(1))
+                val layout = measurer.measure(text = block.text, style = style, constraints = constraints)
                 val lineCount = layout.lineCount
                 var startLine = 0
                 while (startLine < lineCount) {

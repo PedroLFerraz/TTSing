@@ -13,7 +13,34 @@ import java.util.Locale
 data class LanguageOption(
     val locale: Locale,
     val downloaded: Boolean,
-)
+) {
+    companion object {
+        /**
+         * One option per language and region among [offered] (a voice's locale, and whether it
+         * is ready without a download). A voice with no region joins its language's regions
+         * rather than standing as a choice of its own, unless the language has no others.
+         */
+        fun variantsOf(offered: List<Pair<Locale, Boolean>>): List<LanguageOption> =
+            offered
+                .filter { (locale, _) -> locale.language.isNotEmpty() }
+                .groupBy { (locale, _) -> locale.language }
+                .flatMap { (language, voices) ->
+                    val regional = voices.filter { (locale, _) -> locale.country.isNotEmpty() }
+                    if (regional.isEmpty()) {
+                        listOf(LanguageOption(Locale(language), voices.any { it.second }))
+                    } else {
+                        regional.groupBy { (locale, _) -> locale.country }.map { (country, inRegion) ->
+                            LanguageOption(Locale(language, country), inRegion.any { it.second })
+                        }
+                    }
+                }
+                .sortedWith(
+                    compareByDescending<LanguageOption> { it.downloaded }
+                        .thenBy { it.locale.displayLanguage.lowercase() }
+                        .thenBy { it.locale.displayCountry.lowercase() },
+                )
+    }
+}
 
 /**
  * True when this voice's data still has to be fetched. Selecting it is what starts the
