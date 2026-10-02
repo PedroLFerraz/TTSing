@@ -50,7 +50,7 @@ object ArticleExtractor {
         val leadImage = extractLeadImage(doc)
         stripJunk(doc)
 
-        val root = findContentRoot(doc)
+        val root = findContentRoot(doc)?.also { pruneFurniture(it) }
         val blocks = mutableListOf<Block>()
         if (root != null) walk(root, locale, blocks)
 
@@ -73,6 +73,9 @@ object ArticleExtractor {
      */
     fun blocksOf(contentHtml: String, baseUri: String = "", locale: Locale = Locale.ENGLISH): List<Block> {
         val body = Jsoup.parse(contentHtml, baseUri).body() ?: return emptyList()
+        // Bodies stored before furniture was pruned get the same treatment; on newer ones
+        // this finds nothing left to remove.
+        pruneFurniture(body)
         return mutableListOf<Block>().also { walk(body, locale, it) }
     }
 
@@ -141,6 +144,43 @@ object ArticleExtractor {
         // that would otherwise outweigh the article.
         doc.select("[hidden], [aria-hidden=true], [style*=display:none]").forEach { it.remove() }
     }
+
+    /**
+     * Words in a class name that mark a box inside the body as furniture: subscription
+     * pitches, share bars, ad slots, story rails. Folha closes every story with several of
+     * these, which read aloud as a minute of sales talk.
+     *
+     * Matched against whole words of a class ("c-subscribe-ads__title" is c, subscribe, ads,
+     * title) rather than as fragments, unlike [NEGATIVE]: fragments are fine for nudging a
+     * score, but removing on them would take out a body classed "overflow-hidden".
+     */
+    private val FURNITURE_WORDS = setOf(
+        "ad", "ads", "advert", "advertisement", "sponsored", "promo", "newsletter", "newsletters",
+        "subscribe", "subscription", "share", "sharing", "social", "related", "relacionadas",
+        "recommended", "rail", "comments", "outbrain", "taboola",
+    )
+
+    /** ReadSpeaker's class for "don't read this aloud", which some publishers already set. */
+    private const val READ_ALOUD_SKIP = "rs_skip"
+
+    /**
+     * Removes furniture boxes from inside [root]. A box holding most of the text is kept
+     * whatever it's called: a body wrapped in, say, "share-content" is still the body.
+     */
+    private fun pruneFurniture(root: Element) {
+        val total = root.text().length
+        root.select("[class]")
+            .filter { it !== root && isFurniture(it) && it.text().length * 2 <= total }
+            .forEach { it.remove() }
+    }
+
+    private fun isFurniture(element: Element): Boolean =
+        element.classNames().any { name ->
+            name.equals(READ_ALOUD_SKIP, ignoreCase = true) ||
+                name.lowercase().split(CLASS_WORD_SEPARATORS).any { it in FURNITURE_WORDS }
+        }
+
+    private val CLASS_WORD_SEPARATORS = Regex("[^a-z0-9]+")
 
     // ---- Candidate scoring ----
 
