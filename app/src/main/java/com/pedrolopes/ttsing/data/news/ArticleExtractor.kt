@@ -64,6 +64,18 @@ object ArticleExtractor {
         )
     }
 
+    /**
+     * The blocks of a body [extract] already found, as stored in [ExtractedArticle.contentHtml].
+     *
+     * Walks it as it is, with no scoring. Running [extract] on it again would score the
+     * already-trimmed body a second time and often keep just one sub-container of it: g1,
+     * The Verge and Canaltech stories came back as their first paragraph or two.
+     */
+    fun blocksOf(contentHtml: String, baseUri: String = "", locale: Locale = Locale.ENGLISH): List<Block> {
+        val body = Jsoup.parse(contentHtml, baseUri).body() ?: return emptyList()
+        return mutableListOf<Block>().also { walk(body, locale, it) }
+    }
+
     // ---- Title ----
 
     private fun extractTitle(doc: Document): String? {

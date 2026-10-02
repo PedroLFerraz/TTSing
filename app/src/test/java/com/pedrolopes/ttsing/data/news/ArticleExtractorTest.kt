@@ -164,25 +164,51 @@ class ArticleExtractorTest {
         assertEquals(3, paragraph.sentences.size)
     }
 
-    @Test
-    fun `reads the whole story when empty article wrappers sit beside the real one`() {
-        // g1's shape: the story is one <article>, but every embedded video player is wrapped
-        // in an <article> of its own, and each paragraph sits in its own chunk <div>.
+    /**
+     * g1's shape: the story is one <article>, but every embedded video player is wrapped in an
+     * <article> of its own, and each paragraph sits in its own chunk <div>.
+     */
+    private val g1Page = run {
         val chunks = (1..6).joinToString("\n") { n ->
             """<div id="chunk-$n"><div class="mc-column content-text">
                  <p class="content-text__container">Paragraph $n of the story, long enough to read as prose, with a comma.</p>
                </div></div>"""
         }
-        val html = """<html><body>
+        """<html><body>
             <div class="mc-article-body"><article itemprop="articleBody">
               $chunks
+              <figure><img src="/fotos/plenario.jpg" alt="Plenário"></figure>
               <article class="video-player-wrapper"></article>
             </article></div>
             <article class="video-player-wrapper"></article>
             <article class="video-player-wrapper"></article>
           </body></html>"""
-        val body = paragraphs(ArticleExtractor.extract(html))
+    }
+
+    @Test
+    fun `reads the whole story when empty article wrappers sit beside the real one`() {
+        val body = paragraphs(ArticleExtractor.extract(g1Page))
         assertEquals((1..6).map { "Paragraph $it of the story, long enough to read as prose, with a comma." }, body)
+    }
+
+    @Test
+    fun `a stored body reopens as exactly the blocks first extracted`() {
+        // The app stores contentHtml and turns it into blocks each time a story is opened.
+        // Scoring that already-trimmed body a second time kept only one chunk of it: the g1
+        // page reopened as its first paragraph.
+        val base = "https://g1.globo.com/politica/noticia/2026/10/02/story.ghtml"
+        val pt = Locale.forLanguageTag("pt-BR")
+        for ((name, html) in listOf("realistic" to realisticPage, "g1" to g1Page)) {
+            val first = ArticleExtractor.extract(html, base, pt)
+            assertEquals(name, first.blocks, ArticleExtractor.blocksOf(first.contentHtml, base, pt))
+        }
+    }
+
+    @Test
+    fun `a stored body still resolves relative image addresses against the story`() {
+        val base = "https://g1.globo.com/politica/noticia/2026/10/02/story.ghtml"
+        val blocks = ArticleExtractor.blocksOf(ArticleExtractor.extract(g1Page, base).contentHtml, base)
+        assertEquals("https://g1.globo.com/fotos/plenario.jpg", blocks.filterIsInstance<Block.Image>().single().zipPath)
     }
 
     @Test

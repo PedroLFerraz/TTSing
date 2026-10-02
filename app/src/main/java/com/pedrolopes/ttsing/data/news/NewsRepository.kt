@@ -233,8 +233,8 @@ class NewsRepository(
                 if (response.isPermanent) dao.upsertArticle(article.copy(fetchedAt = System.currentTimeMillis()))
 
             // Locale doesn't matter here: only contentHtml and the lead image are kept. body()
-            // re-extracts from this cached HTML in the real reading locale when the article is
-            // actually opened, which is cheap since it no longer needs the network.
+            // turns this cached HTML into blocks in the real reading locale when the article
+            // is actually opened, which is cheap since it no longer needs the network.
             is HttpFetcher.Result.Success ->
                 dao.upsertArticle(withFetchedPage(article, ArticleExtractor.extract(response.body, article.link)))
         }
@@ -287,9 +287,9 @@ class NewsRepository(
      *
      * The reader screen and the playback service both call this for the same story, and the
      * sentence positions they exchange only line up if both get identical blocks. So it is
-     * serialised per article, and every path re-extracts from the stored body rather than
-     * returning a fresh page extraction directly: whoever comes second sees exactly what the
-     * first one saved.
+     * serialised per article, and every path reads its blocks from the stored body rather
+     * than returning a fresh page extraction directly: whoever comes second sees exactly what
+     * the first one saved.
      */
     suspend fun body(articleId: String, locale: Locale): ArticleBody = withContext(Dispatchers.Default) {
         bodyLocks.getOrPut(articleId) { Mutex() }.withLock { loadBody(articleId, locale) }
@@ -314,7 +314,7 @@ class NewsRepository(
         }
 
         article.contentHtml?.takeIf { it.isNotBlank() }?.let { stored ->
-            val blocks = ArticleExtractor.extract(stored, article.link, locale).blocks
+            val blocks = ArticleExtractor.blocksOf(stored, article.link, locale)
             if (blocks.isNotEmpty()) {
                 return ArticleBody.Ready(withHeadline(blocks, article.title, locale), truncated = false)
             }

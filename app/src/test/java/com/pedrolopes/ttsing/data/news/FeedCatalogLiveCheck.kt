@@ -1,5 +1,6 @@
 package com.pedrolopes.ttsing.data.news
 
+import com.pedrolopes.ttsing.data.epub.Block
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -68,28 +69,39 @@ class FeedCatalogLiveCheck {
         }
 
         val samples = parsed.items.take(SAMPLES).map { item -> readableLengths(item) }
-        val readable = samples.count { (inline, page) -> maxOf(inline, page) >= NewsRepository.MIN_FULL_TEXT }
+        val readable = samples.count { maxOf(it.inline, it.page) >= NewsRepository.MIN_FULL_TEXT }
         val detail = "lang=${parsed.language ?: "?"} items=${parsed.items.size} " +
-            "inline/page chars=${samples.joinToString("  ") { (inline, page) -> "$inline/$page" }}"
+            "inline/page/reopen chars=${samples.joinToString("  ") { "${it.inline}/${it.page}/${it.reopen}" }}"
+        // Whatever was extracted must survive being stored and opened again.
+        samples.firstOrNull { it.reopen < it.page * REOPEN_KEPT }
+            ?.let { return Outcome(feed, false, "reopen loses text: $detail") }
         // One teaser among a few samples is normal (live blogs, galleries, paid posts); none
         // readable means the source as a whole won't read aloud.
         return Outcome(feed, readable >= 1, detail)
     }
 
+    private data class Lengths(val inline: Int, val page: Int, val reopen: Int)
+
     /**
-     * Characters of prose in [item]'s inline body and in its fetched page. The app reads the
-     * longer of the two, so both are reported: a feed whose inline text is consistently far
-     * shorter than its pages is shipping teasers.
+     * Characters of prose in [item]'s inline body, in its fetched page, and in that page's
+     * body once stored and opened again, the way the reader gets it. The app reads the longer
+     * of the first two: a feed whose inline text is consistently far shorter than its pages
+     * is shipping teasers.
      */
-    private suspend fun readableLengths(item: FeedItem): Pair<Int, Int> {
+    private suspend fun readableLengths(item: FeedItem): Lengths {
         val inline = item.contentHtml?.takeIf { it.isNotBlank() }
             ?.let { ArticleExtractor.extract(it, item.link).textLength } ?: 0
-        val page = (HttpFetcher.get(item.link) as? HttpFetcher.Result.Success)
-            ?.let { ArticleExtractor.extract(it.body, item.link).textLength } ?: 0
-        return inline to page
+        val extracted = (HttpFetcher.get(item.link) as? HttpFetcher.Result.Success)
+            ?.let { ArticleExtractor.extract(it.body, item.link) }
+        val reopen = extracted?.let { ArticleExtractor.blocksOf(it.contentHtml, item.link) }
+            ?.filterIsInstance<Block.Text>()?.sumOf { it.text.length } ?: 0
+        return Lengths(inline, extracted?.textLength ?: 0, reopen)
     }
 
     private companion object {
         const val SAMPLES = 3
+
+        /** Share of the first extraction a reopened story must still have. */
+        const val REOPEN_KEPT = 0.98
     }
 }
