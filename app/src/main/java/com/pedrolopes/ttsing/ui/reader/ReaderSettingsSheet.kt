@@ -22,10 +22,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -47,6 +50,7 @@ import com.pedrolopes.ttsing.data.settings.AppSettings
 import com.pedrolopes.ttsing.data.settings.PdfView
 import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.LanguageOption
+import com.pedrolopes.ttsing.tts.SpeedSteps
 import com.pedrolopes.ttsing.tts.needsDownload
 import com.pedrolopes.ttsing.tts.piper.CatalogVoice
 import com.pedrolopes.ttsing.tts.piper.DownloadProgress
@@ -75,6 +79,8 @@ fun ReaderSettingsSheet(
     activeLocale: Locale,
     /** What the EPUB itself declares, shown so a wrong declaration is visible. */
     declaredLanguageTag: String?,
+    /** Whether this book is read in a language other than the one it declares, by choice. */
+    languageOverridden: Boolean,
     availableLanguages: List<LanguageOption>,
     /** The app's own neural voices for this language, installed or not. */
     neuralVoices: List<CatalogVoice>,
@@ -95,18 +101,21 @@ fun ReaderSettingsSheet(
     pdfView: PdfView?,
     onPdfView: (PdfView) -> Unit,
     onSelectLanguage: (Locale) -> Unit,
+    onUseBookLanguage: () -> Unit,
     onInstallVoiceData: () -> Unit,
     onSelectDefaultVoice: () -> Unit,
     onSelectVoice: (String) -> Unit,
+    onToggleFavorite: (String) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val storedVoice = settings.voiceFor(activeLocale.language)
+    val favoriteVoices = settings.favoriteVoices
     val languageName = activeLocale.displayName()
     var languageMenuOpen by remember { mutableStateOf(false) }
     val declaredLocale = declaredLanguageTag
         ?.let { Locale.forLanguageTag(it) }
         ?.takeIf { it.language.isNotEmpty() }
-    val isOverridden = declaredLocale != null && declaredLocale.language != activeLocale.language
+    val isOverridden = declaredLocale != null && languageOverridden
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -137,13 +146,13 @@ fun ReaderSettingsSheet(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     MonoText("Speed", size = 11f, tracking = 0.16f)
-                    MonoText(formatSpeed(settings.speechRate), size = 11f, tracking = 0.16f, color = Ink.Live)
+                    MonoText(SpeedSteps.format(settings.speechRate), size = 11f, tracking = 0.16f, color = Ink.Live)
                 }
-                SpeedSteps.chunked(5).forEach { row ->
+                SpeedSteps.ALL.chunked(4).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         row.forEach { step ->
                             ChoiceChip(
-                                label = formatSpeed(step),
+                                label = SpeedSteps.format(step),
                                 selected = kotlin.math.abs(settings.speechRate - step) < 0.01f,
                                 onClick = { onSpeechRate(step) },
                             )
@@ -206,7 +215,9 @@ fun ReaderSettingsSheet(
                 Text(
                     text = when {
                         isOverridden -> "Set by you. This book declares ${declaredLocale!!.displayName()}."
-                        declaredLocale != null -> "From the book's own metadata. Change it if it's wrong."
+                        declaredLocale != null ->
+                            "From the book's own metadata. The variant you pick is used for every " +
+                                "book in ${activeLocale.displayLanguage}."
                         else -> "This book doesn't say what language it's in."
                     },
                     fontFamily = AppFonts.Grotesk,
@@ -236,7 +247,8 @@ fun ReaderSettingsSheet(
                             )
                         }
                         availableLanguages.forEach { option ->
-                            val current = option.locale.language == activeLocale.language
+                            val current = option.locale.language == activeLocale.language &&
+                                option.locale.country == activeLocale.country
                             DropdownMenuItem(
                                 text = {
                                     Column {
@@ -268,6 +280,21 @@ fun ReaderSettingsSheet(
                             )
                         }
                         Hairline(inset = 8.dp)
+                        if (isOverridden) {
+                            DropdownMenuItem(
+                                text = {
+                                    MonoText(
+                                        "Use the book's language (${declaredLocale!!.displayLanguage})",
+                                        size = 11f,
+                                        color = Ink.Live,
+                                    )
+                                },
+                                onClick = {
+                                    languageMenuOpen = false
+                                    onUseBookLanguage()
+                                },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { MonoText("Install voice data…", size = 11f, color = Ink.Live) },
                             onClick = {
@@ -319,86 +346,14 @@ fun ReaderSettingsSheet(
                 if (activeLabel != null) MonoText("Now speaking", size = 10f, tracking = 0.12f, color = Ink.Live)
             }
 
-            if (neuralVoices.isNotEmpty()) {
-                MonoText(
-                    "In this app · neural",
-                    size = 10f,
-                    tracking = 0.14f,
-                    color = Ink.Dim,
-                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
-                )
-                neuralVoices.forEach { voice ->
-                    val installed = voice.id in installedNeuralIds
-                    val busy = downloading?.takeIf { it.id == voice.id && !it.failed }
-                    ChoiceRow(
-                        title = voice.displayName,
-                        subtitle = when {
-                            busy != null -> "Downloading — ${busy.done} of ${voice.megabytes} MB"
-                            downloading?.id == voice.id && downloading.failed -> "Download failed — tap to retry"
-                            installed -> "Offline · in this app"
-                            else -> "Tap to download · ${voice.megabytes} MB"
-                        },
-                        selected = storedVoice == voice.id,
-                        isSpeaking = voice.id == currentVoiceName,
-                        onClick = {
-                            if (installed) onSelectVoice(voice.id) else onDownloadVoice(voice)
-                        },
-                        // A downloaded voice is 40 MB; hold it to get the space back.
-                        onLongClick = { onDeleteVoice(voice) }.takeIf { installed && !voice.bundled },
-                    )
-                    if (busy != null) {
-                        ThinProgress(
-                            fraction = busy.fraction,
-                            modifier = Modifier.padding(start = 3.dp, top = 2.dp, bottom = 6.dp),
-                        )
-                    }
-                }
-            }
-
-            if (otherNeuralVoices.isNotEmpty()) {
-                var showOthers by remember { mutableStateOf(false) }
-                MonoText(
-                    text = if (showOthers) {
-                        "Other languages — tap to hide"
-                    } else {
-                        "Other languages · ${otherNeuralVoices.size} voices — tap to show"
-                    },
-                    size = 10f,
-                    tracking = 0.14f,
-                    color = Ink.Dim,
-                    modifier = Modifier
-                        .clickable { showOthers = !showOthers }
-                        .padding(top = 14.dp, bottom = 4.dp),
-                )
-                if (showOthers) {
-                    otherNeuralVoices.forEach { voice ->
-                        val installed = voice.id in installedNeuralIds
-                        val busy = downloading?.takeIf { it.id == voice.id && !it.failed }
-                        ChoiceRow(
-                            title = "${voice.displayName} · ${voice.locale.displayName()}",
-                            subtitle = when {
-                                busy != null -> "Downloading — ${busy.done} of ${voice.megabytes} MB"
-                                downloading?.id == voice.id && downloading.failed ->
-                                    "Download failed — tap to retry"
-                                // Picking it here would read this book in the wrong language:
-                                // it is offered so it is ready when you open one that needs it.
-                                installed -> "Ready for when you read in ${voice.locale.displayName()}"
-                                else -> "Tap to download · ${voice.megabytes} MB"
-                            },
-                            selected = false,
-                            isSpeaking = false,
-                            onClick = { if (!installed) onDownloadVoice(voice) },
-                            onLongClick = { onDeleteVoice(voice) }.takeIf { installed && !voice.bundled },
-                        )
-                        if (busy != null) {
-                            ThinProgress(
-                                fraction = busy.fraction,
-                                modifier = Modifier.padding(start = 3.dp, top = 2.dp, bottom = 6.dp),
-                            )
-                        }
-                    }
-                }
-            }
+            // The voices you starred, plus the one in use, are all there is to see; the many
+            // others an engine offers — a dozen regions, each in several variants — wait in a
+            // folder. Until anything is starred the folder starts open, so nothing is hidden.
+            val deviceVoices = voices.filterNot { it.name in installedNeuralIds }
+            val pinnedNeural = neuralVoices.filter { it.id in favoriteVoices || it.id == storedVoice }
+            val pinnedDevice = deviceVoices.filter { it.name in favoriteVoices || it.name == storedVoice }
+            val anyStarred = (pinnedNeural.map { it.id } + pinnedDevice.map { it.name }).any { it in favoriteVoices }
+            var showMore by remember(activeLocale.language) { mutableStateOf(!anyStarred) }
 
             Column {
                 ChoiceRow(
@@ -410,6 +365,127 @@ fun ReaderSettingsSheet(
                     isSpeaking = storedVoice == null && currentVoiceName != null,
                     onClick = onSelectDefaultVoice,
                 )
+                pinnedNeural.forEach { voice ->
+                    NeuralVoiceRow(
+                        voice = voice,
+                        installedNeuralIds = installedNeuralIds,
+                        downloading = downloading,
+                        storedVoice = storedVoice,
+                        currentVoiceName = currentVoiceName,
+                        starred = voice.id in favoriteVoices,
+                        onToggleFavorite = { onToggleFavorite(voice.id) },
+                        onSelectVoice = onSelectVoice,
+                        onDownloadVoice = onDownloadVoice,
+                        onDeleteVoice = onDeleteVoice,
+                    )
+                }
+                pinnedDevice.forEach { voice ->
+                    ChoiceRow(
+                        title = voiceTitle(voice),
+                        subtitle = voice.name,
+                        selected = storedVoice == voice.name,
+                        isSpeaking = voice.name == currentVoiceName,
+                        onClick = { onSelectVoice(voice.name) },
+                        starred = voice.name in favoriteVoices,
+                        onToggleStar = { onToggleFavorite(voice.name) },
+                    )
+                }
+            }
+
+            val moreNeural = neuralVoices - pinnedNeural.toSet()
+            val moreDevice = deviceVoices - pinnedDevice.toSet()
+            val moreCount = moreNeural.size + moreDevice.size + otherNeuralVoices.size
+            if (moreCount > 0) {
+                MonoText(
+                    text = if (showMore) "More voices — tap to hide" else "More voices · $moreCount — tap to show",
+                    size = 10f,
+                    tracking = 0.14f,
+                    color = Ink.Live,
+                    modifier = Modifier
+                        .clickable { showMore = !showMore }
+                        .padding(top = 4.dp, bottom = 4.dp),
+                )
+            }
+            if (!anyStarred) {
+                MonoText(
+                    "Star the voices you use and the rest fold away.",
+                    size = 10f,
+                    tracking = 0.1f,
+                    color = Ink.Dim,
+                )
+            }
+
+            if (showMore) {
+                if (moreNeural.isNotEmpty()) {
+                    MonoText(
+                        "In this app · neural",
+                        size = 10f,
+                        tracking = 0.14f,
+                        color = Ink.Dim,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                    )
+                    Column {
+                        moreNeural.forEach { voice ->
+                            NeuralVoiceRow(
+                                voice = voice,
+                                installedNeuralIds = installedNeuralIds,
+                                downloading = downloading,
+                                storedVoice = storedVoice,
+                                currentVoiceName = currentVoiceName,
+                                starred = false,
+                                onToggleFavorite = { onToggleFavorite(voice.id) },
+                                onSelectVoice = onSelectVoice,
+                                onDownloadVoice = onDownloadVoice,
+                                onDeleteVoice = onDeleteVoice,
+                            )
+                        }
+                    }
+                }
+
+                if (otherNeuralVoices.isNotEmpty()) {
+                    var showOthers by remember { mutableStateOf(false) }
+                    MonoText(
+                        text = if (showOthers) {
+                            "Other languages — tap to hide"
+                        } else {
+                            "Other languages · ${otherNeuralVoices.size} voices — tap to show"
+                        },
+                        size = 10f,
+                        tracking = 0.14f,
+                        color = Ink.Dim,
+                        modifier = Modifier
+                            .clickable { showOthers = !showOthers }
+                            .padding(top = 14.dp, bottom = 4.dp),
+                    )
+                    if (showOthers) {
+                        otherNeuralVoices.forEach { voice ->
+                            val installed = voice.id in installedNeuralIds
+                            val busy = downloading?.takeIf { it.id == voice.id && !it.failed }
+                            ChoiceRow(
+                                title = "${voice.displayName} · ${voice.locale.displayName()}",
+                                subtitle = when {
+                                    busy != null -> "Downloading — ${busy.done} of ${voice.megabytes} MB"
+                                    downloading?.id == voice.id && downloading.failed ->
+                                        "Download failed — tap to retry"
+                                    // Picking it here would read this book in the wrong language:
+                                    // it is offered so it is ready when you open one that needs it.
+                                    installed -> "Ready for when you read in ${voice.locale.displayName()}"
+                                    else -> "Tap to download · ${voice.megabytes} MB"
+                                },
+                                selected = false,
+                                isSpeaking = false,
+                                onClick = { if (!installed) onDownloadVoice(voice) },
+                                onLongClick = { onDeleteVoice(voice) }.takeIf { installed && !voice.bundled },
+                            )
+                            if (busy != null) {
+                                ThinProgress(
+                                    fraction = busy.fraction,
+                                    modifier = Modifier.padding(start = 3.dp, top = 2.dp, bottom = 6.dp),
+                                )
+                            }
+                        }
+                    }
+                }
 
                 if (voices.isEmpty()) {
                     Text(
@@ -422,30 +498,75 @@ fun ReaderSettingsSheet(
                         modifier = Modifier.padding(top = 10.dp),
                     )
                 } else {
-                    voices
-                        .filterNot { it.name in installedNeuralIds }
-                        .groupBy { regionName(it.locale) }
-                        .forEach { (region, list) ->
-                        MonoText(
-                            region,
-                            size = 10f,
-                            tracking = 0.14f,
-                            color = Ink.Dim,
-                            modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
-                        )
-                        list.forEach { voice ->
-                            ChoiceRow(
-                                title = voiceTitle(voice),
-                                subtitle = voice.name,
-                                selected = storedVoice == voice.name,
-                                isSpeaking = voice.name == currentVoiceName,
-                                onClick = { onSelectVoice(voice.name) },
-                            )
-                        }
+                    Column {
+                        moreDevice
+                            .groupBy { regionName(it.locale) }
+                            .forEach { (region, list) ->
+                                MonoText(
+                                    region,
+                                    size = 10f,
+                                    tracking = 0.14f,
+                                    color = Ink.Dim,
+                                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                                )
+                                list.forEach { voice ->
+                                    ChoiceRow(
+                                        title = voiceTitle(voice),
+                                        subtitle = voice.name,
+                                        selected = storedVoice == voice.name,
+                                        isSpeaking = voice.name == currentVoiceName,
+                                        onClick = { onSelectVoice(voice.name) },
+                                        starred = false,
+                                        onToggleStar = { onToggleFavorite(voice.name) },
+                                    )
+                                }
+                            }
                     }
                 }
             }
         }
+    }
+}
+
+/** One of the app's own neural voices: picked when installed, fetched when not. */
+@Composable
+private fun NeuralVoiceRow(
+    voice: CatalogVoice,
+    installedNeuralIds: Set<String>,
+    downloading: DownloadProgress?,
+    storedVoice: String?,
+    currentVoiceName: String?,
+    starred: Boolean,
+    onToggleFavorite: () -> Unit,
+    onSelectVoice: (String) -> Unit,
+    onDownloadVoice: (CatalogVoice) -> Unit,
+    onDeleteVoice: (CatalogVoice) -> Unit,
+) {
+    val installed = voice.id in installedNeuralIds
+    val busy = downloading?.takeIf { it.id == voice.id && !it.failed }
+    ChoiceRow(
+        title = voice.displayName,
+        subtitle = when {
+            busy != null -> "Downloading — ${busy.done} of ${voice.megabytes} MB"
+            downloading?.id == voice.id && downloading.failed -> "Download failed — tap to retry"
+            installed -> "Offline · in this app · neural"
+            else -> "Tap to download · ${voice.megabytes} MB"
+        },
+        selected = storedVoice == voice.id,
+        isSpeaking = voice.id == currentVoiceName,
+        onClick = {
+            if (installed) onSelectVoice(voice.id) else onDownloadVoice(voice)
+        },
+        // A downloaded voice is 40 MB; hold it to get the space back.
+        onLongClick = { onDeleteVoice(voice) }.takeIf { installed && !voice.bundled },
+        starred = starred,
+        onToggleStar = onToggleFavorite,
+    )
+    if (busy != null) {
+        ThinProgress(
+            fraction = busy.fraction,
+            modifier = Modifier.padding(start = 3.dp, top = 2.dp, bottom = 6.dp),
+        )
     }
 }
 
@@ -462,6 +583,9 @@ private fun ChoiceRow(
     isSpeaking: Boolean,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    starred: Boolean = false,
+    /** Shows a star at the row's end when set; voices only. */
+    onToggleStar: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -501,8 +625,18 @@ private fun ChoiceRow(
                 Icons.Filled.GraphicEq,
                 contentDescription = "Currently speaking",
                 tint = Ink.Live,
-                modifier = Modifier.padding(end = 14.dp).size(18.dp),
+                modifier = Modifier.padding(end = if (onToggleStar != null) 0.dp else 14.dp).size(18.dp),
             )
+        }
+        if (onToggleStar != null) {
+            IconButton(onClick = onToggleStar) {
+                Icon(
+                    if (starred) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                    contentDescription = if (starred) "Remove from favourites" else "Add to favourites",
+                    tint = if (starred) Ink.Live else Ink.Dim,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }
@@ -558,8 +692,11 @@ private fun ReaderTheme.displayName(): String = when (this) {
 }
 
 /** "German", "Portuguese" — capitalised for the picker and section headings. */
-private fun Locale.displayName(): String =
-    displayLanguage.replaceFirstChar { it.uppercase() }.ifBlank { language }
+/** "Portuguese (Brazil)": the variant is the choice, so it is always shown. */
+private fun Locale.displayName(): String {
+    val name = displayLanguage.replaceFirstChar { it.uppercase() }.ifBlank { language }
+    return if (displayCountry.isBlank()) name else "$name ($displayCountry)"
+}
 
 private fun regionName(locale: Locale): String {
     val country = locale.country

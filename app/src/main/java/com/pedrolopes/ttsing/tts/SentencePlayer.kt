@@ -3,6 +3,7 @@ package com.pedrolopes.ttsing.tts
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.media.PlaybackParams
 import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -68,6 +69,11 @@ class SentencePlayer {
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
 
+        if (sentence.playbackSpeed != 1f) {
+            runCatching {
+                audioTrack.playbackParams = PlaybackParams().setSpeed(sentence.playbackSpeed).setPitch(1f)
+            }
+        }
         track = audioTrack
         val pcm = sentence.pcm
         val totalFrames = sentence.frameCount
@@ -114,7 +120,7 @@ class SentencePlayer {
             // Wait for the queued audio to actually reach the speaker BEFORE stopping:
             // AudioTrack.stop() resets playbackHeadPosition to zero, so polling it after
             // stopping waits on a counter that never advances again.
-            if (completed) completed = awaitDrain(audioTrack, totalFrames, sentence.sampleRateHz)
+            if (completed) completed = awaitDrain(audioTrack, totalFrames, sentence.sampleRateHz, sentence.playbackSpeed)
         } catch (_: IllegalStateException) {
             // The track was released underneath us by stop(); treat as interrupted.
             completed = false
@@ -168,8 +174,9 @@ class SentencePlayer {
      * Bounded by the sentence's own duration plus a grace margin: a device that never
      * reports the final frame must not be able to wedge the reader.
      */
-    private suspend fun awaitDrain(audioTrack: AudioTrack, totalFrames: Int, sampleRateHz: Int): Boolean {
-        val expectedMs = totalFrames * 1000L / sampleRateHz.coerceAtLeast(1)
+    private suspend fun awaitDrain(audioTrack: AudioTrack, totalFrames: Int, sampleRateHz: Int, speed: Float): Boolean {
+        // The head counts the recording's frames, which go by [speed] times faster than real time.
+        val expectedMs = (totalFrames * 1000L / sampleRateHz.coerceAtLeast(1) / speed.coerceAtLeast(0.1f)).toLong()
         val deadline = SystemClock.elapsedRealtime() + expectedMs + DRAIN_GRACE_MS
         while (currentCoroutineContext().isActive) {
             if (audioTrack.playState != AudioTrack.PLAYSTATE_PLAYING) return false
