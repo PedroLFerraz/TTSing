@@ -6,7 +6,8 @@ import java.util.Locale
 
 /**
  * One line of text as it sits on a PDF page. Coordinates are in points with y growing
- * downwards (PDFBox's "direction-adjusted" space), [y] being the baseline.
+ * downwards (PDFBox's "direction-adjusted" space), [y] being the baseline. [glyphs] are its
+ * characters' boxes, for marking spoken text on the page; empty when nobody needs them.
  */
 data class PdfLine(
     val text: String,
@@ -14,6 +15,7 @@ data class PdfLine(
     val y: Float,
     val right: Float,
     val fontSize: Float,
+    val glyphs: List<Glyph> = emptyList(),
 )
 
 /**
@@ -90,12 +92,27 @@ object PdfReflow {
         furniture: Set<String>,
         locale: Locale,
         bodySize: Float? = null,
-    ): List<Block> {
+    ): List<Block> = reflow(pages, furniture, locale, bodySize).blocks
+
+    /** Blocks and, for each, where its text sits on the pages. */
+    class Reflowed(val blocks: List<Block>, val geometry: SectionGeometry)
+
+    /**
+     * [toBlocks], plus each text block's characters lined up with the glyphs they came from,
+     * so the page view can mark what is being read on the page itself.
+     */
+    fun reflow(
+        pages: List<PdfPage>,
+        furniture: Set<String>,
+        locale: Locale,
+        bodySize: Float? = null,
+    ): Reflowed {
         val body = pages.map { page -> page to page.lines.filterNot { isFurniture(it, page, furniture) } }
         val allLines = body.flatMap { it.second }
         if (allLines.isEmpty()) {
             // A run of plates: pictures and no text.
-            return pages.flatMap { page -> figuresOn(page).map { Block.Image(it.key, null) } }
+            val plates = pages.flatMap { page -> figuresOn(page).map { Block.Image(it.key, null) } }
+            return Reflowed(plates, SectionGeometry(plates.map { null }))
         }
 
         val bodySize = bodySize ?: weightedMedian(allLines.map { it.fontSize to it.text.length }) ?: 10f
@@ -104,7 +121,10 @@ object PdfReflow {
         val bodyRight = percentile(allLines.map { it.right }, 0.9f) ?: Float.MAX_VALUE
 
         val blocks = mutableListOf<Block>()
+        val geometry = mutableListOf<TextGeometry?>()
         val paragraph = StringBuilder()
+        // The glyphs of every line in [paragraph], in the order they were joined.
+        val paragraphGlyphs = mutableListOf<PagedGlyph>()
         var headingKind: Block.Text.Kind? = null
         var previous: PdfLine? = null
 
@@ -112,21 +132,25 @@ object PdfReflow {
         // to end: a figure goes *between* paragraphs, never through the middle of a sentence.
         val passedFigures = mutableListOf<PdfImage>()
         // Footnotes wait the same way, and are read once the paragraph that cites them is done.
-        val passedNotes = mutableListOf<String>()
+        val passedNotes = mutableListOf<Note>()
+
+        fun addText(text: String, kind: Block.Text.Kind, glyphs: List<PagedGlyph>) {
+            blocks.add(Block.Text(text, kind, SentenceSplitter.split(text, locale)))
+            geometry.add(TextGeometry.align(text, glyphs))
+        }
 
         fun flush() {
             val text = paragraph.toString().replace(Regex("\\s+"), " ").trim()
             paragraph.setLength(0)
-            if (text.isNotEmpty()) {
-                val kind = headingKind ?: Block.Text.Kind.PARAGRAPH
-                blocks.add(Block.Text(text, kind, SentenceSplitter.split(text, locale)))
-            }
+            if (text.isNotEmpty()) addText(text, headingKind ?: Block.Text.Kind.PARAGRAPH, paragraphGlyphs.toList())
+            paragraphGlyphs.clear()
             headingKind = null
-            passedNotes.forEach { note ->
-                blocks.add(Block.Text(note, Block.Text.Kind.QUOTE, SentenceSplitter.split(note, locale)))
-            }
+            passedNotes.forEach { note -> addText(note.text, Block.Text.Kind.QUOTE, note.glyphs) }
             passedNotes.clear()
-            passedFigures.forEach { blocks.add(Block.Image(it.key, null)) }
+            passedFigures.forEach {
+                blocks.add(Block.Image(it.key, null))
+                geometry.add(null)
+            }
             passedFigures.clear()
         }
 
@@ -183,14 +207,15 @@ object PdfReflow {
                 } else {
                     appendLine(paragraph, text)
                 }
+                line.glyphs.mapTo(paragraphGlyphs) { PagedGlyph(page.index, it) }
                 previous = line
             }
             // Whatever sits below the page's last line comes after it.
             passedFigures.addAll(figures)
-            passedNotes.addAll(joinNotes(notes))
+            passedNotes.addAll(joinNotes(notes, page.index))
         }
         flush()
-        return blocks
+        return Reflowed(blocks, SectionGeometry(geometry))
     }
 
     // ---- figures ----
@@ -237,16 +262,20 @@ object PdfReflow {
         return below
     }
 
-    /** Footnote lines, one string per note. */
-    private fun joinNotes(lines: List<PdfLine>): List<String> {
-        val notes = mutableListOf<StringBuilder>()
+    /** A footnote's text, and the glyphs of the lines it was joined from. */
+    private class Note(val text: String, val glyphs: List<PagedGlyph>)
+
+    /** Footnote lines on page [pageIndex], one [Note] per note. */
+    private fun joinNotes(lines: List<PdfLine>, pageIndex: Int): List<Note> {
+        val notes = mutableListOf<Pair<StringBuilder, MutableList<PagedGlyph>>>()
         for (line in lines) {
             val text = clean(line.text)
             if (text.isEmpty()) continue
-            if (notes.isEmpty() || noteNumber.containsMatchIn(text)) notes.add(StringBuilder(text))
-            else appendLine(notes.last(), text)
+            if (notes.isEmpty() || noteNumber.containsMatchIn(text)) notes.add(StringBuilder(text) to mutableListOf())
+            else appendLine(notes.last().first, text)
+            line.glyphs.mapTo(notes.last().second) { PagedGlyph(pageIndex, it) }
         }
-        return notes.map { it.toString() }
+        return notes.map { (text, glyphs) -> Note(text.toString(), glyphs) }
     }
 
     /**

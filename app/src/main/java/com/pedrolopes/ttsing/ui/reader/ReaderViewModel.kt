@@ -11,9 +11,11 @@ import com.pedrolopes.ttsing.anki.CardDraft
 import com.pedrolopes.ttsing.data.BookRepository
 import com.pedrolopes.ttsing.data.book.BookDocument
 import com.pedrolopes.ttsing.data.epub.Block
+import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.epub.TocEntry
 import com.pedrolopes.ttsing.data.news.ArticleImageStore
 import com.pedrolopes.ttsing.data.news.NewsRepository
+import com.pedrolopes.ttsing.data.pdf.PdfDocument
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
 import com.pedrolopes.ttsing.tts.BookContentSource
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +74,11 @@ data class ReaderUiState(
     val isTruncated: Boolean = false,
     /** Article only: its address on the web, so the reader can offer to open it there. */
     val articleLink: String? = null,
+    /**
+     * PDF only: the pages in each section, in the PDF's own page numbering, so the page view
+     * can number pages the way the PDF does. Empty for everything else.
+     */
+    val pdfSectionPages: List<Int> = emptyList(),
 )
 
 class ReaderViewModel(
@@ -133,6 +140,7 @@ class ReaderViewModel(
                 return@launch
             }
             source = BookContentSource(opened)
+            if (opened is PdfDocument) _ui.value = _ui.value.copy(pdfSectionPages = opened.sectionPageCounts())
             // Character counts drive the time estimates; computing them walks the whole book, so
             // it runs off the critical path — but only once the book is open, since opening is
             // what clears counts left over from an older way of splitting the book.
@@ -223,6 +231,12 @@ class ReaderViewModel(
     fun syncToChapter(chapterIndex: Int) {
         if (isArticle || _ui.value.window.any { it.index == chapterIndex }) return
         viewModelScope.launch { recenter(chapterIndex, jumpToBlock = null) }
+    }
+
+    /** Moves both views to [blockIndex] of [chapterIndex]: switching between pages and text keeps the place. */
+    fun jumpTo(chapterIndex: Int, blockIndex: Int) {
+        if (isArticle) return
+        viewModelScope.launch { recenter(chapterIndex, jumpToBlock = blockIndex) }
     }
 
     fun consumeJump(id: Long) {
@@ -318,6 +332,25 @@ class ReaderViewModel(
         }
     }
 
+    // ---- PDF pages ----
+
+    /** The open PDF, for the page view to draw; null for anything else or an unreadable PDF. */
+    val pdf: PdfDocument?
+        get() = (document as? PdfDocument)?.takeIf { it.unreadableReason == null }
+
+    /**
+     * Where reading would start for a tap at ([x], [y]) points on [page]: the sentence under
+     * it, or null when the tap is nowhere near any text. Also returns the character tapped,
+     * which a flashcard needs.
+     */
+    suspend fun pdfPositionAt(page: Int, x: Float, y: Float): Pair<ReadingPosition, Int>? {
+        val pdf = pdf ?: return null
+        val chapter = pdf.sectionOfPage(page)
+        val hit = pdf.geometry(chapter).hit(page, x, y) ?: return null
+        val block = loadChapter(chapter)?.blocks?.getOrNull(hit.blockIndex) as? Block.Text ?: return null
+        return ReadingPosition(chapter, hit.blockIndex, block.sentenceIndexAt(hit.offset)) to hit.offset
+    }
+
     /**
      * Bytes for an image block. Book images come out of the book file; article images are
      * absolute URLs, downloaded once and then served from disk.
@@ -338,7 +371,8 @@ class ReaderViewModel(
      * user long-pressed. Returns null if that block has no speakable text.
      */
     fun draftFor(chapterIndex: Int, blockIndex: Int, offsetInBlock: Int): CardDraft? {
-        val blocks = _ui.value.window.firstOrNull { it.index == chapterIndex }?.blocks ?: return null
+        val blocks = (_ui.value.window.firstOrNull { it.index == chapterIndex } ?: chapters[chapterIndex])?.blocks
+            ?: return null
         val block = blocks.getOrNull(blockIndex) as? Block.Text ?: return null
         val span = block.sentences.getOrNull(block.sentenceIndexAt(offsetInBlock)) ?: return null
         return CardDraft(
