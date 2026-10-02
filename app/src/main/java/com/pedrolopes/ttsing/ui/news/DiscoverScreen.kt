@@ -54,7 +54,7 @@ import com.pedrolopes.ttsing.ui.theme.AppFonts
 import com.pedrolopes.ttsing.ui.theme.Ink
 
 /**
- * The biggest sources per topic, in two groups — newsrooms and newsletters — each a tap away
+ * The biggest sources per topic, in two groups — big newsrooms and independents — each a tap away
  * from being subscribed. Saves knowing, or hunting for, a single feed address.
  */
 @Composable

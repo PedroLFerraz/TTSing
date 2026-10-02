@@ -28,6 +28,11 @@ data class FeedItem(
      * article list show a thumbnail before the page has ever been fetched.
      */
     val imageUrl: String? = null,
+    /**
+     * The publisher's own labels for the story (`<category>`), as given. Nested ones read like
+     * "Gear / Deals". Used to leave out the shopping and sponsored posts some feeds mix in.
+     */
+    val categories: List<String> = emptyList(),
 )
 
 data class ParsedFeed(
@@ -78,6 +83,7 @@ object RssParser {
                 publishedAt = parseDate(item.childText("pubDate") ?: item.childText("dc:date")),
                 guid = item.childText("guid") ?: link,
                 imageUrl = imageUrlOf(item, link, summary, contentHtml),
+                categories = item.categories(),
             )
         }
         return ParsedFeed(
@@ -103,6 +109,7 @@ object RssParser {
                 publishedAt = parseDate(entry.childText("published") ?: entry.childText("updated")),
                 guid = entry.childText("id") ?: link,
                 imageUrl = imageUrlOf(entry, link, summary, contentHtml),
+                categories = entry.categories(),
             )
         }
         return ParsedFeed(
@@ -180,6 +187,16 @@ object RssParser {
     }
 
     private val HTML_IN_TEXT = Regex("""&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);|<[a-zA-Z/]""")
+
+    /** RSS puts the label in the element's text, Atom in its `term` (or `label`) attribute. */
+    private fun Element.categories(): List<String> =
+        children()
+            .filter { it.normalName().equals("category", ignoreCase = true) }
+            .mapNotNull { category ->
+                sequenceOf(category.text(), category.attr("label"), category.attr("term"))
+                    .map { it.trim() }
+                    .firstOrNull { it.isNotEmpty() }
+            }
 
     /** Direct child by tag name — avoids picking up a same-named tag from a nested element. */
     private fun Element.childText(tag: String): String? =

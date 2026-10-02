@@ -169,4 +169,27 @@ class RssParserTest {
         assertEquals("Channel Title", feed.title)
         assertEquals("Item Title", feed.items[0].title)
     }
+
+    @Test
+    fun `reads every category of an rss item, including nested ones`() {
+        val xml = """<rss version="2.0"><channel><title>Wired</title>
+              <item><title>Columbia Promo Codes</title><link>https://example.com/x</link>
+                <category>Gear</category><category><![CDATA[Gear / Deals]]></category>
+              </item>
+              <item><title>No labels</title><link>https://example.com/y</link></item>
+            </channel></rss>"""
+        val items = RssParser.parse(xml)!!.items
+        assertEquals(listOf("Gear", "Gear / Deals"), items[0].categories)
+        assertEquals(emptyList<String>(), items[1].categories)
+    }
+
+    @Test
+    fun `reads atom categories from their label or term`() {
+        val xml = """<feed xmlns="http://www.w3.org/2005/Atom"><title>Atom</title>
+              <entry><title>Story</title><link href="https://example.com/a"/>
+                <category term="sponsored"/><category term="ai" label="Artificial intelligence"/>
+              </entry>
+            </feed>"""
+        assertEquals(listOf("sponsored", "Artificial intelligence"), RssParser.parse(xml)!!.items.single().categories)
+    }
 }

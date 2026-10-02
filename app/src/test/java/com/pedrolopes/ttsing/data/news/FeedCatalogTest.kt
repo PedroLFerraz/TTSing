@@ -50,7 +50,7 @@ class FeedCatalogTest {
         val verge = FeedCatalog.feeds.first { it.title == "The Verge" }
         assertEquals(verge, FeedCatalog.find("http://www.theverge.com/rss/index.xml"))
         assertEquals(verge, FeedCatalog.find("https://theverge.com/rss/index.xml/"))
-        assertNotNull(FeedCatalog.find("https://tecnoblog.net/feed"))
+        assertNotNull(FeedCatalog.find("https://tecnoblog.net/noticias/feed"))
         assertNull(FeedCatalog.find("https://example.com/feed"))
     }
 

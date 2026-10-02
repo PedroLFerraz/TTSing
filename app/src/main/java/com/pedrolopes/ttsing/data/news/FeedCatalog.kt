@@ -12,13 +12,13 @@ enum class Topic(val id: String, val label: String) {
 }
 
 /**
- * A publication's newsroom, or one writer's newsletter. Shown as separate groups because they
- * listen differently: outlets publish many short stories a day, newsletters a few long essays
- * a week.
+ * A big newsroom, or a smaller independent source: a writer's newsletter, a nonprofit
+ * newsroom, a fact-checker. Shown as separate groups because they listen differently: outlets
+ * publish many short stories a day, independents fewer and longer pieces.
  */
 enum class SourceKind(val label: String) {
     OUTLET("Outlets"),
-    NEWSLETTER("Newsletters"),
+    NEWSLETTER("Independent"),
 }
 
 data class CatalogFeed(
@@ -49,7 +49,9 @@ data class CatalogFeed(
  * topic rankings and the Plenary reader's curated OPML lists for outlets — then kept only if
  * the feed parses and its stories extract to real, readable text (checked by
  * FeedCatalogLiveCheck). Podcast, video and link-aggregator feeds are left out on purpose:
- * there is nothing in them to read aloud. Politics groups mix the political spectrum.
+ * there is nothing in them to read aloud. So are feeds that are mostly deals and coupons
+ * (Wired is listed by section for this reason), advice and essays rather than news, and
+ * outlets rated low on factual reporting. Politics groups mix the political spectrum.
  *
  * Within a group, order is roughly by size, biggest first.
  */
@@ -66,34 +68,35 @@ object FeedCatalog {
         // ---- Technology · English ----
         tech(SourceKind.OUTLET, "en") {
             add("The Verge", "https://www.theverge.com/rss/index.xml", "Consumer tech, gadgets and the companies behind them")
-            add("Ars Technica", "https://feeds.arstechnica.com/arstechnica/index", "In-depth technology, science and policy reporting", teaserOnly = true)
             add("TechCrunch", "https://techcrunch.com/feed/", "Startups, venture capital and big tech news")
-            add("Wired", "https://www.wired.com/feed/rss", "How technology is changing culture, business and politics")
-            add("Engadget", "https://www.engadget.com/rss.xml", "Gadget news and reviews")
+            add("Wired Business", "https://www.wired.com/feed/category/business/latest/rss", "Big tech, AI and the tech economy, from Wired")
+            add("Wired Security", "https://www.wired.com/feed/category/security/latest/rss", "Hacks, surveillance and privacy, from Wired")
+            add("Wired Science", "https://www.wired.com/feed/category/science/latest/rss", "Science and health, from Wired")
             add("MIT Technology Review", "https://www.technologyreview.com/feed/", "Emerging technology and AI, from MIT")
             add("The Register", "https://www.theregister.com/headlines.atom", "Enterprise IT, security and software, with attitude")
             add("Rest of World", "https://restofworld.org/feed/latest", "Technology's impact beyond the Western bubble")
+            add("404 Media", "https://www.404media.co/rss/", "Independent reporting on how technology shapes the world")
+            add("BBC Technology", "https://feeds.bbci.co.uk/news/technology/rss.xml", "Technology news from the BBC")
+            add("Ars Technica", "https://feeds.arstechnica.com/arstechnica/index", "In-depth technology, science and policy reporting", teaserOnly = true)
         }
         tech(SourceKind.NEWSLETTER, "en") {
-            add("The Pragmatic Engineer", "https://newsletter.pragmaticengineer.com/feed", "Big tech and startups, from the inside — Gergely Orosz")
             add("Platformer", "https://www.platformer.news/rss/", "Big tech and democracy — Casey Newton")
-            add("Exponential View", "https://www.exponentialview.co/feed", "AI and exponential technologies — Azeem Azhar")
-            add("ByteByteGo", "https://blog.bytebytego.com/feed", "System design explained — Alex Xu")
-            add("Lenny's Newsletter", "https://www.lennysnewsletter.com/feed", "Product, growth and careers — Lenny Rachitsky")
-            add("Not Boring", "https://www.notboring.co/feed", "Tech strategy deep dives — Packy McCormick")
+            add("Big Technology", "https://www.bigtechnology.com/feed", "The tech giants and AI — Alex Kantrowitz")
+            add("Benedict Evans", "https://www.ben-evans.com/benedictevans?format=rss", "Where tech is heading — Benedict Evans")
             add("One Useful Thing", "https://www.oneusefulthing.org/feed", "Living and working with AI — Ethan Mollick")
-            add("Marcus on AI", "https://garymarcus.substack.com/feed", "A sceptic's view of the AI boom — Gary Marcus")
-            add("Stratechery", "https://stratechery.com/feed/", "The business and strategy of tech — Ben Thompson", teaserOnly = true)
+            add("Import AI", "https://importai.substack.com/feed", "AI research and what it means — Jack Clark")
+            add("The Pragmatic Engineer", "https://newsletter.pragmaticengineer.com/feed", "Big tech and startups, from the inside — Gergely Orosz")
         }
 
         // ---- Technology · Português ----
         tech(SourceKind.OUTLET, "pt-BR") {
-            add("Tecnoblog", "https://tecnoblog.net/feed/", "Notícias, análises e reviews de tecnologia")
+            add("Tecnoblog Notícias", "https://tecnoblog.net/noticias/feed/", "Notícias de tecnologia do Tecnoblog")
             add("Canaltech", "https://feeds.feedburner.com/canaltechbr", "Tecnologia, ciência e games")
-            add("Olhar Digital", "https://olhardigital.com.br/feed/", "Tecnologia, ciência e inovação")
             add("g1 Tecnologia", "https://g1.globo.com/rss/g1/tecnologia/", "A editoria de tecnologia do g1")
-            add("MacMagazine", "https://macmagazine.com.br/feed/", "Tudo sobre a Apple")
             add("Folha Tec", "https://feeds.folha.uol.com.br/tec/rss091.xml", "A editoria de tecnologia da Folha de S.Paulo")
+            add("Estadão Tecnologia", "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/economia/tecnologia/", "A editoria de tecnologia do Estadão")
+            add("Meio Bit", "https://meiobit.com/feed/", "Tecnologia, ciência e cultura geek")
+            add("Mobile Time", "https://www.mobiletime.com.br/feed/", "Telecomunicações, mobilidade e o mercado digital")
         }
         tech(SourceKind.NEWSLETTER, "pt-BR") {
             add("Manual do Usuário", "https://manualdousuario.net/feed/", "Tecnologia com olhar crítico — Rodrigo Ghedin")
@@ -103,46 +106,39 @@ object FeedCatalog {
         // ---- Politics · English ----
         politics(SourceKind.OUTLET, "en") {
             add("NPR Politics", "https://feeds.npr.org/1014/rss.xml", "US politics from National Public Radio")
-            add("Politico · Congress", "https://rss.politico.com/congress.xml", "Capitol Hill politics and policy")
-            add("Fox News Politics", "https://moxie.foxnews.com/google-publisher/politics.xml", "US politics from Fox News")
+            add("PBS NewsHour Politics", "https://www.pbs.org/newshour/feeds/rss/politics", "US politics from PBS NewsHour")
             add("BBC Politics", "https://feeds.bbci.co.uk/news/politics/rss.xml", "UK politics from the BBC")
+            add("BBC US & Canada", "https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml", "North American news from the BBC")
             add("The Guardian · US politics", "https://www.theguardian.com/us-news/us-politics/rss", "US politics from The Guardian")
-            add("New York Post Politics", "https://nypost.com/politics/feed/", "US politics from the New York Post")
-            add("Vox Politics", "https://www.vox.com/rss/politics/index.xml", "Politics and policy, explained")
-            add("The Atlantic · Politics", "https://www.theatlantic.com/feed/channel/politics/", "Political analysis and long reads")
-            add("Reason", "https://reason.com/feed/", "Libertarian news and commentary")
-            add("The New York Times · Politics", "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml", "US politics from the Times", teaserOnly = true)
-            add("The Washington Post · Politics", "https://feeds.washingtonpost.com/rss/politics", "US politics from the Post", teaserOnly = true)
+            add("Politico · Congress", "https://rss.politico.com/congress.xml", "Capitol Hill politics and policy")
+            add("Roll Call", "https://rollcall.com/feed/", "Congress, campaigns and policy, since 1955")
+            add("ABC News Politics", "https://abcnews.go.com/abcnews/politicsheadlines", "US politics from ABC News")
         }
         politics(SourceKind.NEWSLETTER, "en") {
-            add("The Free Press", "https://www.thefp.com/feed", "Independent journalism — Bari Weiss")
-            add("The Bulwark", "https://www.thebulwark.com/feed", "Centre-right, pro-democracy commentary")
-            add("Letters from an American", "https://heathercoxrichardson.substack.com/feed", "Daily political history — Heather Cox Richardson")
+            add("Tangle", "https://www.readtangle.com/archive/rss/", "One story a day, with what the left and the right say about it")
             add("Silver Bulletin", "https://www.natesilver.net/feed", "Elections, polling and data — Nate Silver")
+            add("Persuasion", "https://www.persuasion.community/feed", "Centrist essays on politics and free speech")
             add("Slow Boring", "https://www.slowboring.com/feed", "Policy and politics — Matthew Yglesias")
-            add("Paul Krugman", "https://paulkrugman.substack.com/feed", "Economics and politics — Paul Krugman")
-            add("The Dispatch", "https://thedispatch.com/feed/", "Fact-based conservative reporting and analysis", teaserOnly = true)
-            add("Racket News", "https://www.racket.news/feed", "Media and politics — Matt Taibbi")
-            add("The Weekly Dish", "https://andrewsullivan.substack.com/feed", "Politics and culture — Andrew Sullivan")
+            add("The Dispatch", "https://thedispatch.com/feed/", "Fact-based conservative reporting and analysis")
+            add("The Free Press", "https://www.thefp.com/feed", "Independent journalism — Bari Weiss")
         }
 
         // ---- Politics · Português ----
         politics(SourceKind.OUTLET, "pt-BR") {
             add("g1 Política", "https://g1.globo.com/rss/g1/politica/", "A editoria de política do g1")
             add("Folha Poder", "https://feeds.folha.uol.com.br/poder/rss091.xml", "Política na Folha de S.Paulo")
-            add("Poder360", "https://www.poder360.com.br/feed/", "Política e poder em Brasília")
+            add("Estadão Política", "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/politica/", "Política no Estadão")
             add("BBC News Brasil", "https://feeds.bbci.co.uk/portuguese/rss.xml", "Brasil e mundo, da BBC em português")
-            add("Gazeta do Povo · República", "https://www.gazetadopovo.com.br/feed/rss/republica.xml", "Política na Gazeta do Povo")
-            add("CartaCapital Política", "https://www.cartacapital.com.br/politica/feed/", "Política na CartaCapital")
+            add("Agência Brasil Política", "https://agenciabrasil.ebc.com.br/rss/politica/feed.xml", "Política na agência pública de notícias")
+            add("Poder360", "https://www.poder360.com.br/feed/", "Política e poder em Brasília")
             add("Congresso em Foco", "https://congressoemfoco.uol.com.br/feed/", "O dia a dia do Congresso Nacional")
             add("Intercept Brasil", "https://www.intercept.com.br/feed/", "Jornalismo investigativo")
-            add("Estadão Política", "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/politica/", "Política no Estadão")
         }
         politics(SourceKind.NEWSLETTER, "pt-BR") {
-            add("Política Global", "https://oliverstuenkel.substack.com/feed", "Geopolítica e o Brasil no mundo — Oliver Stuenkel", teaserOnly = true)
-            add("O Insight", "https://oinsight.substack.com/feed", "Política, tecnologia e negócios dos EUA com impacto no Brasil")
             add("Agência Pública", "https://apublica.org/feed/", "Jornalismo investigativo sem fins lucrativos")
             add("piauí", "https://piaui.folha.uol.com.br/feed/", "Reportagens longas sobre política e sociedade")
+            add("Aos Fatos", "https://www.aosfatos.org/noticias/feed/", "Checagem de fatos e desinformação")
+            add("Lupa", "https://lupa.news/feed/", "Checagem de fatos")
         }
     }
 

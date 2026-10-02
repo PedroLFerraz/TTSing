@@ -68,9 +68,11 @@ class FeedCatalogLiveCheck {
             return Outcome(feed, false, "mis-decoded text: ${parsed.items.first().title}")
         }
 
-        val samples = parsed.items.take(SAMPLES).map { item -> readableLengths(item) }
+        // Sampled as the app stores them: shopping and sponsored posts never reach the list.
+        val (ads, stories) = parsed.items.partition { NewsRepository.isAd(it) }
+        val samples = stories.take(SAMPLES).map { item -> readableLengths(item) }
         val readable = samples.count { maxOf(it.inline, it.page) >= NewsRepository.MIN_FULL_TEXT }
-        val detail = "lang=${parsed.language ?: "?"} items=${parsed.items.size} " +
+        val detail = "lang=${parsed.language ?: "?"} items=${parsed.items.size} ads=${ads.size} " +
             "inline/page/reopen chars=${samples.joinToString("  ") { "${it.inline}/${it.page}/${it.reopen}" }}"
         // Whatever was extracted must survive being stored and opened again.
         samples.firstOrNull { it.reopen < it.page * REOPEN_KEPT }

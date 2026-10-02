@@ -167,6 +167,7 @@ class NewsRepository(
             // Older than what refreshAll() keeps: storing it would only bring a deleted story
             // back as unread, to be deleted again next time.
             .filter { it.publishedAt == 0L || it.publishedAt >= cutoff }
+            .filterNot { isAd(it) }
             .map { it to articleId(feedUrl, it.guid) }
             .filter { (_, id) -> id !in known }
 
@@ -375,6 +376,33 @@ class NewsRepository(
             MessageDigest.getInstance("SHA-1")
                 .digest(value.toByteArray())
                 .joinToString("") { "%02x".format(it) }
+
+        /**
+         * Whether [item] is shopping or a paid post rather than news: coupon codes, deal
+         * roundups, buying guides, sponsored content. Some otherwise good feeds mix these in
+         * (half of Wired's main feed, at one point), and none is worth listening to.
+         */
+        fun isAd(item: FeedItem): Boolean =
+            AD_TITLE.containsMatchIn(item.title) ||
+                item.categories.any { category -> category.split('/', '>', '|', '›').any { AD_CATEGORY.matches(it.trim()) } }
+
+        /**
+         * A whole category label, or one level of a nested one ("Gear / Deals"). Matched whole
+         * so "Mergers and deals" stays news.
+         */
+        private val AD_CATEGORY = Regex(
+            "coupons?|cupons?|deals?|sponsored|patrocinado|webinars?|whitepapers?|guia de compras|buying guides?|ofertas?",
+            RegexOption.IGNORE_CASE,
+        )
+
+        /**
+         * Words only shopping and paid posts put in a headline. Bare "deal" and "preço" are
+         * left out on purpose: trade deals and price rises are news.
+         */
+        private val AD_TITLE = Regex(
+            """\b(promo codes?|coupons?|cupom|cupons|ofertas? do dia|daily deals?|patrocinado|publieditorial)\b""",
+            RegexOption.IGNORE_CASE,
+        )
 
         /** Accepts what people actually paste: bare hosts, feed:// links, stray whitespace. */
         fun normalizeUrl(raw: String): String? {

@@ -120,4 +120,44 @@ class NewsRepositoryTest {
     fun `a story with no title gets no empty heading`() {
         assertEquals(story, NewsRepository.withHeadline(story, "  ", Locale.ENGLISH))
     }
+
+    private fun item(title: String, vararg categories: String) =
+        FeedItem(title, "https://example.com/x", null, null, 0, "x", categories = categories.toList())
+
+    @Test
+    fun `shopping and paid posts are recognised by their headline`() {
+        // Shaped like the shopping posts in Wired's, Tecnoblog's and Olhar Digital's feeds; the
+        // first, third and fourth are taken from them as they were.
+        listOf(
+            "Columbia Promo Codes: 15% Off | October 2026",
+            "Best Buy Coupon: 20% Off Laptops",
+            "iPhone 17 (512 GB) com Apple A19 baixa de preço com cupom",
+            "Galaxy S25 (256 GB) com 12 GB de RAM tem maior desconto com cupom",
+            "Ofertas do dia: Echo Dot e Kindle com até 40% de desconto",
+            "Oferta do dia: SSD de 1 TB pelo menor preço",
+            "Conteúdo patrocinado: como a nuvem acelera o varejo",
+        ).forEach { assertTrue(it, NewsRepository.isAd(item(it))) }
+    }
+
+    @Test
+    fun `shopping and paid posts are recognised by their category`() {
+        assertTrue(NewsRepository.isAd(item("Columbia jackets, compared", "Gear", "Gear / Deals")))
+        assertTrue(NewsRepository.isAd(item("31 Best STEM Toys for Kids (2026)", "Gear", "Gear / Buying Guides")))
+        assertTrue(NewsRepository.isAd(item("Making AI an asset, not an expense", "Artificial intelligence", "sponsored")))
+        assertTrue(NewsRepository.isAd(item("Os melhores fones de 2026", "Guia de Compras")))
+    }
+
+    @Test
+    fun `news about deals and prices is still news`() {
+        // The first two are from Canaltech's feed; the rest are the kind of headline a looser
+        // match on "deal" or "preço" would wrongly catch.
+        listOf(
+            "SUV da Kia em promoção sai mais barato que rivais de BYD e GWM",
+            "Galaxy S26 fica mais caro de novo em meio à crise das memórias",
+            "EU and US strike trade deal on steel tariffs",
+            "Preço da gasolina sobe pela terceira semana seguida",
+            "Microsoft closes its deal for the game studio",
+        ).forEach { assertFalse(it, NewsRepository.isAd(item(it, "Business", "Business / Big Tech"))) }
+        assertFalse(NewsRepository.isAd(item("Antitrust ruling reshapes app stores", "Mergers and deals", "Policy")))
+    }
 }
