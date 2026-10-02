@@ -155,8 +155,8 @@ fun ReaderSettingsSheet(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     MonoText("Show PDF as", size = 11f, tracking = 0.16f)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ThemeChip("Pages", selected = pdfView == PdfView.PAGES, onClick = { onPdfView(PdfView.PAGES) })
-                        ThemeChip("Text", selected = pdfView == PdfView.TEXT, onClick = { onPdfView(PdfView.TEXT) })
+                        ChoiceChip("Pages", selected = pdfView == PdfView.PAGES, onClick = { onPdfView(PdfView.PAGES) })
+                        ChoiceChip("Text", selected = pdfView == PdfView.TEXT, onClick = { onPdfView(PdfView.TEXT) })
                     }
                     Text(
                         text = if (pdfView == PdfView.PAGES) {
