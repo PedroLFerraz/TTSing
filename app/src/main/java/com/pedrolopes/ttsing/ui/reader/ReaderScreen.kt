@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -54,7 +55,9 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -106,6 +109,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
 private val DefaultSettings = AppSettings(
@@ -114,6 +118,32 @@ private val DefaultSettings = AppSettings(
     fontScale = 1f,
     readerTheme = ReaderTheme.DARK,
 )
+
+/** How long a page must stay put before it counts as where the reader is. */
+private const val BROWSE_SAVE_MS = 1_000L
+
+/**
+ * Bookkeeping for the browsing save: plain fields rather than state, since none of it is drawn.
+ * [layoutEpoch] counts layout changes; a page reported after one moved because the text was
+ * re-laid out, not because the reader turned to it.
+ */
+private class BrowseState {
+    var reported: VisiblePage? = null
+    var navigated = false
+    var layoutEpoch = 0
+    var seenEpoch = 0
+    var layoutChanged = false
+    /** Where the voice was last parked by the reader. */
+    var parked: ReadingPosition? = null
+    /** The save waiting out its delay, for when the screen is left before it fires. */
+    var pending: (() -> Unit)? = null
+
+    fun noteReport(page: VisiblePage) {
+        // A report identical to the last changes nothing, so a layout change it follows moved no page.
+        layoutChanged = (layoutChanged || layoutEpoch != seenEpoch) && page != reported
+        seenEpoch = layoutEpoch
+    }
+}
 
 /** The page on screen, as the pager reports it: where it is in its chapter, and where it starts. */
 internal data class VisiblePage(
@@ -200,6 +230,75 @@ fun ReaderScreen(
     LaunchedEffect(playback.position.chapterIndex, isThisBook) {
         if (isThisBook) viewModel.syncToChapter(playback.position.chapterIndex)
     }
+
+    // ---- browsing: remembering the place, and parking the voice there ----
+    // Where the reader settles is where they are in the book. It is saved a moment after the
+    // page stops changing; if the voice is paused in this book it is parked there too, so Play
+    // reads what is on screen. While the voice speaks, the service owns the position.
+    val browse = remember { BrowseState() }
+    val latestPlayback by rememberUpdatedState(playback)
+    val latestWindow by rememberUpdatedState(ui.window)
+    val latestVoicePage by rememberUpdatedState(voicePage)
+    val speakingHere = isThisBook && playback.isSpeaking
+    LaunchedEffect(visible, speakingHere) {
+        browse.pending = null
+        val page = visible ?: return@LaunchedEffect
+        // Pausing restarts this for the same page: that is not a new report.
+        if (browse.reported != page) {
+            browse.navigated = isNavigation(browse.reported, page, browse.layoutChanged, browse.navigated)
+            browse.layoutChanged = false
+            browse.reported = page
+        }
+        if (!browse.navigated) return@LaunchedEffect
+        val commit = {
+            val now = latestPlayback
+            val serviceHasBook = now.isActive && now.bookId == bookId
+            val voiceOnPage = latestVoicePage?.let {
+                it.chapterIndex == page.chapterIndex && it.pageInChapter == page.pageInChapter
+            } == true
+            val action = browseAction(true, serviceHasBook && now.isSpeaking, serviceHasBook, voiceOnPage)
+            if (action != BrowseAction.NONE) {
+                val blocks = latestWindow.firstOrNull { it.index == page.chapterIndex }?.blocks
+                val position = browsePosition(page.chapterIndex, blocks, page.firstBlockIndex, page.firstOffset)
+                viewModel.saveBrowsedPosition(position)
+                if (action == BrowseAction.SAVE_AND_PARK) {
+                    browse.parked = position
+                    controller.seekTo(position, alsoPlay = false, bookId = bookId)
+                }
+            }
+        }
+        browse.pending = commit
+        delay(BROWSE_SAVE_MS)
+        browse.pending = null
+        commit()
+    }
+    // Leaving within the delay must not lose the last swipe.
+    DisposableEffect(Unit) {
+        onDispose {
+            browse.pending?.invoke()
+            browse.pending = null
+        }
+    }
+    /** The voice goes where the reader went: along with it when speaking, parked there when not. */
+    val seekVoiceToChapter: (Int) -> Unit = { chapter ->
+        val now = latestPlayback
+        if (now.isActive && now.bookId == bookId) {
+            val position = ReadingPosition(chapter, 0, 0)
+            browse.parked = position
+            // A speaking voice saves its own place as it goes; a parked one is the reader's to save.
+            if (!now.isSpeaking) viewModel.saveBrowsedPosition(position)
+            controller.seekTo(position, alsoPlay = now.isSpeaking, bookId = bookId)
+        }
+    }
+    // What the page follows: the spoken word, kept through a pause (which clears it) so that
+    // pausing in a sentence that began on the previous page does not turn the page back.
+    val lastWord = remember { arrayOfNulls<WordAt>(1) }
+    val followAt = followOffset(playback.wordRange, playback.position, playback.sentenceRange, lastWord[0])
+    SideEffect {
+        playback.wordRange?.let { lastWord[0] = WordAt(playback.position, playback.sentenceRange, it.first) }
+    }
+    // Not turned to while it sits exactly where the reader parked it.
+    val followVoice = !(isThisBook && playback.position == browse.parked)
 
     // A PDF shows its own pages unless this book was switched to reflowed text.
     val pdf = viewModel.pdf
@@ -301,14 +400,22 @@ fun ReaderScreen(
                     modifier = Modifier.padding(start = 24.dp, top = 28.dp, bottom = 8.dp),
                 )
                 Hairline(modifier = Modifier.padding(vertical = 10.dp), inset = 24.dp)
-                LazyColumn {
-                    itemsIndexed(ui.toc) { _, entry ->
-                        val current = entry.spineIndex == visibleChapter
+                val tocState = rememberLazyListState()
+                val currentEntry = currentTocIndex(ui.toc.map { it.spineIndex }, visibleChapter)
+                // Opening the contents shows where the reader is in them, not the top.
+                LaunchedEffect(drawerState.targetValue) {
+                    if (drawerState.targetValue == androidx.compose.material3.DrawerValue.Open && currentEntry >= 0) {
+                        tocState.scrollToItem((currentEntry - 2).coerceAtLeast(0))
+                    }
+                }
+                LazyColumn(state = tocState) {
+                    itemsIndexed(ui.toc) { index, entry ->
+                        val current = index == currentEntry
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    viewModel.showChapter(entry.spineIndex)
+                                    viewModel.showChapter(entry.spineIndex, onLanded = seekVoiceToChapter)
                                     scope.launch { drawerState.close() }
                                 }
                                 .padding(horizontal = 24.dp, vertical = 12.dp),
@@ -371,8 +478,8 @@ fun ReaderScreen(
                         scope.launch { app.settings.setSpeechRate(next) }
                         controller.setSpeechRate(next)
                     },
-                    onPrevChapter = { viewModel.stepChapter(visibleChapter, forward = false) },
-                    onNextChapter = { viewModel.stepChapter(visibleChapter, forward = true) },
+                    onPrevChapter = { viewModel.stepChapter(visibleChapter, forward = false, onLanded = seekVoiceToChapter) },
+                    onNextChapter = { viewModel.stepChapter(visibleChapter, forward = true, onLanded = seekVoiceToChapter) },
                     onPlayPause = { controller.togglePlayPause(bookId) },
                     onNextSentence = { controller.next() },
                     onPrevSentence = { controller.previous() },
@@ -401,6 +508,7 @@ fun ReaderScreen(
                         activeBlockIndex = playback.position.blockIndex.takeIf { isThisBook },
                         sentenceRange = playback.sentenceRange.takeIf { isThisBook },
                         wordRange = playback.wordRange.takeIf { isThisBook },
+                        followVoice = followVoice,
                         onTap = { page, x, y ->
                             scope.launch {
                                 viewModel.pdfPositionAt(page, x, y)?.let { (position, _) -> controller.play(bookId, position) }
@@ -413,7 +521,7 @@ fun ReaderScreen(
                                 }
                             }
                         },
-                        onVisiblePage = { page -> visible = page },
+                        onVisiblePage = { page -> browse.noteReport(page); visible = page },
                         onVoicePage = { page -> voicePage = page },
                         onSettledChapter = viewModel::onVisibleChapter,
                     )
@@ -426,16 +534,20 @@ fun ReaderScreen(
                         activeBlockIndex = playback.position.blockIndex.takeIf { isThisBook },
                         // Follow the spoken WORD, so a sentence spanning a page boundary
                         // flips the page exactly when the highlight crosses it.
-                        activeOffset = playback.wordRange?.first ?: playback.sentenceRange?.first,
+                        activeOffset = followAt,
                         sentenceRange = playback.sentenceRange,
                         wordRange = playback.wordRange,
+                        followVoice = followVoice,
                         onTapStart = { position -> controller.play(bookId, position) },
                         onMakeCard = { chapter, blockIndex, offset ->
                             cardDraft = viewModel.draftFor(chapter, blockIndex, offset)
                         },
                         loadImage = viewModel::imageBytes,
-                        onGeometry = { geometry -> viewModel.ensurePageCounts(geometry, countingMeasurer, density) },
-                        onVisiblePage = { page -> visible = page },
+                        onGeometry = { geometry ->
+                            browse.layoutEpoch++
+                            viewModel.ensurePageCounts(geometry, countingMeasurer, density)
+                        },
+                        onVisiblePage = { page -> browse.noteReport(page); visible = page },
                         onVoicePage = { page -> voicePage = page },
                         onSettledChapter = viewModel::onVisibleChapter,
                     )
@@ -587,12 +699,22 @@ private data class BookPage(
     val key: String get() = "${chapter.index}:$pageInChapter"
 }
 
+/** The page area and the font pages are laid out for; a change in any of them lays every page out again. */
+private data class PageLayout(val widthPx: Int, val heightPx: Int, val fontScale: Float)
+
+/** The chapters of [window] laid out at [layout], their pages numbered on from one another. */
+private class PagedWindow(val window: List<LoadedChapter>, val layout: PageLayout, val pages: List<BookPage>)
+
 /**
  * The book as one run of pages. The pager spans the chapters in [window] back to back, so
  * swiping off a chapter's last page lands on the next chapter's first; when the settled page
  * is in a neighbour, [onSettledChapter] lets the window recentre on it. Pages are keyed by
  * chapter and page number, so the pager keeps the same page on screen while the list shifts
- * around it.
+ * around it. When the layout itself changes (font size, rotation) the numbers no longer mean
+ * the same text, so the page is found again by the text it started with.
+ *
+ * Laying pages out takes a while for a long chapter, so it happens off the main thread: the
+ * pages on screen stay as they are until the new ones are ready.
  */
 @Composable
 private fun PagedBook(
@@ -605,6 +727,8 @@ private fun PagedBook(
     activeOffset: Int?,
     sentenceRange: IntRange?,
     wordRange: IntRange?,
+    /** False while the voice sits where the reader parked it: turning to it would undo their browsing. */
+    followVoice: Boolean,
     onTapStart: (ReadingPosition) -> Unit,
     onMakeCard: (chapterIndex: Int, blockIndex: Int, offsetInBlock: Int) -> Unit,
     loadImage: suspend (String) -> ByteArray?,
@@ -615,29 +739,61 @@ private fun PagedBook(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val measurer = rememberTextMeasurer()
         val widthPx = (constraints.maxWidth - with(density) { PageHorizontalPadding.toPx() * 2 }).toInt().coerceAtLeast(1)
         val heightPx = (constraints.maxHeight - with(density) { (PageVerticalPadding * 2 + PageBottomSlack).toPx() })
             .toInt().coerceAtLeast(1)
         val geometry = PageGeometry(widthPx, heightPx, fontScale, density.density)
         LaunchedEffect(geometry) { onGeometry(geometry) }
 
-        // Each chapter is paginated once per layout and reused as the window slides along.
-        val paginated = remember(widthPx, heightPx, fontScale) { HashMap<Int, List<ReaderPage>>() }
-        val pages = remember(window, widthPx, heightPx, fontScale) {
-            window.flatMap { chapter ->
-                val chapterPages = paginated.getOrPut(chapter.index) {
-                    paginateChapter(chapter.blocks, widthPx, heightPx, measurer, density, fontScale)
-                }
-                chapterPages.mapIndexed { i, content -> BookPage(chapter, i, chapterPages.size, content) }
+        // A measurer of its own: the composition's keeps a cache that is not safe to share
+        // with a background thread. Each chapter is laid out once per layout and reused as the
+        // window slides along.
+        val fontResolver = LocalFontFamilyResolver.current
+        val layoutDirection = LocalLayoutDirection.current
+        val measurer = remember(fontResolver, density, layoutDirection) {
+            TextMeasurer(fontResolver, density, layoutDirection, cacheSize = 0)
+        }
+        val layout = PageLayout(widthPx, heightPx, fontScale)
+        val paginated = remember(layout) { ConcurrentHashMap<Int, List<ReaderPage>>() }
+        val paged by produceState<PagedWindow?>(null, window, layout) {
+            value = withContext(Dispatchers.Default) {
+                PagedWindow(
+                    window,
+                    layout,
+                    window.flatMap { chapter ->
+                        val chapterPages = paginated.getOrPut(chapter.index) {
+                            paginateChapter(chapter.blocks, widthPx, heightPx, measurer, density, fontScale)
+                        }
+                        chapterPages.mapIndexed { i, content -> BookPage(chapter, i, chapterPages.size, content) }
+                    },
+                )
             }
         }
+        val current = paged
+        if (current == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = palette.accent)
+            }
+            return@BoxWithConstraints
+        }
+        val pages = current.pages
 
         // A jump (opening the book, the contents, « ») builds a fresh pager already on the
         // right page, rather than scrolling an old one there and flashing what was in between.
-        key(jump?.id) {
-            val startPage = remember(jump?.id) {
-                jump?.let { target -> indexOfBlock(pages, target.chapterIndex, target.blockIndex, 0) } ?: 0
+        // It waits for the pages it lands on: a jump that arrives with a new window would
+        // otherwise be placed on the old one.
+        val gate = remember { JumpGate() }
+        if (jump != null && jump.id != gate.applied?.id && current.layout == layout &&
+            current.window.any { it.index == jump.chapterIndex }
+        ) {
+            gate.applied = jump
+        }
+        val appliedJump = gate.applied
+        key(appliedJump?.id) {
+            val startPage = remember(appliedJump?.id) {
+                appliedJump?.let { target ->
+                    indexOfBlock(pages, target.chapterIndex, target.blockIndex, target.offsetInBlock)
+                } ?: 0
             }
             val pagerState = rememberPagerState(initialPage = startPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))) {
                 pages.size
@@ -646,19 +802,29 @@ private fun PagedBook(
             // The pager positions by index, and recentring the window renumbers every page. So
             // when the list changes, put back whichever page was on screen, by its key, in the
             // same frame — otherwise moving into the next chapter jumps to whatever page now
-            // sits at the old index.
-            val shown = remember { PagesOnScreen() }
+            // sits at the old index. After a re-layout the keys mean different text, so the
+            // page is found by the text it began with instead.
+            val shown = remember { PagesOnScreen(current.layout) }
             if (shown.pages !== pages) {
-                val keyOnScreen = shown.pages?.getOrNull(pagerState.currentPage)?.key
+                val onScreen = shown.pages?.getOrNull(pagerState.currentPage)
+                val relaid = shown.layout != current.layout
                 shown.pages = pages
-                val index = keyOnScreen?.let { key -> pages.indexOfFirst { it.key == key } } ?: -1
+                shown.layout = current.layout
+                val index = when {
+                    onScreen == null -> -1
+                    !relaid -> pages.indexOfFirst { it.key == onScreen.key }
+                    else -> onScreen.anchor()
+                        ?.let { (block, offset) -> indexOfBlock(pages, onScreen.chapter.index, block, offset) } ?: -1
+                }
                 if (index >= 0 && index != pagerState.currentPage) pagerState.requestScrollToPage(index)
             }
             val currentPages by rememberUpdatedState(pages)
+            val currentLayout by rememberUpdatedState(current.layout)
+            val following by rememberUpdatedState(followVoice)
 
             // The voice's page, by key. Reading along turns to it when the voice *moves* — not
-            // when its page merely reappears in a recentred window, which would drag a reader
-            // who had swiped ahead back to where the voice was parked.
+            // when its page merely reappears in a recentred window or under a new layout, which
+            // would drag a reader who had swiped ahead back to where the voice was parked.
             val voicePageKey = if (voiceChapter != null && activeBlockIndex != null) {
                 indexOfBlock(pages, voiceChapter, activeBlockIndex, activeOffset ?: 0)?.let { pages[it].key }
             } else {
@@ -675,9 +841,13 @@ private fun PagedBook(
             LaunchedEffect(voicePageKey) {
                 if (voicePageKey == null || voicePageKey == shown.lastVoiceKey) return@LaunchedEffect
                 val firstSighting = shown.lastVoiceKey == null
+                val relaid = shown.voiceLayout != currentLayout
                 shown.lastVoiceKey = voicePageKey
-                // On opening, the jump already put the reader where the voice is parked.
-                if (firstSighting) return@LaunchedEffect
+                shown.voiceLayout = currentLayout
+                // On opening, the jump already put the reader where the voice is parked; after
+                // a re-layout the same voice sits under a new page number, not somewhere new;
+                // and a voice the reader parked themselves is already where they are looking.
+                if (firstSighting || relaid || !following) return@LaunchedEffect
                 val target = currentPages.indexOfFirst { it.key == voicePageKey }.takeIf { it >= 0 } ?: return@LaunchedEffect
                 if (target != pagerState.currentPage) pagerState.animateScrollToPage(target)
             }
@@ -712,7 +882,9 @@ private fun PagedBook(
                     page = page.content,
                     blocks = page.chapter.blocks,
                     chapterIndex = page.chapter.index,
-                    fontScale = fontScale,
+                    // The font the pages were laid out in, not the one just chosen: the two only
+                    // differ for the moment before the new pages arrive.
+                    fontScale = current.layout.fontScale,
                     palette = palette,
                     activeBlockIndex = activeBlockIndex.takeIf { isVoiceChapter },
                     sentenceRange = sentenceRange.takeIf { isVoiceChapter },
@@ -730,16 +902,31 @@ private fun PagedBook(
  * What the pager last had on screen. A plain holder rather than state: it is bookkeeping for
  * keeping the page steady across window changes, and must not itself cause recomposition.
  */
-private class PagesOnScreen {
+private class PagesOnScreen(layout: PageLayout) {
     var pages: List<BookPage>? = null
+    var layout: PageLayout = layout
+    var voiceLayout: PageLayout = layout
     var lastVoiceKey: String? = null
+}
+
+/** The jump the pager was last built for (see [PagedBook]). */
+private class JumpGate {
+    var applied: JumpRequest? = null
+}
+
+/** Block and offset of the first thing on the page: what to look for in a new layout. */
+private fun BookPage.anchor(): Pair<Int, Int>? = content.firstOrNull()?.let { element ->
+    when (element) {
+        is PageElement.TextEl -> element.slice.blockIndex to element.slice.start
+        is PageElement.ImageEl -> element.blockIndex to 0
+    }
 }
 
 /** Index in [pages] of the page showing [offset] of block [blockIndex] in [chapterIndex]. */
 private fun indexOfBlock(pages: List<BookPage>, chapterIndex: Int, blockIndex: Int, offset: Int): Int? {
     val start = pages.indexOfFirst { it.chapter.index == chapterIndex }.takeIf { it >= 0 } ?: return null
     val chapterPages = pages.filter { it.chapter.index == chapterIndex }.map { it.content }
-    return start + (pageIndexForOffset(chapterPages, blockIndex, offset) ?: 0)
+    return start + pageForAnchor(chapterPages, blockIndex, offset)
 }
 
 private val PageHorizontalPadding = 24.dp
