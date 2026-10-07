@@ -121,6 +121,9 @@ interface Narrator {
 
     fun pause()
 
+    /** [pause], then waits until the reading has really stopped: nothing is left running on the model or the book. */
+    suspend fun halt()
+
     fun resume()
 
     fun skipToNext()
