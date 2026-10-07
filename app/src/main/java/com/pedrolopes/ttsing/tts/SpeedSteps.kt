@@ -26,6 +26,9 @@ object SpeedSteps {
     /** The next speed up from [rate], wrapping round to the slowest past the top. */
     fun next(rate: Float): Float = ALL.firstOrNull { it > rate + 0.01f } ?: ALL.first()
 
+    /** The step closest to [rate], for a stored speed that sits between steps (an old slider value). */
+    fun nearest(rate: Float): Float = ALL.minBy { kotlin.math.abs(it - rate) }
+
     /** "1×", "1.5×", "2.25×" — no trailing zeros, because the chip is tiny. */
     fun format(rate: Float): String {
         val rounded = (rate * 100).roundToInt() / 100f

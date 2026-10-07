@@ -42,4 +42,13 @@ class SpeedStepsTest {
             assert(split.model <= SpeedSteps.MAX_MODEL_SPEED)
         }
     }
+
+    @Test
+    fun `a stored speed between steps shows the nearest one`() {
+        assertEquals(1.25f, SpeedSteps.nearest(1.3f))
+        assertEquals(1.5f, SpeedSteps.nearest(1.45f))
+        assertEquals(0.5f, SpeedSteps.nearest(0.1f))
+        assertEquals(3f, SpeedSteps.nearest(4f))
+        SpeedSteps.ALL.forEach { assertEquals(it, SpeedSteps.nearest(it)) }
+    }
 }

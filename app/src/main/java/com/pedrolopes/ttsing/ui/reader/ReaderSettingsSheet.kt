@@ -8,6 +8,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,9 +23,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,8 +37,10 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +60,9 @@ import com.pedrolopes.ttsing.tts.SpeedSteps
 import com.pedrolopes.ttsing.tts.needsDownload
 import com.pedrolopes.ttsing.tts.piper.CatalogVoice
 import com.pedrolopes.ttsing.tts.piper.DownloadProgress
+import com.pedrolopes.ttsing.tts.piper.PiperCatalog
+import com.pedrolopes.ttsing.tts.piper.PiperVoice
+import kotlinx.coroutines.delay
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.ChoiceChip
 import com.pedrolopes.ttsing.ui.common.MonoText
@@ -68,12 +77,14 @@ const val CHAPTER_END = -1
 /** The order the design lists themes in: the app's own first, the system's last. */
 private val ThemeOrder = listOf(ReaderTheme.DARK, ReaderTheme.LIGHT, ReaderTheme.SEPIA, ReaderTheme.SYSTEM)
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun ReaderSettingsSheet(
     settings: AppSettings,
     voices: List<Voice>,
     currentVoiceName: String?,
+    /** True while the voice is actually reading; paused, the current voice is "selected", not "speaking". */
+    speaking: Boolean,
     defaultVoiceName: String?,
     /** The language the book is actually read in — the override if set, else `dc:language`. */
     activeLocale: Locale,
@@ -89,9 +100,14 @@ fun ReaderSettingsSheet(
     installedNeuralIds: Set<String>,
     downloading: DownloadProgress?,
     onDownloadVoice: (CatalogVoice) -> Unit,
+    onCancelDownload: () -> Unit,
     onDeleteVoice: (CatalogVoice) -> Unit,
+    /** Whether the connection in use is metered, asked when a download is tapped. */
+    isMetered: () -> Boolean,
     /** Minutes left on the sleep timer, or null; -1 means "until the chapter ends". */
     sleepMinutesLeft: Int?,
+    /** What the running sleep timer was set to, so its chip stays lit while it counts down. */
+    sleepStartedMinutes: Int?,
     onSleepTimer: (minutes: Int?, atChapterEnd: Boolean) -> Unit,
     onDismiss: () -> Unit,
     onSpeechRate: (Float) -> Unit,
@@ -107,11 +123,23 @@ fun ReaderSettingsSheet(
     onSelectVoice: (String) -> Unit,
     onToggleFavorite: (String) -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = // Opens at half height so a font or theme change can be seen behind the sheet;
+    // drag it up for the voice list.
+    rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val storedVoice = settings.voiceFor(activeLocale.language)
     val favoriteVoices = settings.favoriteVoices
     val languageName = activeLocale.displayName()
     var languageMenuOpen by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf<CatalogVoice?>(null) }
+    var askMetered by remember { mutableStateOf<CatalogVoice?>(null) }
+    // Said when a tap can't do what it asks, e.g. a second download while one is running.
+    var notice by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(notice) {
+        if (notice != null) {
+            delay(5_000)
+            notice = null
+        }
+    }
     val declaredLocale = declaredLanguageTag
         ?.let { Locale.forLanguageTag(it) }
         ?.takeIf { it.language.isNotEmpty() }
@@ -148,22 +176,25 @@ fun ReaderSettingsSheet(
                     MonoText("Speed", size = 11f, tracking = 0.16f)
                     MonoText(SpeedSteps.format(settings.speechRate), size = 11f, tracking = 0.16f, color = Ink.Live)
                 }
-                SpeedSteps.ALL.chunked(4).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { step ->
-                            ChoiceChip(
-                                label = SpeedSteps.format(step),
-                                selected = kotlin.math.abs(settings.speechRate - step) < 0.01f,
-                                onClick = { onSpeechRate(step) },
-                            )
-                        }
+                // A speed stored from the old slider may sit between steps: the nearest one shows.
+                val currentStep = SpeedSteps.nearest(settings.speechRate)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SpeedSteps.ALL.forEach { step ->
+                        ChoiceChip(
+                            label = SpeedSteps.format(step),
+                            selected = step == currentStep,
+                            onClick = { onSpeechRate(step) },
+                        )
                     }
                 }
             }
             if (pdfView != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     MonoText("Show PDF as", size = 11f, tracking = 0.16f)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         ChoiceChip("Pages", selected = pdfView == PdfView.PAGES, onClick = { onPdfView(PdfView.PAGES) })
                         ChoiceChip("Text", selected = pdfView == PdfView.TEXT, onClick = { onPdfView(PdfView.TEXT) })
                     }
@@ -197,7 +228,7 @@ fun ReaderSettingsSheet(
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 MonoText("Theme", size = 11f, tracking = 0.16f)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ThemeOrder.forEach { theme ->
                         ChoiceChip(
                             label = theme.displayName(),
@@ -231,7 +262,7 @@ fun ReaderSettingsSheet(
                         title = languageName,
                         subtitle = "Tap to change the reading language",
                         selected = true,
-                        isSpeaking = false,
+                        isCurrent = false,
                         onClick = { languageMenuOpen = true },
                     )
                     DropdownMenu(
@@ -308,10 +339,17 @@ fun ReaderSettingsSheet(
 
             Hairline(inset = 0.dp)
 
-            MonoText("Sleep timer", size = 11f, tracking = 0.16f)
             Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                MonoText("Sleep timer", size = 11f, tracking = 0.16f)
+                SleepTimerUi.remaining(sleepMinutesLeft)?.let { MonoText(it, size = 10f, tracking = 0.12f, color = Ink.Live) }
+            }
+            FlowRow(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 val options = listOf<Pair<String, Pair<Int?, Boolean>>>(
                     "OFF" to (null to false),
@@ -322,47 +360,68 @@ fun ReaderSettingsSheet(
                 )
                 options.forEach { (label, setting) ->
                     val (minutes, chapterEnd) = setting
-                    val selected = when {
-                        chapterEnd -> sleepMinutesLeft == CHAPTER_END
-                        minutes == null -> sleepMinutesLeft == null
-                        // The running timer counts down, so the chip that set it stays lit.
-                        else -> sleepMinutesLeft != null && sleepMinutesLeft != CHAPTER_END &&
-                            sleepMinutesLeft <= minutes && sleepMinutesLeft > minutes - 15
-                    }
+                    val selected = SleepTimerUi.chipSelected(minutes, chapterEnd, sleepStartedMinutes, sleepMinutesLeft)
                     ChoiceChip(label = label, selected = selected) { onSleepTimer(minutes, chapterEnd) }
                 }
             }
 
             Hairline(inset = 0.dp)
 
-            val activeLabel = voices.firstOrNull { it.name == currentVoiceName }?.let { voiceTitle(it) }
-                ?: currentVoiceName
+            val deviceVoices = remember(voices) {
+                voices.filter { PiperVoice.FEATURE !in it.features.orEmpty() }.map {
+                    DeviceVoice(it.name, it.locale, it.quality, it.isNetworkConnectionRequired, it.needsDownload())
+                }
+            }
+            val neuralName = { id: String -> PiperCatalog.find(id)?.displayName ?: PiperCatalog.nameFor(id) }
+            val activeLabel = currentVoiceName?.let { name ->
+                if (name in installedNeuralIds) neuralName(name)
+                else deviceVoices.firstOrNull { it.name == name }?.let { VoiceLabels.line(it, deviceVoices).full } ?: name
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Bottom,
             ) {
                 MonoText("Voice — $languageName", size = 11f, tracking = 0.16f)
-                if (activeLabel != null) MonoText("Now speaking", size = 10f, tracking = 0.12f, color = Ink.Live)
+                // Paused, the voice is still the one chosen, but nothing is speaking with it.
+                if (activeLabel != null) {
+                    MonoText(if (speaking) "Now speaking" else "Selected", size = 10f, tracking = 0.12f, color = Ink.Live)
+                }
+            }
+            notice?.let { MonoText(it, size = 10f, tracking = 0.1f, color = Ink.Live, maxLines = 3) }
+
+            val requestDownload: (CatalogVoice) -> Unit = { voice ->
+                when (VoiceRules.downloadTap(voice, downloading, isMetered())) {
+                    VoiceRules.DownloadTap.START -> onDownloadVoice(voice)
+                    VoiceRules.DownloadTap.ASK_METERED -> askMetered = voice
+                    VoiceRules.DownloadTap.BUSY ->
+                        notice = "Already downloading ${downloading?.id?.let(neuralName)} — cancel it or wait, then try again."
+                    VoiceRules.DownloadTap.IGNORE -> Unit
+                }
             }
 
             // The voices you starred, plus the one in use, are all there is to see; the many
             // others an engine offers — a dozen regions, each in several variants — wait in a
             // folder. Until anything is starred the folder starts open, so nothing is hidden.
-            val deviceVoices = voices.filterNot { it.name in installedNeuralIds }
             val pinnedNeural = neuralVoices.filter { it.id in favoriteVoices || it.id == storedVoice }
             val pinnedDevice = deviceVoices.filter { it.name in favoriteVoices || it.name == storedVoice }
             val anyStarred = (pinnedNeural.map { it.id } + pinnedDevice.map { it.name }).any { it in favoriteVoices }
             var showMore by remember(activeLocale.language) { mutableStateOf(!anyStarred) }
+            var showOnline by remember(activeLocale.language) { mutableStateOf(false) }
+            // The chosen, current and starred voices stay in view even when they need a connection.
+            val keep = { voice: DeviceVoice ->
+                voice.name in favoriteVoices || voice.name == storedVoice || voice.name == currentVoiceName
+            }
 
+            val effectiveDefault = VoiceLabels.effectiveDefault(activeLocale, deviceVoices, defaultVoiceName)
             Column {
                 ChoiceRow(
                     title = "Device default",
-                    subtitle = defaultVoiceName
-                        ?.let { name -> voices.firstOrNull { it.name == name }?.let { voiceTitle(it) } ?: name }
+                    subtitle = effectiveDefault?.let { VoiceLabels.line(it, deviceVoices).full }
                         ?: "The engine's built-in voice for this language",
                     selected = storedVoice == null,
-                    isSpeaking = storedVoice == null && currentVoiceName != null,
+                    isCurrent = storedVoice == null && currentVoiceName != null,
+                    speaking = speaking,
                     onClick = onSelectDefaultVoice,
                 )
                 pinnedNeural.forEach { voice ->
@@ -372,19 +431,23 @@ fun ReaderSettingsSheet(
                         downloading = downloading,
                         storedVoice = storedVoice,
                         currentVoiceName = currentVoiceName,
+                        speaking = speaking,
                         starred = voice.id in favoriteVoices,
                         onToggleFavorite = { onToggleFavorite(voice.id) },
                         onSelectVoice = onSelectVoice,
-                        onDownloadVoice = onDownloadVoice,
-                        onDeleteVoice = onDeleteVoice,
+                        onDownloadVoice = requestDownload,
+                        onCancelDownload = onCancelDownload,
+                        onDeleteVoice = { deleting = it },
                     )
                 }
                 pinnedDevice.forEach { voice ->
+                    val line = VoiceLabels.line(voice, deviceVoices)
                     ChoiceRow(
-                        title = voiceTitle(voice),
-                        subtitle = voice.name,
+                        title = line.full,
+                        subtitle = line.detail,
                         selected = storedVoice == voice.name,
-                        isSpeaking = voice.name == currentVoiceName,
+                        isCurrent = voice.name == currentVoiceName,
+                        speaking = speaking,
                         onClick = { onSelectVoice(voice.name) },
                         starred = voice.name in favoriteVoices,
                         onToggleStar = { onToggleFavorite(voice.name) },
@@ -394,7 +457,9 @@ fun ReaderSettingsSheet(
 
             val moreNeural = neuralVoices - pinnedNeural.toSet()
             val moreDevice = deviceVoices - pinnedDevice.toSet()
-            val moreCount = moreNeural.size + moreDevice.size + otherNeuralVoices.size
+            val deviceGroups = VoiceLabels.groups(moreDevice, deviceVoices, showOnline, keep)
+            val onlineHeld = VoiceLabels.hiddenOnline(moreDevice, keep)
+            val moreCount = moreNeural.size + deviceGroups.sumOf { it.voices.size } + otherNeuralVoices.size
             if (moreCount > 0) {
                 MonoText(
                     text = if (showMore) "More voices — tap to hide" else "More voices · $moreCount — tap to show",
@@ -432,11 +497,76 @@ fun ReaderSettingsSheet(
                                 downloading = downloading,
                                 storedVoice = storedVoice,
                                 currentVoiceName = currentVoiceName,
+                                speaking = speaking,
                                 starred = false,
                                 onToggleFavorite = { onToggleFavorite(voice.id) },
                                 onSelectVoice = onSelectVoice,
-                                onDownloadVoice = onDownloadVoice,
-                                onDeleteVoice = onDeleteVoice,
+                                onDownloadVoice = requestDownload,
+                                onCancelDownload = onCancelDownload,
+                                onDeleteVoice = { deleting = it },
+                            )
+                        }
+                    }
+                }
+
+                // The device's own voices come before the other languages' neural ones, so the
+                // long list sits under a heading of its own rather than under a collapsed one.
+                MonoText(
+                    "On this device",
+                    size = 10f,
+                    tracking = 0.14f,
+                    color = Ink.Dim,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                )
+                when (VoiceRules.noVoices(deviceVoices.size, neuralVoices.size)) {
+                    VoiceRules.NoVoices.ALL -> Text(
+                        "This engine has no voices for $languageName. Install voice data in Android's " +
+                            "Text-to-speech settings, or pick another language above.",
+                        fontFamily = AppFonts.Grotesk,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = Ink.Muted,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    VoiceRules.NoVoices.DEVICE_ONLY -> Text(
+                        "The device's engine has no voices for $languageName; the neural voices above work offline.",
+                        fontFamily = AppFonts.Grotesk,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = Ink.Muted,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    VoiceRules.NoVoices.NONE -> Column {
+                        deviceGroups.forEach { group ->
+                            MonoText(
+                                group.region,
+                                size = 10f,
+                                tracking = 0.14f,
+                                color = Ink.Dim,
+                                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                            )
+                            group.voices.forEach { line ->
+                                ChoiceRow(
+                                    title = line.short,
+                                    subtitle = line.detail,
+                                    selected = storedVoice == line.name,
+                                    isCurrent = line.name == currentVoiceName,
+                                    speaking = speaking,
+                                    onClick = { onSelectVoice(line.name) },
+                                    starred = false,
+                                    onToggleStar = { onToggleFavorite(line.name) },
+                                )
+                            }
+                        }
+                        if (moreDevice.any { it.online }) {
+                            MonoText(
+                                text = if (showOnline) "Online voices — tap to hide" else "Online voices · $onlineHeld — tap to show",
+                                size = 10f,
+                                tracking = 0.14f,
+                                color = Ink.Live,
+                                modifier = Modifier
+                                    .clickable { showOnline = !showOnline }
+                                    .padding(top = 12.dp, bottom = 4.dp),
                             )
                         }
                     }
@@ -452,83 +582,64 @@ fun ReaderSettingsSheet(
                         },
                         size = 10f,
                         tracking = 0.14f,
-                        color = Ink.Dim,
+                        color = Ink.Live,
                         modifier = Modifier
                             .clickable { showOthers = !showOthers }
                             .padding(top = 14.dp, bottom = 4.dp),
                     )
                     if (showOthers) {
                         otherNeuralVoices.forEach { voice ->
-                            val installed = voice.id in installedNeuralIds
-                            val busy = downloading?.takeIf { it.id == voice.id && !it.failed }
-                            ChoiceRow(
-                                title = "${voice.displayName} · ${voice.locale.displayName()}",
-                                subtitle = when {
-                                    busy != null -> "Downloading — ${busy.done} of ${voice.megabytes} MB"
-                                    downloading?.id == voice.id && downloading.failed ->
-                                        "Download failed — tap to retry"
-                                    // Picking it here would read this book in the wrong language:
-                                    // it is offered so it is ready when you open one that needs it.
-                                    installed -> "Ready for when you read in ${voice.locale.displayName()}"
-                                    else -> "Tap to download · ${voice.megabytes} MB"
-                                },
-                                selected = false,
-                                isSpeaking = false,
-                                onClick = { if (!installed) onDownloadVoice(voice) },
-                                onLongClick = { onDeleteVoice(voice) }.takeIf { installed && !voice.bundled },
+                            NeuralVoiceRow(
+                                voice = voice,
+                                installedNeuralIds = installedNeuralIds,
+                                downloading = downloading,
+                                storedVoice = storedVoice,
+                                currentVoiceName = currentVoiceName,
+                                speaking = speaking,
+                                starred = false,
+                                onToggleFavorite = {},
+                                onSelectVoice = onSelectVoice,
+                                onDownloadVoice = requestDownload,
+                                onCancelDownload = onCancelDownload,
+                                onDeleteVoice = { deleting = it },
+                                otherLanguage = true,
                             )
-                            if (busy != null) {
-                                ThinProgress(
-                                    fraction = busy.fraction,
-                                    modifier = Modifier.padding(start = 3.dp, top = 2.dp, bottom = 6.dp),
-                                )
-                            }
                         }
-                    }
-                }
-
-                if (voices.isEmpty()) {
-                    Text(
-                        "This engine has no voices for $languageName. Install voice data in Android's " +
-                            "Text-to-speech settings, or pick another language above.",
-                        fontFamily = AppFonts.Grotesk,
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
-                        color = Ink.Muted,
-                        modifier = Modifier.padding(top = 10.dp),
-                    )
-                } else {
-                    Column {
-                        moreDevice
-                            .groupBy { regionName(it.locale) }
-                            .forEach { (region, list) ->
-                                MonoText(
-                                    region,
-                                    size = 10f,
-                                    tracking = 0.14f,
-                                    color = Ink.Dim,
-                                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
-                                )
-                                list.forEach { voice ->
-                                    ChoiceRow(
-                                        title = voiceTitle(voice),
-                                        subtitle = voice.name,
-                                        selected = storedVoice == voice.name,
-                                        isSpeaking = voice.name == currentVoiceName,
-                                        onClick = { onSelectVoice(voice.name) },
-                                        starred = false,
-                                        onToggleStar = { onToggleFavorite(voice.name) },
-                                    )
-                                }
-                            }
                     }
                 }
             }
         }
     }
+
+    deleting?.let { voice ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            containerColor = Ink.Raised,
+            text = { Text(VoiceRules.deletePrompt(voice), color = Ink.Text, fontFamily = AppFonts.Grotesk) },
+            confirmButton = {
+                TextButton(onClick = { deleting = null; onDeleteVoice(voice) }) { Text("Delete", color = Ink.Live) }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel", color = Ink.Muted) } },
+        )
+    }
+    askMetered?.let { voice ->
+        AlertDialog(
+            onDismissRequest = { askMetered = null },
+            containerColor = Ink.Raised,
+            text = { Text(VoiceRules.meteredPrompt(voice), color = Ink.Text, fontFamily = AppFonts.Grotesk) },
+            confirmButton = {
+                TextButton(onClick = { askMetered = null; onDownloadVoice(voice) }) { Text("Download", color = Ink.Live) }
+            },
+            dismissButton = { TextButton(onClick = { askMetered = null }) { Text("Cancel", color = Ink.Muted) } },
+        )
+    }
 }
 
-/** One of the app's own neural voices: picked when installed, fetched when not. */
+/**
+ * One of the app's own neural voices: picked when installed, fetched when not. With
+ * [otherLanguage] it belongs to a language this book isn't in, so it can be fetched or freed
+ * but not picked.
+ */
 @Composable
 private fun NeuralVoiceRow(
     voice: CatalogVoice,
@@ -536,36 +647,49 @@ private fun NeuralVoiceRow(
     downloading: DownloadProgress?,
     storedVoice: String?,
     currentVoiceName: String?,
+    speaking: Boolean,
     starred: Boolean,
     onToggleFavorite: () -> Unit,
     onSelectVoice: (String) -> Unit,
     onDownloadVoice: (CatalogVoice) -> Unit,
+    onCancelDownload: () -> Unit,
     onDeleteVoice: (CatalogVoice) -> Unit,
+    otherLanguage: Boolean = false,
 ) {
     val installed = voice.id in installedNeuralIds
     val busy = downloading?.takeIf { it.id == voice.id && !it.failed }
+    val region = VoiceLabels.region(voice.locale)
     ChoiceRow(
-        title = voice.displayName,
-        subtitle = when {
-            busy != null -> "Downloading — ${busy.done} of ${voice.megabytes} MB"
-            downloading?.id == voice.id && downloading.failed -> "Download failed — tap to retry"
-            installed -> "Offline · in this app · neural"
-            else -> "Tap to download · ${voice.megabytes} MB"
-        },
-        selected = storedVoice == voice.id,
-        isSpeaking = voice.id == currentVoiceName,
+        title = if (otherLanguage) "${voice.displayName} · $region" else voice.displayName,
+        subtitle = VoiceRules.neuralSubtitle(voice, installed, downloading, region, otherLanguage),
+        selected = !otherLanguage && storedVoice == voice.id,
+        isCurrent = !otherLanguage && voice.id == currentVoiceName,
+        speaking = speaking,
         onClick = {
-            if (installed) onSelectVoice(voice.id) else onDownloadVoice(voice)
+            if (installed) {
+                if (!otherLanguage) onSelectVoice(voice.id)
+            } else if (busy == null) {
+                onDownloadVoice(voice)
+            }
         },
-        // A downloaded voice is 40 MB; hold it to get the space back.
-        onLongClick = { onDeleteVoice(voice) }.takeIf { installed && !voice.bundled },
+        // A downloaded voice is ~67 MB: a trash button says so, and a long press still works.
+        onDelete = { onDeleteVoice(voice) }.takeIf { installed && !voice.bundled },
         starred = starred,
-        onToggleStar = onToggleFavorite,
+        onToggleStar = onToggleFavorite.takeIf { !otherLanguage },
     )
     if (busy != null) {
         ThinProgress(
             fraction = busy.fraction,
-            modifier = Modifier.padding(start = 3.dp, top = 2.dp, bottom = 6.dp),
+            modifier = Modifier.padding(start = 3.dp, top = 2.dp),
+        )
+        MonoText(
+            "Cancel download",
+            size = 10f,
+            tracking = 0.14f,
+            color = Ink.Live,
+            modifier = Modifier
+                .clickable(onClick = onCancelDownload)
+                .padding(start = 17.dp, top = 8.dp, bottom = 10.dp, end = 17.dp),
         )
     }
 }
@@ -580,9 +704,13 @@ private fun ChoiceRow(
     title: String,
     subtitle: String,
     selected: Boolean,
-    isSpeaking: Boolean,
+    /** This is the voice the engine is set up with. */
+    isCurrent: Boolean,
     onClick: () -> Unit,
-    onLongClick: (() -> Unit)? = null,
+    /** Whether the current voice is actually reading, which decides how it is marked. */
+    speaking: Boolean = true,
+    /** Shows a trash button at the row's end, and a long press does the same. */
+    onDelete: (() -> Unit)? = null,
     starred: Boolean = false,
     /** Shows a star at the row's end when set; voices only. */
     onToggleStar: (() -> Unit)? = null,
@@ -592,7 +720,11 @@ private fun ChoiceRow(
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .background(if (selected) Ink.Well else Color.Transparent)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onDelete,
+                onLongClickLabel = if (onDelete != null) "Delete voice" else null,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // The spine runs the full height of whatever the row's text works out to.
@@ -618,15 +750,28 @@ private fun ChoiceRow(
                 tracking = 0.1f,
                 color = if (selected) Ink.Muted else Ink.Dim,
                 modifier = Modifier.padding(top = 3.dp),
+                maxLines = 2,
             )
         }
-        if (isSpeaking) {
+        if (isCurrent) {
             Icon(
-                Icons.Filled.GraphicEq,
-                contentDescription = "Currently speaking",
+                if (speaking) Icons.Filled.GraphicEq else Icons.Filled.Check,
+                contentDescription = if (speaking) "Currently speaking" else "Selected voice",
                 tint = Ink.Live,
-                modifier = Modifier.padding(end = if (onToggleStar != null) 0.dp else 14.dp).size(18.dp),
+                modifier = Modifier
+                    .padding(end = if (onToggleStar != null || onDelete != null) 0.dp else 14.dp)
+                    .size(18.dp),
             )
+        }
+        if (onDelete != null) {
+            IconButton(onClick = onDelete) {
+                Icon(
+                    Icons.Filled.Delete,
+                    contentDescription = "Delete voice",
+                    tint = Ink.Dim,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
         if (onToggleStar != null) {
             IconButton(onClick = onToggleStar) {
@@ -698,28 +843,9 @@ private fun Locale.displayName(): String {
     return if (displayCountry.isBlank()) name else "$name ($displayCountry)"
 }
 
-private fun regionName(locale: Locale): String {
-    val country = locale.country
-    if (country.isBlank()) return "Other"
-    val name = locale.displayCountry.ifBlank { country }
-    return "$name (${locale.language}-$country)"
-}
-
-/** A friendly, human-comparable label for a voice (quality, gender hint, online flag). */
-private fun voiceTitle(voice: Voice): String {
-    val name = voice.name.lowercase()
-    val quality = when {
-        voice.quality >= Voice.QUALITY_VERY_HIGH -> "Very high quality"
-        voice.quality >= Voice.QUALITY_HIGH -> "High quality"
-        voice.quality <= Voice.QUALITY_LOW -> "Low quality"
-        else -> "Standard quality"
-    }
-    val gender = when {
-        name.contains("female") -> "Female"
-        name.contains("male") -> "Male"
-        else -> null
-    }
-    val online = if (voice.isNetworkConnectionRequired) "Online" else "Offline"
-    val download = if (voice.needsDownload()) "Downloads on first use" else null
-    return listOfNotNull(gender, quality, online, download).joinToString(" · ")
-}
+/** What the voice section lists, read off the main thread by the screen and handed over whole. */
+data class VoiceLists(
+    val voices: List<Voice> = emptyList(),
+    val defaultVoiceName: String? = null,
+    val languages: List<LanguageOption> = emptyList(),
+)

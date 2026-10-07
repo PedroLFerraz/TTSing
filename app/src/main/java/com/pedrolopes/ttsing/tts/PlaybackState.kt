@@ -36,6 +36,10 @@ data class PlaybackState(
      */
     val sleepAtElapsedMs: Long? = null,
     val sleepAtChapterEnd: Boolean = false,
+    /** The length the running sleep timer was set to, so its chip stays lit as it counts down. */
+    val sleepMinutes: Int? = null,
+    /** The voice the engine is configured with, kept current for the settings sheet. */
+    val voiceName: String? = null,
     /**
      * Set when the service played on from one news story into the next by itself: the id of
      * the story that finished. Lets a reader screen still showing that story follow along.

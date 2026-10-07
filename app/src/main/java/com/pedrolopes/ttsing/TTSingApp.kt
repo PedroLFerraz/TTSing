@@ -50,6 +50,11 @@ class TTSingApp : Application() {
      */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** Voice downloads live here, not in the settings sheet, so closing it doesn't lose one. */
+    val piperDownloads: com.pedrolopes.ttsing.tts.piper.PiperDownloads by lazy {
+        com.pedrolopes.ttsing.tts.piper.PiperDownloads(this, appScope)
+    }
+
     val news: NewsRepository by lazy { NewsRepository(newsDatabase.newsDao(), appScope, com.pedrolopes.ttsing.data.news.ArticleImageStore(this)) }
 
     override fun onCreate() {
