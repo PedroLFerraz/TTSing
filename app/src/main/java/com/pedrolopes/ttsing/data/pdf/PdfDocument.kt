@@ -12,6 +12,7 @@ import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineNode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -55,6 +56,9 @@ class PdfDocument private constructor(
 
     private val lock = Any()
 
+    /** Set under [lock] by [close], so a load queued behind it doesn't read a closed file. */
+    private var closed = false
+
     /** Running headers/footers and body text size across the whole book, sampled once. */
     private var bookSample: BookSample? = null
 
@@ -71,6 +75,9 @@ class PdfDocument private constructor(
         val section = sections.getOrNull(index)
             ?: throw IllegalArgumentException("Section $index out of range")
         val reflowed = synchronized(lock) {
+            // Leaving a book closes it while a chapter may still be waiting here; that load is
+            // as good as cancelled, and must not crash the app reading a closed file.
+            if (closed) throw CancellationException("The PDF was closed")
             val pages = extract(pdf, section.firstPage, section.endPage, withImages = true)
             val book = sample()
             // The book's running headers, plus anything that repeats within this section only
@@ -182,7 +189,10 @@ class PdfDocument private constructor(
     }.getOrNull()
 
     override fun close() {
-        synchronized(lock) { pdf.close() }
+        synchronized(lock) {
+            closed = true
+            pdf.close()
+        }
         synchronized(renderLock) {
             runCatching { renderer?.close() }
             runCatching { rendererFile?.close() }

@@ -32,6 +32,7 @@ class TTSingApp : Application() {
             .addMigrations(
                 com.pedrolopes.ttsing.data.news.db.MIGRATION_1_2,
                 com.pedrolopes.ttsing.data.news.db.MIGRATION_2_3,
+                com.pedrolopes.ttsing.data.news.db.MIGRATION_3_4,
             )
             .build()
     }

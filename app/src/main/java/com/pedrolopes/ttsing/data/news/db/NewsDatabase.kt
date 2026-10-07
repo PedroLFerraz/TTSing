@@ -30,6 +30,11 @@ data class FeedEntity(
      * News list's topic filter.
      */
     val topic: String? = null,
+    /**
+     * The user's own group for the feed ("Science", "Friends' blogs"), or null for none. Starts
+     * as the catalogue topic's name and is the user's to change; drives the News list's filter.
+     */
+    val folder: String? = null,
 )
 
 /**
@@ -91,9 +96,12 @@ interface NewsDao {
 
     @Query(
         """SELECT articles.* FROM articles JOIN feeds ON articles.feedUrl = feeds.url
-           WHERE feeds.topic = :topic ORDER BY articles.publishedAt DESC LIMIT :limit""",
+           WHERE feeds.folder = :folder ORDER BY articles.publishedAt DESC LIMIT :limit""",
     )
-    fun observeLatestInTopic(topic: String, limit: Int): Flow<List<ArticleEntity>>
+    fun observeLatestInFolder(folder: String, limit: Int): Flow<List<ArticleEntity>>
+
+    @Query("UPDATE feeds SET folder = :folder WHERE url = :url")
+    suspend fun setFolder(url: String, folder: String?)
 
     /** Stories without a usable date (`publishedAt == 0`) are never old enough to go. */
     @Query("DELETE FROM articles WHERE publishedAt > 0 AND publishedAt < :cutoff")
@@ -160,12 +168,25 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
 }
 
 /**
+ * Adds user-made groups. Feeds from the topic catalogue start in a group named after their
+ * topic, so the filter chips the News list had before are still there, now editable.
+ */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE feeds ADD COLUMN folder TEXT")
+        for (topic in com.pedrolopes.ttsing.data.news.Topic.entries) {
+            db.execSQL("UPDATE feeds SET folder = ? WHERE topic = ?", arrayOf(topic.label, topic.id))
+        }
+    }
+}
+
+/**
  * Kept separate from the books database on purpose. That one is
  * `fallbackToDestructiveMigration` because it is a rebuildable cache of a folder of EPUBs;
  * feed subscriptions are user-created and cannot be rebuilt, so they need a database that
  * forces real migrations instead of quietly dropping everything on a schema bump.
  */
-@Database(entities = [FeedEntity::class, ArticleEntity::class], version = 3, exportSchema = false)
+@Database(entities = [FeedEntity::class, ArticleEntity::class], version = 4, exportSchema = false)
 abstract class NewsDatabase : RoomDatabase() {
     abstract fun newsDao(): NewsDao
 }

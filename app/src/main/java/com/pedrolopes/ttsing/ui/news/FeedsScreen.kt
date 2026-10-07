@@ -1,14 +1,18 @@
 package com.pedrolopes.ttsing.ui.news
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,11 +20,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -38,8 +46,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,6 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pedrolopes.ttsing.data.news.db.FeedEntity
+import com.pedrolopes.ttsing.ui.common.ChoiceChip
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.HeaderIcon
 import com.pedrolopes.ttsing.ui.common.MonoText
@@ -71,6 +83,15 @@ fun FeedsScreen(
     val snackbar = remember { SnackbarHostState() }
     var showAdd by remember { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<String?>(null) }
+    var regrouping by remember { mutableStateOf<String?>(null) }
+    var creatingGroup by remember { mutableStateOf(false) }
+    val groups = remember(feeds) { groupsOf(feeds) }
+    // Each group under its own heading, alphabetically, with ungrouped feeds last.
+    val sections = remember(feeds, groups) {
+        (groups + null).mapNotNull { group ->
+            feeds.filter { it.folder == group }.takeIf { it.isNotEmpty() }?.let { group to it }
+        }
+    }
 
     LaunchedEffect(message) {
         message?.let {
@@ -94,6 +115,9 @@ fun FeedsScreen(
                         }
                     } else if (feeds.isNotEmpty()) {
                         HeaderIcon(Icons.Filled.Refresh, "Refresh all feeds") { viewModel.refreshAll() }
+                    }
+                    if (feeds.isNotEmpty()) {
+                        HeaderIcon(Icons.Filled.CreateNewFolder, "New group") { creatingGroup = true }
                     }
                     HeaderIcon(Icons.Filled.Explore, "Discover feeds by topic", onClick = onDiscover)
                 },
@@ -128,48 +152,20 @@ fun FeedsScreen(
                     highlightIndex = 1,
                 )
                 LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(feeds, key = { it.url }) { feed ->
-                        Hairline()
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onOpenFeed(feed.url) }
-                                .padding(start = ScreenPadding, end = ScreenPadding - 12.dp, top = 14.dp, bottom = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    feed.title,
-                                    fontFamily = AppFonts.Grotesk,
-                                    fontSize = 15.sp,
-                                    lineHeight = 20.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Ink.Text,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                    for ((group, sectionFeeds) in sections) {
+                        // With no groups made yet there is nothing to head.
+                        if (groups.isNotEmpty()) {
+                            item(key = "group:$group") {
                                 MonoText(
-                                    feed.siteLink ?: feed.url,
-                                    size = 10f,
-                                    tracking = 0.1f,
-                                    uppercase = false,
-                                    modifier = Modifier.padding(top = 4.dp),
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clickable { pendingRemoval = feed.url },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    Icons.Filled.Delete,
-                                    contentDescription = "Remove ${feed.title}",
-                                    tint = Ink.Dim,
-                                    modifier = Modifier.size(18.dp),
+                                    group ?: "No group",
+                                    size = 11f,
+                                    tracking = 0.18f,
+                                    color = if (group != null) Ink.Live else Ink.Dim,
+                                    modifier = Modifier.padding(start = ScreenPadding, end = ScreenPadding, top = 18.dp, bottom = 10.dp),
                                 )
                             }
                         }
+                        items(sectionFeeds, key = { it.url }) { feed -> FeedRow(feed, onOpenFeed, { regrouping = feed.url }, { pendingRemoval = feed.url }) }
                     }
                     item { Hairline() }
                 }
@@ -194,6 +190,30 @@ fun FeedsScreen(
         )
     }
 
+    if (creatingGroup) {
+        NewGroupDialog(
+            feeds = feeds,
+            onDismiss = { creatingGroup = false },
+            onCreate = { name, urls ->
+                creatingGroup = false
+                viewModel.createGroup(name, urls)
+            },
+        )
+    }
+
+    regrouping?.let { url ->
+        val feed = feeds.firstOrNull { it.url == url } ?: return@let
+        GroupDialog(
+            feedTitle = feed.title,
+            current = feed.folder,
+            groups = groups,
+            onDismiss = { regrouping = null },
+            onSave = { group ->
+                regrouping = null
+                viewModel.setGroup(url, group)
+            },
+        )
+    }
     pendingRemoval?.let { url ->
         val title = feeds.firstOrNull { it.url == url }?.title ?: url
         AlertDialog(
@@ -232,29 +252,12 @@ private fun AddFeedDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
         title = { MonoText("Add a feed", size = 12f, tracking = 0.18f, color = Ink.Text, weight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
+                DialogTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { MonoText("Feed or site address", size = 10f, tracking = 0.16f) },
-                    placeholder = {
-                        Text("theverge.com", fontFamily = AppFonts.Grotesk, fontSize = 14.sp, color = Ink.Dim)
-                    },
-                    singleLine = true,
-                    textStyle = androidx.compose.ui.text.TextStyle(
-                        fontFamily = AppFonts.Grotesk,
-                        fontSize = 15.sp,
-                        color = Ink.Text,
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Ink.Live,
-                        unfocusedBorderColor = Ink.Edge,
-                        cursorColor = Ink.Live,
-                    ),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Uri,
-                        imeAction = ImeAction.Done,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
+                    label = "Feed or site address",
+                    placeholder = "theverge.com",
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
                 )
                 Text(
                     "Paste a feed or just the site's address — its feed is found for you. It's checked " +
@@ -275,6 +278,185 @@ private fun AddFeedDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
                     color = if (url.isNotBlank()) Ink.Live else Ink.Dim,
                     weight = FontWeight.Bold,
                 )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { MonoText("Cancel", size = 11f, tracking = 0.16f, color = Ink.Muted) }
+        },
+    )
+}
+
+@Composable
+private fun FeedRow(feed: FeedEntity, onOpen: (String) -> Unit, onRegroup: () -> Unit, onRemove: () -> Unit) {
+    Hairline()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpen(feed.url) }
+            .padding(start = ScreenPadding, end = ScreenPadding - 12.dp, top = 14.dp, bottom = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                feed.title,
+                fontFamily = AppFonts.Grotesk,
+                fontSize = 15.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Ink.Text,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            MonoText(
+                feed.siteLink ?: feed.url,
+                size = 10f,
+                tracking = 0.1f,
+                uppercase = false,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        RowAction(Icons.AutoMirrored.Filled.DriveFileMove, "Move ${feed.title} to a group", onRegroup)
+        RowAction(Icons.Filled.Delete, "Remove ${feed.title}", onRemove)
+    }
+}
+
+@Composable
+private fun RowAction(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
+    Box(modifier = Modifier.size(44.dp).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        Icon(icon, contentDescription = contentDescription, tint = Ink.Dim, modifier = Modifier.size(18.dp))
+    }
+}
+
+/** Picks one of the existing groups, types a new one, or takes the feed out of any. */
+@Composable
+private fun GroupDialog(
+    feedTitle: String,
+    current: String?,
+    groups: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (String?) -> Unit,
+) {
+    var name by remember { mutableStateOf(current.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Ink.Raised,
+        title = { MonoText("Group", size = 12f, tracking = 0.18f, color = Ink.Text, weight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Where \"$feedTitle\" sits in the News list's filter.",
+                    fontFamily = AppFonts.Grotesk,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = Ink.Muted,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ChoiceChip("None", selected = name.isBlank()) { name = "" }
+                    groups.forEach { group -> ChoiceChip(group, selected = name.trim() == group) { name = group } }
+                }
+                DialogTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = "Or a new group",
+                    placeholder = "Science",
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(name) }) {
+                MonoText("Save", size = 11f, tracking = 0.16f, color = Ink.Live, weight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { MonoText("Cancel", size = 11f, tracking = 0.16f, color = Ink.Muted) }
+        },
+    )
+}
+
+@Composable
+private fun DialogTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    placeholder: String,
+    keyboardOptions: KeyboardOptions,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { MonoText(label, size = 10f, tracking = 0.16f) },
+        placeholder = { Text(placeholder, fontFamily = AppFonts.Grotesk, fontSize = 14.sp, color = Ink.Dim) },
+        singleLine = true,
+        textStyle = androidx.compose.ui.text.TextStyle(
+            fontFamily = AppFonts.Grotesk,
+            fontSize = 15.sp,
+            color = Ink.Text,
+        ),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = Ink.Live,
+            unfocusedBorderColor = Ink.Edge,
+            cursorColor = Ink.Live,
+        ),
+        keyboardOptions = keyboardOptions,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/**
+ * Names a new group and picks the feeds that go in it. A group is the feeds filed under it,
+ * so it needs at least one; a feed already in another group moves.
+ */
+@Composable
+internal fun NewGroupDialog(
+    feeds: List<FeedEntity>,
+    onDismiss: () -> Unit,
+    onCreate: (String, Set<String>) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var picked by remember { mutableStateOf(emptySet<String>()) }
+    val ready = name.isNotBlank() && picked.isNotEmpty()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Ink.Raised,
+        title = { MonoText("New group", size = 12f, tracking = 0.18f, color = Ink.Text, weight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                DialogTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = "Name",
+                    placeholder = "Science",
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                )
+                MonoText("Feeds in it", size = 10f, tracking = 0.16f)
+                Column(modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                    feeds.forEach { feed ->
+                        val checked = feed.url in picked
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { picked = if (checked) picked - feed.url else picked + feed.url },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = null,
+                                colors = CheckboxDefaults.colors(checkedColor = Ink.Live, uncheckedColor = Ink.Dim, checkmarkColor = Ink.Surface),
+                                modifier = Modifier.padding(10.dp),
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(feed.title, fontFamily = AppFonts.Grotesk, fontSize = 14.sp, color = Ink.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                feed.folder?.let { MonoText("Now in $it", size = 9f, tracking = 0.1f, color = Ink.Dim) }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onCreate(name, picked) }, enabled = ready) {
+                MonoText("Create", size = 11f, tracking = 0.16f, color = if (ready) Ink.Live else Ink.Dim, weight = FontWeight.Bold)
             }
         },
         dismissButton = {

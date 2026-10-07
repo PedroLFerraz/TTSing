@@ -29,7 +29,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -40,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pedrolopes.ttsing.data.news.YouTube
 import com.pedrolopes.ttsing.data.news.db.ArticleEntity
 import com.pedrolopes.ttsing.ui.common.ChoiceChip
 import com.pedrolopes.ttsing.ui.common.Hairline
@@ -66,6 +69,7 @@ fun ArticlesScreen(
     feedUrl: String?,
     onBack: () -> Unit,
     onOpenArticle: (String) -> Unit,
+    onOpenVideo: (String) -> Unit,
     onManageFeeds: () -> Unit,
     onDiscover: () -> Unit,
     viewModel: ArticlesViewModel = viewModel(
@@ -77,14 +81,15 @@ fun ArticlesScreen(
     val feeds by viewModel.feeds.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val feedTitle by viewModel.feedTitle.collectAsStateWithLifecycle()
-    val topics by viewModel.topics.collectAsStateWithLifecycle()
-    val topic by viewModel.topic.collectAsStateWithLifecycle()
+    val groups by viewModel.groups.collectAsStateWithLifecycle()
+    val group by viewModel.group.collectAsStateWithLifecycle()
     val feedNames = remember(feeds) { feeds.associate { it.url to it.title } }
+    var creatingGroup by remember { mutableStateOf(false) }
 
-    // Unsubscribing from a topic's last feed takes its chip away; don't leave the list
-    // filtered by something that can no longer be seen or cleared.
-    LaunchedEffect(topic, topics) {
-        if (topic != null && topics.isNotEmpty() && topic !in topics) viewModel.selectTopic(null)
+    // Emptying a group takes its chip away; don't leave the list filtered by something that
+    // can no longer be seen or cleared.
+    LaunchedEffect(group, groups) {
+        if (group != null && group !in groups) viewModel.selectGroup(null)
     }
 
     Scaffold(containerColor = Ink.Surface) { padding ->
@@ -115,19 +120,20 @@ fun ArticlesScreen(
                 },
             )
 
-            if (feedUrl == null && topics.isNotEmpty()) {
+            if (feedUrl == null && feeds.isNotEmpty()) {
                 ChipRow(modifier = Modifier.padding(top = 14.dp)) {
-                    ChoiceChip("All", selected = topic == null) { viewModel.selectTopic(null) }
-                    topics.forEach { entry ->
-                        ChoiceChip(entry.label, selected = entry == topic) { viewModel.selectTopic(entry) }
+                    ChoiceChip("All", selected = group == null) { viewModel.selectGroup(null) }
+                    groups.forEach { entry ->
+                        ChoiceChip(entry, selected = entry == group) { viewModel.selectGroup(entry) }
                     }
+                    ChoiceChip("+ New group", selected = false) { creatingGroup = true }
                 }
             }
 
             when {
                 feedUrl == null && feeds.isEmpty() -> NoFeedsYet(onDiscover, onManageFeeds, Modifier.weight(1f))
                 articles.isEmpty() && !refreshing -> EmptyMessage(
-                    if (topic != null) "No stories in ${topic!!.label} yet." else "Nothing here yet — this feed has no stories.",
+                    if (group != null) "No stories in $group yet." else "Nothing here yet — this feed has no stories.",
                     Modifier.weight(1f),
                 )
                 else -> {
@@ -151,7 +157,7 @@ fun ArticlesScreen(
                                 loadImage = viewModel::imageBytes,
                                 onClick = {
                                     viewModel.onOpen()
-                                    onOpenArticle(article.id)
+                                    if (YouTube.videoId(article.link) != null) onOpenVideo(article.id) else onOpenArticle(article.id)
                                 },
                             )
                         }
@@ -160,6 +166,17 @@ fun ArticlesScreen(
                 }
             }
         }
+    }
+
+    if (creatingGroup) {
+        NewGroupDialog(
+            feeds = feeds,
+            onDismiss = { creatingGroup = false },
+            onCreate = { name, urls ->
+                creatingGroup = false
+                viewModel.createGroup(name, urls)
+            },
+        )
     }
 }
 
@@ -266,7 +283,8 @@ private fun ArticleRow(
                         relativeTime(article.publishedAt).ifEmpty { null },
                         // Once fetched we know the real length, which is a useful "is this a
                         // quick read or a long piece" signal before pressing play.
-                        "${article.textLength / 1000 + 1} min read".takeIf { article.textLength > 0 },
+                        "${article.textLength / 1000 + 1} min read".takeIf { article.textLength > 0 }
+                            ?: "Video".takeIf { YouTube.videoId(article.link) != null },
                     ).joinToString(" · "),
                     size = 10f,
                     tracking = 0.14f,

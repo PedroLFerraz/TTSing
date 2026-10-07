@@ -35,6 +35,8 @@ class LibraryViewModel(
 
     private val scanning = MutableStateFlow(false)
     private val folder = MutableStateFlow("")
+    private val _message = MutableStateFlow<String?>(null)
+    val message: StateFlow<String?> = _message.asStateFlow()
 
     val uiState: StateFlow<LibraryUiState> = kotlinx.coroutines.flow.combine(
         repo.observeBooks(),
@@ -70,6 +72,29 @@ class LibraryViewModel(
 
     fun upFolder() {
         folder.value = folder.value.substringBeforeLast('/', missingDelimiterValue = "")
+    }
+
+    suspend fun folders(): List<String> = runCatching { repo.libraryFolders() }.getOrDefault(emptyList())
+
+    fun deleteBook(id: String) = fileAction { repo.deleteBook(id) }
+
+    fun moveBook(id: String, folder: String) = fileAction { repo.moveBook(id, folder) }
+
+    private fun fileAction(action: suspend () -> Unit) {
+        viewModelScope.launch {
+            runCatching { action() }.onFailure { e ->
+                _message.value = if (e is SecurityException) {
+                    // Folders chosen before deleting and moving existed were granted read access only.
+                    "TTSing can only read this folder. Choose it again to allow deleting and moving."
+                } else {
+                    e.message ?: "That didn't work"
+                }
+            }
+        }
+    }
+
+    fun consumeMessage() {
+        _message.value = null
     }
 
     fun onFolderPicked(uri: String) {
