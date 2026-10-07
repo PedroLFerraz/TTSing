@@ -84,7 +84,15 @@ class ReadingController(context: Context) {
 
     fun togglePlayPause(bookId: String) {
         val svc = service
-        if (svc != null && svc.state.value.isSpeaking) svc.pause() else play(bookId, _state.value.position)
+        if (svc != null && svc.state.value.isSpeaking) {
+            svc.pause()
+        } else {
+            // No position for a finished book (it plays from the start; its parked position is
+            // the last sentence, which would be spoken alone) nor for one that isn't the loaded
+            // book (the position is another book's; the saved place is used).
+            val current = _state.value
+            play(bookId, current.position.takeIf { current.bookId == bookId && !current.finished })
+        }
     }
 
     fun pause() {

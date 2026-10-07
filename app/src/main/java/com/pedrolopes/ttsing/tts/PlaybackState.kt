@@ -41,4 +41,9 @@ data class PlaybackState(
      * the story that finished. Lets a reader screen still showing that story follow along.
      */
     val continuedFrom: String? = null,
+    /**
+     * True once a book (not an article queue) has been read to its end, until playback starts
+     * again or the position moves. Play then starts the book over.
+     */
+    val finished: Boolean = false,
 )
