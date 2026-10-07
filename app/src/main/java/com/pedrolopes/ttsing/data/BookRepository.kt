@@ -15,6 +15,7 @@ import com.pedrolopes.ttsing.data.epub.EpubParser
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.pdf.PdfDocument
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -35,13 +36,19 @@ class BookRepository(
 
     suspend fun getBook(id: String): BookEntity? = dao.get(id)
 
-    /** Rescans the configured library folder and refreshes the metadata cache. */
-    suspend fun syncLibrary(): Unit = withContext(Dispatchers.IO) {
-        val tree = libraryTree() ?: return@withContext
+    /**
+     * Rescans the configured library folder and refreshes the metadata cache. Returns false when
+     * the folder is set but can't be read (permission lost, storage gone), in which case nothing
+     * is dropped from the cache.
+     */
+    suspend fun syncLibrary(): Boolean = withContext(Dispatchers.IO) {
+        val folderSet = settings.settings.first().libraryFolderUri != null
+        val tree = libraryTree() ?: return@withContext !folderSet
         val existing = dao.getAll().associateBy { it.id }
         val seenIds = mutableSetOf<String>()
+        val unlisted = mutableSetOf<String>()
 
-        for ((doc, folder) in booksIn(tree)) {
+        for ((doc, folder) in booksIn(tree, unlisted)) {
             val name = doc.name ?: continue
             val format = BookFormat.forFileName(name) ?: continue
             val id = sha1(doc.uri.toString())
@@ -60,11 +67,13 @@ class BookRepository(
             }
         }
 
-        val gone = existing.keys - seenIds
+        val gone = booksGone(existing.mapValues { it.value.folder }, seenIds, unlisted)
         if (gone.isNotEmpty()) {
             dao.delete(gone.toList())
+            settings.forgetBooks(gone)
             for (id in gone) dropFiles(id, existing[id]?.coverFile)
         }
+        "" !in unlisted
     }
 
     private suspend fun libraryTree(): DocumentFile? =
@@ -86,7 +95,9 @@ class BookRepository(
                 .filter { it.isDirectory && it.name?.startsWith(".") == false }
                 .sortedBy { it.name!!.lowercase() }
                 .flatMap { walk(it, if (path.isEmpty()) it.name!! else "$path/${it.name}") }
-        libraryTree()?.let { walk(it, "") }.orEmpty()
+        val tree = checkNotNull(libraryTree()) { "No library folder" }
+        check(tree.exists() && tree.canRead()) { "Can't read the library folder" }
+        walk(tree, "")
     }
 
     /** Deletes the book's file from the library folder, not just from TTSing. */
@@ -94,27 +105,37 @@ class BookRepository(
         val book = dao.get(id) ?: return@withContext
         check(DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(book.uri))) { "Could not delete the file" }
         dao.delete(listOf(id))
+        settings.forgetBooks(listOf(id))
         dropFiles(id, book.coverFile)
     }
 
     /**
      * Moves the book's file to [folder] (a path from [libraryFolders]). The file's address, and
-     * so the book's id, changes; its reading position and statistics move with it.
+     * so the book's id, changes; its reading position, statistics and per-book settings move
+     * with it. Returns the new id, or null if there was nothing to move.
      */
-    suspend fun moveBook(id: String, folder: String): Unit = withContext(Dispatchers.IO) {
-        val book = dao.get(id) ?: return@withContext
-        if (book.folder == folder) return@withContext
+    suspend fun moveBook(id: String, folder: String): String? = withContext(Dispatchers.IO) {
+        val book = dao.get(id) ?: return@withContext null
+        if (book.folder == folder) return@withContext null
         val tree = checkNotNull(libraryTree()) { "No library folder" }
         val from = checkNotNull(folderAt(tree, book.folder)) { "The book's folder is gone" }
         val to = checkNotNull(folderAt(tree, folder)) { "That folder is gone" }
+        val fileName = DocumentFile.fromSingleUri(context, Uri.parse(book.uri))?.name
+        if (fileName != null && to.findFile(fileName) != null) error(alreadyThereMessage(fileName, folder))
         // ponytail: needs a provider that supports move (local storage does); copy + delete if others matter.
-        val newUri = checkNotNull(
-            DocumentsContract.moveDocument(context.contentResolver, Uri.parse(book.uri), from.uri, to.uri),
-        ) { "Could not move the file" }
+        val moved = try {
+            DocumentsContract.moveDocument(context.contentResolver, Uri.parse(book.uri), from.uri, to.uri)
+        } catch (e: Exception) {
+            if (e is CancellationException || !isAlreadyExists(e.message)) throw e
+            error(alreadyThereMessage(fileName ?: "That file", folder))
+        }
+        val newUri = checkNotNull(moved) { "Could not move the file" }
         val newId = sha1(newUri.toString())
         BookFormat.entries.forEach { cachedFile(id, it).renameTo(cachedFile(newId, it)) }
         dao.upsert(book.copy(id = newId, uri = newUri.toString(), folder = folder))
         dao.delete(listOf(id))
+        settings.moveBookSettings(id, newId)
+        newId
     }
 
     /**
@@ -166,17 +187,24 @@ class BookRepository(
         checkNotNull(id?.takeIf { dao.get(it) != null }) { "Couldn't read that book" }
     }
 
-    /** Every file under [dir], subfolders included, paired with its folder path relative to the top. */
-    private fun booksIn(dir: DocumentFile, path: String = ""): List<Pair<DocumentFile, String>> =
-        dir.listFiles().flatMap { doc ->
+    /**
+     * Every file under [dir], subfolders included, paired with its folder path relative to the
+     * top. Folders that list as empty without being readable (listFiles() doesn't throw) are
+     * added to [unlisted], so a failed listing isn't taken for a folder with no books.
+     */
+    private fun booksIn(dir: DocumentFile, unlisted: MutableSet<String>, path: String = ""): List<Pair<DocumentFile, String>> {
+        val children = dir.listFiles()
+        if (children.isEmpty() && !(dir.exists() && dir.canRead())) unlisted.add(path)
+        return children.flatMap { doc ->
             val name = doc.name ?: return@flatMap emptyList()
             when {
                 doc.isFile -> listOf(doc to path)
                 doc.isDirectory && !name.startsWith(".") ->
-                    booksIn(doc, if (path.isEmpty()) name else "$path/$name")
+                    booksIn(doc, unlisted, if (path.isEmpty()) name else "$path/$name")
                 else -> emptyList()
             }
         }
+    }
 
     private suspend fun indexPdf(id: String, doc: DocumentFile, fileName: String, folder: String, known: BookEntity?) {
         val cached = ensureCachedFile(id, doc.uri, BookFormat.PDF)

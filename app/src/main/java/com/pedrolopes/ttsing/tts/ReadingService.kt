@@ -853,4 +853,12 @@ class ReadingService : LifecycleService(), Narrator.Listener {
                 }
             }
     }
+
+    /** The playing book's file was moved, which re-keyed it: carry on under its new id. */
+    fun bookMoved(oldId: String, newId: String) {
+        if (_state.value.bookId != oldId) return
+        _state.value = _state.value.copy(bookId = newId)
+        updateMetadata()
+        if (isForeground) updateSessionAndNotification()
+    }
 }

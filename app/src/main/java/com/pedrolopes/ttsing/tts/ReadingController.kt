@@ -135,4 +135,9 @@ class ReadingController(context: Context) {
     fun selectVoice(voiceName: String?) {
         service?.selectVoice(voiceName)
     }
+
+    /** The book at [oldId] was moved to a new file, so it is now [newId]: keep playing it under that. */
+    fun bookMoved(oldId: String, newId: String) {
+        service?.bookMoved(oldId, newId)
+    }
 }
