@@ -5,7 +5,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [BookEntity::class], version = 4, exportSchema = false)
+@Database(entities = [BookEntity::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
 }
@@ -28,5 +28,12 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE books ADD COLUMN listenedMs INTEGER NOT NULL DEFAULT 0")
         db.execSQL("ALTER TABLE books ADD COLUMN listenedChars INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+/** Adds the subfolder each book sits in, so the library can be browsed folder by folder. */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE books ADD COLUMN folder TEXT NOT NULL DEFAULT ''")
     }
 }

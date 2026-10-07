@@ -40,9 +40,8 @@ class BookRepository(
         val existing = dao.getAll().associateBy { it.id }
         val seenIds = mutableSetOf<String>()
 
-        for (doc in tree.listFiles()) {
+        for ((doc, folder) in booksIn(tree)) {
             val name = doc.name ?: continue
-            if (!doc.isFile) continue
             val format = BookFormat.forFileName(name) ?: continue
             val id = sha1(doc.uri.toString())
             seenIds.add(id)
@@ -54,8 +53,8 @@ class BookRepository(
             if (known != null) cachedFile(id, format).delete()
             runCatching {
                 when (format) {
-                    BookFormat.EPUB -> indexEpub(id, doc, known)
-                    BookFormat.PDF -> indexPdf(id, doc, name, known)
+                    BookFormat.EPUB -> indexEpub(id, doc, folder, known)
+                    BookFormat.PDF -> indexPdf(id, doc, name, folder, known)
                 }
             }
         }
@@ -70,14 +69,26 @@ class BookRepository(
         }
     }
 
-    private suspend fun indexPdf(id: String, doc: DocumentFile, fileName: String, known: BookEntity?) {
+    /** Every file under [dir], subfolders included, paired with its folder path relative to the top. */
+    private fun booksIn(dir: DocumentFile, path: String = ""): List<Pair<DocumentFile, String>> =
+        dir.listFiles().flatMap { doc ->
+            val name = doc.name ?: return@flatMap emptyList()
+            when {
+                doc.isFile -> listOf(doc to path)
+                doc.isDirectory && !name.startsWith(".") ->
+                    booksIn(doc, if (path.isEmpty()) name else "$path/$name")
+                else -> emptyList()
+            }
+        }
+
+    private suspend fun indexPdf(id: String, doc: DocumentFile, fileName: String, folder: String, known: BookEntity?) {
         val cached = ensureCachedFile(id, doc.uri, BookFormat.PDF)
         PdfDocument.open(cached, titleFromFileName(fileName)).use { pdf ->
             val coverFile = PdfDocument.renderCover(cached)?.let { bytes ->
                 File(coversDir, "$id.img").apply { writeBytes(bytes) }.absolutePath
             }
             dao.upsert(
-                entityFor(id, doc, known, pdf, coverFile, BookFormat.PDF),
+                entityFor(id, doc, known, pdf, coverFile, BookFormat.PDF).copy(folder = folder),
             )
         }
     }
@@ -111,7 +122,7 @@ class BookRepository(
         format = format.name,
     )
 
-    private suspend fun indexEpub(id: String, doc: DocumentFile, known: BookEntity?) {
+    private suspend fun indexEpub(id: String, doc: DocumentFile, folder: String, known: BookEntity?) {
         val cached = ensureCachedFile(id, doc.uri, BookFormat.EPUB)
         EpubParser(cached).use { parser ->
             val epub = parser.parseBook()
@@ -137,6 +148,7 @@ class BookRepository(
                     progressPercent = known?.progressPercent ?: 0f,
                     lastOpenedAt = known?.lastOpenedAt ?: 0,
                     format = BookFormat.EPUB.name,
+                    folder = folder,
                 ),
             )
         }

@@ -1,6 +1,7 @@
 package com.pedrolopes.ttsing.ui.library
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,11 +20,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.RssFeed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
@@ -95,7 +100,7 @@ fun LibraryScreen(
                     buttonText = "Choose folder",
                     onClick = { folderPicker.launch(null) },
                 )
-                state.books.isEmpty() && !state.isScanning -> EmptyLibrary(
+                state.totalBooks == 0 && !state.isScanning -> EmptyLibrary(
                     modifier = Modifier.weight(1f),
                     headline = "Nothing to read here",
                     message = "No EPUB or PDF files were found in the folder you chose. Pick another one and " +
@@ -104,18 +109,25 @@ fun LibraryScreen(
                     onClick = { folderPicker.launch(null) },
                 )
                 else -> {
+                    BackHandler(enabled = state.folder.isNotEmpty()) { viewModel.upFolder() }
+                    val shown = state.books.size + state.subfolders.sumOf { it.bookCount }
                     val inProgress = state.books.count { it.progressPercent > 0f }
                     // While a scan runs, "Scanning" takes the place of "Library" and is the live
                     // word; appended at the end it ran off the line and left a stray dot.
                     val parts = listOfNotNull(
-                        if (state.isScanning) "Scanning" else "Library",
-                        "${state.books.size} ${if (state.books.size == 1) "book" else "books"}",
+                        if (state.isScanning) "Scanning" else state.folder.substringAfterLast('/').ifEmpty { "Library" },
+                        "$shown ${if (shown == 1) "book" else "books"}",
                         "$inProgress in progress".takeIf { inProgress > 0 },
                     )
                     StatusStrip(parts = parts, highlightIndex = if (state.isScanning) 0 else 1)
                     Hairline()
                     BookGrid(
                         books = state.books,
+                        subfolders = state.subfolders,
+                        parentName = if (state.folder.isEmpty()) null
+                            else state.folder.substringBeforeLast('/', "").substringAfterLast('/').ifEmpty { "Library" },
+                        onOpenFolder = viewModel::openFolder,
+                        onUp = viewModel::upFolder,
                         onOpenBook = onOpenBook,
                         modifier = Modifier.weight(1f),
                     )
@@ -132,7 +144,16 @@ fun LibraryScreen(
 }
 
 @Composable
-private fun BookGrid(books: List<BookEntity>, onOpenBook: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun BookGrid(
+    books: List<BookEntity>,
+    subfolders: List<LibraryFolder>,
+    /** The folder one level up, or null at the top of the library. */
+    parentName: String?,
+    onOpenFolder: (String) -> Unit,
+    onUp: () -> Unit,
+    onOpenBook: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 132.dp),
         contentPadding = PaddingValues(horizontal = ScreenPadding, vertical = 20.dp),
@@ -140,9 +161,54 @@ private fun BookGrid(books: List<BookEntity>, onOpenBook: (String) -> Unit, modi
         verticalArrangement = Arrangement.spacedBy(22.dp),
         modifier = modifier.fillMaxSize(),
     ) {
+        // Folders sit above the books as full-width rows, so they never mix with them.
+        if (parentName != null) {
+            item(key = "up", span = { GridItemSpan(maxLineSpan) }) {
+                FolderRow(icon = Icons.AutoMirrored.Outlined.ArrowBack, name = parentName, detail = null, onClick = onUp)
+            }
+        }
+        items(subfolders, key = { "folder:" + it.path }, span = { GridItemSpan(maxLineSpan) }) { folder ->
+            FolderRow(
+                icon = Icons.Outlined.Folder,
+                name = folder.name,
+                detail = "${folder.bookCount} ${if (folder.bookCount == 1) "book" else "books"}",
+                onClick = { onOpenFolder(folder.path) },
+            )
+        }
         items(books, key = { it.id }) { book ->
             BookCard(book = book, onClick = { onOpenBook(book.id) })
         }
+    }
+}
+
+@Composable
+private fun FolderRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    name: String,
+    detail: String?,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Ink.Edge)
+            .background(Ink.Raised)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = Ink.Live)
+        Text(
+            text = name,
+            fontFamily = AppFonts.Grotesk,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Ink.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+        )
+        detail?.let { MonoText(text = it, size = 10f, tracking = 0.1f) }
     }
 }
 
