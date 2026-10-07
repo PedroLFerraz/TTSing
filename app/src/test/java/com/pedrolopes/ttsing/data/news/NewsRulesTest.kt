@@ -78,36 +78,35 @@ class NewsRulesTest {
 
     @Test
     fun `pausing early does not mark a story read`() {
-        assertFalse(NewsRepository.isReadAt(wasRead = false, blockIndex = 1, sentenceIndex = 3, blockCount = 10))
-        assertFalse(NewsRepository.isReadAt(false, 6, 0, 10))
+        assertFalse(NewsRepository.isReadAt(wasRead = false, blockIndex = 1, blockCount = 10))
+        assertFalse(NewsRepository.isReadAt(false, 6, 10))
     }
 
     @Test
     fun `a story is read once the listener is 80 percent of the way through`() {
         // Block index 7 of 10 is the eighth block: 8/10.
-        assertTrue(NewsRepository.isReadAt(false, 7, 0, 10))
-        assertTrue(NewsRepository.isReadAt(false, 9, 2, 10))
-        assertFalse(NewsRepository.isReadAt(false, 6, 5, 10))
+        assertTrue(NewsRepository.isReadAt(false, 7, 10))
+        assertTrue(NewsRepository.isReadAt(false, 9, 10))
+        assertFalse(NewsRepository.isReadAt(false, 6, 10))
         // The last block of a three-block story is far enough; the second is not.
-        assertTrue(NewsRepository.isReadAt(false, 2, 0, 3))
-        assertFalse(NewsRepository.isReadAt(false, 1, 0, 3))
+        assertTrue(NewsRepository.isReadAt(false, 2, 3))
+        assertFalse(NewsRepository.isReadAt(false, 1, 3))
     }
 
     @Test
-    fun `the reset to the start after finishing marks a story read`() {
-        assertTrue(NewsRepository.isReadAt(false, 0, 0, 10))
-        // Even before its length was ever recorded.
-        assertTrue(NewsRepository.isReadAt(false, 0, 0, 0))
+    fun `pausing on the first sentence does not mark a story read`() {
+        assertFalse(NewsRepository.isReadAt(false, 0, 10))
+        assertFalse(NewsRepository.isReadAt(false, 0, 0))
     }
 
     @Test
     fun `an unknown length never counts as far enough`() {
-        assertFalse(NewsRepository.isReadAt(false, 5, 1, 0))
+        assertFalse(NewsRepository.isReadAt(false, 5, 0))
     }
 
     @Test
     fun `a story stays read when listened to again from the middle`() {
-        assertTrue(NewsRepository.isReadAt(true, 1, 3, 10))
+        assertTrue(NewsRepository.isReadAt(true, 1, 10))
     }
 
     // ---- why there is no full text ----

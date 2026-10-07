@@ -646,8 +646,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         // Played on into the next story like a book into its next chapter, so the foreground
         // service, wake lock and audio focus are all kept rather than dropped in between.
         _state.value = _state.value.copy(wordRange = null)
-        // Also what marks the finished story as heard; saved at its start, not its last line.
-        persistPosition(ReadingPosition.START)
+        // Saved at its start, not its last line, and marked heard.
+        persistPosition(ReadingPosition.START, finished = true)
         continueJob?.cancel()
         continueJob = lifecycleScope.launch {
             if (!playNextStory(finished)) finishReading()
@@ -663,7 +663,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         updateSessionAndNotification()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
         releaseWakeLock()
-        persistPosition(PlaybackPolicy.positionToSave(isArticle, finishing = true, _state.value.position))
+        persistPosition(PlaybackPolicy.positionToSave(isArticle, finishing = true, _state.value.position), finished = true)
         if (isArticle) engine.moveTo(ReadingPosition.START)
     }
 
@@ -862,7 +862,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
      * stopping the service does not lose it; saves go one after another, the last one winning.
      * While playing this also renews the wake lock, whose timeout is otherwise from the start.
      */
-    private fun persistPosition(position: ReadingPosition = _state.value.position): Job? {
+    private fun persistPosition(position: ReadingPosition = _state.value.position, finished: Boolean = false): Job? {
         val bookId = _state.value.bookId ?: return null
         sentencesSinceSave = 0
         flushListening(bookId)
@@ -873,7 +873,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             previous?.join()
             withContext(NonCancellable) {
                 if (NewsRepository.isArticle(bookId)) {
-                    app.news.savePosition(bookId, position.blockIndex, position.sentenceIndex)
+                    app.news.savePosition(bookId, position.blockIndex, position.sentenceIndex, finished)
                     return@withContext
                 }
                 val progress = charProgress(bookId, source, position) ?: run {

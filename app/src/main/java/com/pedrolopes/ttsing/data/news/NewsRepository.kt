@@ -464,9 +464,9 @@ class NewsRepository(
      * Remembers where the listener is. The story counts as heard only once [isReadAt] says so;
      * position (0, 0) is how a finished story (and a watched video) is reported.
      */
-    suspend fun savePosition(articleId: String, blockIndex: Int, sentenceIndex: Int) {
+    suspend fun savePosition(articleId: String, blockIndex: Int, sentenceIndex: Int, finished: Boolean = false) {
         val article = dao.article(articleId) ?: return
-        val read = isReadAt(article.isRead, blockIndex, sentenceIndex, article.blockCount)
+        val read = finished || isReadAt(article.isRead, blockIndex, article.blockCount)
         dao.updatePosition(articleId, blockIndex, sentenceIndex, System.currentTimeMillis(), read)
     }
 
@@ -506,15 +506,14 @@ class NewsRepository(
         const val READ_FRACTION = 0.8f
 
         /**
-         * Whether a story is heard after its position is saved at ([blockIndex], [sentenceIndex]).
-         * Stays heard once heard. Position (0, 0) is the reset that follows finishing a story (or
-         * watching a video), so it counts; otherwise it takes being [READ_FRACTION] of the way
-         * through the body, so pausing at the third sentence doesn't grey the story out. The
-         * fraction is by blocks, counting the one being read.
+         * Whether a story is heard after its position is saved at [blockIndex]. Stays heard once
+         * heard; otherwise it takes being [READ_FRACTION] of the way through the body, so pausing
+         * at the third sentence doesn't grey the story out. The fraction is by blocks, counting
+         * the one being read. Finishing a story marks it heard separately, since its position is
+         * then reset to the start.
          */
-        fun isReadAt(wasRead: Boolean, blockIndex: Int, sentenceIndex: Int, blockCount: Int): Boolean {
+        fun isReadAt(wasRead: Boolean, blockIndex: Int, blockCount: Int): Boolean {
             if (wasRead) return true
-            if (blockIndex == 0 && sentenceIndex == 0) return true
             if (blockCount <= 0) return false
             return (blockIndex + 1).toFloat() / blockCount >= READ_FRACTION
         }
