@@ -43,6 +43,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -85,8 +89,30 @@ fun CardSheet(
         if (granted) onSubmit(latestDraft) else permissionDenied = true
     }
 
+    fun isAnkiInstalled(): Boolean {
+        val pm = context.packageManager
+        return listOf("com.ichi2.anki", "com.ichi2.anki.plus").any { pkg ->
+            runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull() != null
+        }
+    }
+
+    fun openPlayStore(packageName: String) {
+        runCatching {
+            context.startActivity(
+                android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    data = android.net.Uri.parse("https://play.google.com/store/apps/details?id=$packageName")
+                }
+            )
+        }
+    }
+
     fun submit() {
         permissionDenied = false
+        // Check AnkiDroid is installed BEFORE requesting its permission; the permission won't exist if the app is missing.
+        if (!isAnkiInstalled()) {
+            openPlayStore("com.ichi2.anki")
+            return
+        }
         val granted = ContextCompat.checkSelfPermission(context, AddContentApi.READ_WRITE_PERMISSION) ==
             PackageManager.PERMISSION_GRANTED
         if (granted) onSubmit(draft) else permissionLauncher.launch(AddContentApi.READ_WRITE_PERMISSION)
@@ -138,7 +164,7 @@ fun CardSheet(
             OutlinedTextField(
                 value = draft.meaning,
                 onValueChange = { onDraftChange(draft.copy(meaning = it)) },
-                label = { Text("What it means (Verso)") },
+                label = { Text("Back - what it means") },
                 singleLine = false,
                 minLines = 2,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
@@ -149,6 +175,7 @@ fun CardSheet(
 
             CardPreview(
                 draft = draft,
+                isSubmitting = isSubmitting,
                 onPlay = { onPreviewAudio(draft) },
             )
 
@@ -193,7 +220,12 @@ private fun WordChip(text: String, selected: Boolean, onClick: () -> Unit) {
             MaterialTheme.colorScheme.surfaceVariant
         },
         shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .semantics {
+                role = Role.Button
+                this.selected = selected
+            },
     ) {
         Text(
             text = text,
@@ -204,14 +236,15 @@ private fun WordChip(text: String, selected: Boolean, onClick: () -> Unit) {
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            // Padding ensures at least 48dp touch target in both dimensions
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
         )
     }
 }
 
 /** Shows the card front exactly as Anki will render it: sentence, bold word, audio. */
 @Composable
-private fun CardPreview(draft: CardDraft, onPlay: () -> Unit) {
+private fun CardPreview(draft: CardDraft, isSubmitting: Boolean, onPlay: () -> Unit) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
@@ -223,7 +256,7 @@ private fun CardPreview(draft: CardDraft, onPlay: () -> Unit) {
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "Frente",
+                    "Front",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -233,7 +266,7 @@ private fun CardPreview(draft: CardDraft, onPlay: () -> Unit) {
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
-            IconButton(onClick = onPlay) {
+            IconButton(onClick = onPlay, enabled = !isSubmitting) {
                 Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Hear the sentence")
             }
         }

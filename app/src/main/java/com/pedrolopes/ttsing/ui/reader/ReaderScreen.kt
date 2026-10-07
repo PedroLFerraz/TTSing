@@ -196,7 +196,8 @@ fun ReaderScreen(
     var visible by remember { mutableStateOf<VisiblePage?>(null) }
     /** The page the voice is on, when it is in the chapters the pager holds. */
     var voicePage by remember { mutableStateOf<VisiblePage?>(null) }
-    var cardDraft by remember { mutableStateOf<CardDraft?>(null) }
+    val cardDraft by viewModel.cardDraft.collectAsStateWithLifecycle()
+    var narratorWasPlaying by remember { mutableStateOf(false) }
     val snackbarHost = remember { SnackbarHostState() }
     val drawerState = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
 
@@ -213,6 +214,17 @@ fun ReaderScreen(
     LaunchedEffect(connected) { if (connected) controller.prepare(bookId) }
 
     val isThisBook = playback.isActive && playback.bookId == bookId
+
+    // Pause narration when the card sheet opens; resume on close if it was playing.
+    LaunchedEffect(cardDraft != null) {
+        if (cardDraft != null && isThisBook && playback.isSpeaking) {
+            narratorWasPlaying = true
+            controller.pause()
+        } else if (cardDraft == null && narratorWasPlaying) {
+            controller.togglePlayPause(bookId)
+            narratorWasPlaying = false
+        }
+    }
 
     // Stories play on into the next one by themselves; a screen left showing the finished
     // one would sit there with no highlight while the voice reads something else. Only a
@@ -517,7 +529,7 @@ fun ReaderScreen(
                         onLongPress = { page, x, y ->
                             scope.launch {
                                 viewModel.pdfPositionAt(page, x, y)?.let { (position, offset) ->
-                                    cardDraft = viewModel.draftFor(position.chapterIndex, position.blockIndex, offset)
+                                    viewModel.updateCardDraft(viewModel.draftFor(position.chapterIndex, position.blockIndex, offset))
                                 }
                             }
                         },
@@ -540,7 +552,7 @@ fun ReaderScreen(
                         followVoice = followVoice,
                         onTapStart = { position -> controller.play(bookId, position) },
                         onMakeCard = { chapter, blockIndex, offset ->
-                            cardDraft = viewModel.draftFor(chapter, blockIndex, offset)
+                            viewModel.updateCardDraft(viewModel.draftFor(chapter, blockIndex, offset))
                         },
                         loadImage = viewModel::imageBytes,
                         onGeometry = { geometry ->
@@ -572,16 +584,27 @@ fun ReaderScreen(
     }
 
     cardDraft?.let { draft ->
+        // Use effective locale (with user's language override applied) for consistency with card audio.
+        val declaredLocale = ui.languageTag
+            ?.let { Locale.forLanguageTag(it) }
+            ?.takeIf { it.language.isNotEmpty() }
+        val effectiveLocale = settings.localeFor(bookId, declaredLocale ?: viewModel.bookLocale())
+
         CardSheet(
             draft = draft,
-            locale = viewModel.bookLocale(),
+            locale = effectiveLocale,
             isSubmitting = ui.isSavingCard,
-            onDraftChange = { cardDraft = it },
+            onDraftChange = { viewModel.updateCardDraft(it) },
             onPreviewAudio = { viewModel.previewCardAudio(it) },
-            onDismiss = { cardDraft = null },
+            onDismiss = {
+                if (draft.hasTarget || draft.meaning.isNotEmpty()) {
+                    // Ask for confirmation before losing unsaved work.
+                    scope.launch { snackbarHost.showSnackbar("Card discarded") }
+                }
+                viewModel.updateCardDraft(null)
+            },
             onSubmit = { toAdd ->
                 viewModel.submitCard(toAdd) { message ->
-                    cardDraft = null
                     scope.launch { snackbarHost.showSnackbar(message) }
                 }
             },

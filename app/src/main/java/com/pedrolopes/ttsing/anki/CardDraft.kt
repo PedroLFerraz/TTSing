@@ -24,13 +24,36 @@ data class CardDraft(
         get() = if (hasTarget) sentence.substring(targetStart!!, targetEnd!!) else ""
 
     /**
-     * Selects the word at [start, end), or extends the current selection to cover it, so
-     * multi-word expressions ("deu de ombros", "look forward to") can be picked as one
-     * target. Tapping the only selected word again clears the selection.
+     * Selects the word at [start, end), or extends/shrinks the current selection:
+     * - Tapping the same word clears the selection.
+     * - Tapping the first or last word removes that word from that end (skipping inter-word spaces).
+     * - Tapping a word strictly inside shrinks the selection to end at that word.
+     * - Multi-word expressions ("deu de ombros", "look forward to") can be picked as one target.
      */
     fun withWordAt(start: Int, end: Int): CardDraft = when {
         !hasTarget -> copy(targetStart = start, targetEnd = end)
         start == targetStart && end == targetEnd -> copy(targetStart = null, targetEnd = null)
+        // Tapping the first word of a multi-word selection: remove it from the start,
+        // advancing past the word and any trailing space(s).
+        start == targetStart && end < targetEnd!! -> {
+            var newStart = end
+            while (newStart < sentence.length && sentence[newStart].isWhitespace()) newStart++
+            if (newStart >= targetEnd!!) copy(targetStart = null, targetEnd = null) else copy(targetStart = newStart)
+        }
+        // Tapping the last word of a multi-word selection: remove it from the end,
+        // backing up past the word and any preceding space(s).
+        start > targetStart!! && end == targetEnd -> {
+            var newEnd = start
+            while (newEnd > targetStart!! && sentence[newEnd - 1].isWhitespace()) newEnd--
+            if (newEnd <= targetStart!!) copy(targetStart = null, targetEnd = null) else copy(targetEnd = newEnd)
+        }
+        // Tapping a word strictly inside: shrink to end at it.
+        start > targetStart!! && end < targetEnd!! -> copy(targetEnd = end)
+        // Tapping a word before the selection: extend backwards.
+        start < targetStart!! -> copy(targetStart = start)
+        // Tapping a word after the selection: extend forwards.
+        end > targetEnd!! -> copy(targetEnd = end)
+        // Shouldn't reach here, but extend to encompass both as a fallback.
         else -> copy(
             targetStart = minOf(targetStart!!, start),
             targetEnd = maxOf(targetEnd!!, end),

@@ -105,6 +105,9 @@ class ReaderViewModel(
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
 
+    private val _cardDraft = MutableStateFlow<CardDraft?>(null)
+    val cardDraft: StateFlow<CardDraft?> = _cardDraft.asStateFlow()
+
     /** Recently loaded chapters, so recentring the window on a neighbour is instant. */
     private val chapters = object : LinkedHashMap<Int, LoadedChapter>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, LoadedChapter>) = size > MAX_CACHED_CHAPTERS
@@ -421,6 +424,10 @@ class ReaderViewModel(
         )
     }
 
+    fun updateCardDraft(draft: CardDraft?) {
+        _cardDraft.value = draft
+    }
+
     /** Speaks the draft's sentence so the user can hear the card before saving it. */
     fun previewCardAudio(draft: CardDraft) {
         viewModelScope.launch {
@@ -433,6 +440,7 @@ class ReaderViewModel(
     /**
      * Synthesizes the sentence audio and adds the note to AnkiDroid, reporting a
      * user-facing message either way. Runs in [viewModelScope] so it survives rotation.
+     * Clears the draft only on success; failures keep it so the user can retry or edit.
      */
     fun submitCard(draft: CardDraft, onResult: (String) -> Unit) {
         if (_ui.value.isSavingCard) return
@@ -450,17 +458,24 @@ class ReaderViewModel(
                         voiceName = current.voiceFor(locale.language),
                     )
                     when (val result = anki.addCard(draft, audio)) {
-                        is AnkiExporter.Result.Added ->
+                        is AnkiExporter.Result.Added -> {
+                            // Success: clear the draft and clean up audio.
+                            _cardDraft.value = null
+                            cardAudio.clearCache()
                             if (result.audioAttached) {
                                 "Card added to ${AnkiExporter.DECK_NAME}"
                             } else {
                                 "Card added to ${AnkiExporter.DECK_NAME} (without audio)"
                             }
+                        }
                         AnkiExporter.Result.AnkiNotInstalled -> "AnkiDroid isn't installed"
                         AnkiExporter.Result.PermissionDenied -> "AnkiDroid permission denied"
                         is AnkiExporter.Result.Failed -> "Could not add the card: ${result.message}"
                     }
                 }
+            } catch (error: Exception) {
+                // Keep the draft on any unexpected error so the user doesn't lose their work.
+                "Error: ${error.message ?: error::class.java.simpleName}"
             } finally {
                 _ui.value = _ui.value.copy(isSavingCard = false)
             }
