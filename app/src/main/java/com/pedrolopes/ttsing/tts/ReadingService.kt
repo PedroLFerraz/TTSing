@@ -252,7 +252,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         sleepJob = null
         sleepChapter = if (atChapterEnd) _state.value.position.chapterIndex else null
         val stopAt = minutes?.let { android.os.SystemClock.elapsedRealtime() + it * 60_000L }
-        _state.value = _state.value.copy(sleepAtElapsedMs = stopAt, sleepAtChapterEnd = atChapterEnd)
+        _state.value = _state.value.copy(sleepAtElapsedMs = stopAt, sleepAtChapterEnd = atChapterEnd, sleepMinutes = minutes)
         if (stopAt == null) return
         sleepJob = lifecycleScope.launch {
             delay(stopAt - android.os.SystemClock.elapsedRealtime())
@@ -265,7 +265,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         sleepJob?.cancel()
         sleepJob = null
         sleepChapter = null
-        _state.value = _state.value.copy(sleepAtElapsedMs = null, sleepAtChapterEnd = false)
+        _state.value = _state.value.copy(sleepAtElapsedMs = null, sleepAtChapterEnd = false, sleepMinutes = null)
     }
 
     fun pause() = pause(detach = true)
@@ -369,6 +369,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         if (resumeAt != null) engine.halt()
         val available = engine.configureLanguage(locale, voiceName)
         loadSpeedForCurrentVoice()
+        _state.value = _state.value.copy(voiceName = engine.currentVoiceName())
         // Not if a Pause arrived meanwhile.
         if (resumeAt != null && _state.value.isSpeaking) engine.playFrom(resumeAt)
         return available
@@ -476,6 +477,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             isSpeaking = false,
             position = restored,
             languageAvailable = languageOk,
+            voiceName = engine.currentVoiceName(),
             charsPerSecond = speed.charsPerSecond,
             bookListenedMs = savedListenMs,
             bookListenedChars = savedListenChars,

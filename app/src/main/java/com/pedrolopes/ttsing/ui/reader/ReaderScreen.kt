@@ -59,6 +59,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -82,6 +83,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pedrolopes.ttsing.TTSingApp
@@ -94,8 +96,6 @@ import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.ReadingController
 import com.pedrolopes.ttsing.tts.SpeedSteps
 import com.pedrolopes.ttsing.tts.piper.PiperCatalog
-import com.pedrolopes.ttsing.tts.piper.PiperDownloads
-import com.pedrolopes.ttsing.tts.piper.PiperVoices
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.LocalImage
 import com.pedrolopes.ttsing.ui.common.MonoText
@@ -599,23 +599,41 @@ fun ReaderScreen(
             ?.takeIf { it.language.isNotEmpty() }
         val activeLocale = settings.localeFor(bookId, declaredLocale ?: Locale.getDefault())
         val languageCode = activeLocale.language
-        val downloads = remember(context) { PiperDownloads(context) }
+        // Downloads belong to the app, not to this sheet, so closing it neither loses one nor
+        // lets a second start into the same folder.
+        val downloads = app.piperDownloads
         val downloadProgress by downloads.progress.collectAsStateWithLifecycle()
-        var installedNeural by remember { mutableStateOf(emptySet<String>()) }
-        LaunchedEffect(showSettings, downloadProgress) {
-            installedNeural = withContext(Dispatchers.IO) {
-                PiperVoices.available(context).map { it.id }.toSet()
+        val installedNeural by downloads.installed.collectAsStateWithLifecycle()
+        // Coming back from Android's "Install voice data" screen: look at the engine again.
+        var resumes by remember { mutableIntStateOf(0) }
+        LifecycleResumeEffect(Unit) {
+            resumes++
+            downloads.refresh()
+            onPauseOrDispose { }
+        }
+        // The voice lists are read from the engine and the disk, off the main thread, and
+        // again whenever something they depend on changes: the voice in use, a download or
+        // delete finishing, the language, or the app coming back to the front.
+        var voiceLists by remember { mutableStateOf(VoiceLists()) }
+        LaunchedEffect(activeLocale, connected, playback.voiceName, installedNeural, resumes) {
+            voiceLists = withContext(Dispatchers.IO) {
+                VoiceLists(
+                    voices = controller.voicesFor(activeLocale),
+                    defaultVoiceName = controller.defaultVoiceNameFor(activeLocale),
+                    languages = controller.availableLanguages(),
+                )
             }
         }
         ReaderSettingsSheet(
             settings = settings,
-            voices = remember(languageCode, connected) { controller.voicesFor(activeLocale) },
-            currentVoiceName = remember(languageCode, connected) { controller.currentVoiceName() },
-            defaultVoiceName = remember(languageCode, connected) { controller.defaultVoiceNameFor(activeLocale) },
+            voices = voiceLists.voices,
+            currentVoiceName = playback.voiceName,
+            speaking = isThisBook && playback.isSpeaking,
+            defaultVoiceName = voiceLists.defaultVoiceName,
             activeLocale = activeLocale,
             declaredLanguageTag = ui.languageTag,
             languageOverridden = bookId in settings.bookLanguages,
-            availableLanguages = remember(connected) { controller.availableLanguages() },
+            availableLanguages = voiceLists.languages,
             onSelectLanguage = { locale ->
                 val tag = locale.toLanguageTag()
                 // Persist first: settings drive the UI, so the picker updates even if the
@@ -665,24 +683,21 @@ fun ReaderScreen(
             installedNeuralIds = installedNeural,
             downloading = downloadProgress,
             sleepMinutesLeft = sleepMinutesLeft,
+            sleepStartedMinutes = playback.sleepMinutes,
             onSleepTimer = { minutes, atChapterEnd -> controller.setSleepTimer(minutes, atChapterEnd) },
             onDeleteVoice = { voice ->
                 scope.launch {
-                    withContext(Dispatchers.IO) { PiperVoices.delete(context, voice.id) }
-                    if (settings.voiceFor(languageCode) == voice.id) {
-                        app.settings.setVoice(languageCode, null)
-                        controller.selectVoice(null)
-                    }
-                    installedNeural = PiperVoices.available(context).map { it.id }.toSet()
+                    downloads.delete(voice.id)
+                    // Every language that had picked it, not just this book's: a stored choice
+                    // pointing at a deleted voice would fall back silently the next time.
+                    val used = VoiceRules.languagesToClear(settings.voices, voice.id)
+                    used.forEach { app.settings.setVoice(it, null) }
+                    if (languageCode in used || playback.voiceName == voice.id) controller.selectVoice(null)
                 }
             },
-            onDownloadVoice = { voice ->
-                scope.launch {
-                    if (downloads.download(voice)) {
-                        installedNeural = PiperVoices.available(context).map { it.id }.toSet()
-                    }
-                }
-            },
+            onDownloadVoice = { voice -> downloads.start(voice) },
+            onCancelDownload = downloads::cancel,
+            isMetered = { isMeteredConnection(context) },
         )
     }
 }
@@ -1041,6 +1056,11 @@ private fun openInBrowser(context: android.content.Context, url: String) {
  * Opens the TTS engine's own voice-data download screen, falling back to Android's
  * Text-to-speech settings if the engine doesn't offer one.
  */
+/** Whether the active network is one a data plan is charged for. */
+private fun isMeteredConnection(context: android.content.Context): Boolean =
+    (context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager)
+        ?.isActiveNetworkMetered == true
+
 private fun openTtsDataInstaller(context: android.content.Context) {
     val install = android.content.Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
