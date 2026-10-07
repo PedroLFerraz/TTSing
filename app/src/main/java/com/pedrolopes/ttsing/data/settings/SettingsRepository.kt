@@ -1,6 +1,7 @@
 package com.pedrolopes.ttsing.data.settings
 
 import android.content.Context
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
@@ -32,6 +33,28 @@ private fun Preferences.stringsWithPrefix(prefix: String): Map<String, String> =
             null
         }
     }.toMap()
+
+/** Language overrides are stored one key per book, e.g. `booklang_<sha1>`. */
+internal const val BOOK_LANGUAGE_PREFIX = "booklang_"
+
+/** How each PDF is shown, one key per book, e.g. `pdfview_<sha1>`. */
+internal const val PDF_VIEW_PREFIX = "pdfview_"
+
+/** A book's id changes when its file moves, so its entries have to follow it. */
+internal fun MutablePreferences.moveBookEntries(oldId: String, newId: String) {
+    for (prefix in listOf(BOOK_LANGUAGE_PREFIX, PDF_VIEW_PREFIX)) {
+        val old = stringPreferencesKey(prefix + oldId)
+        this[old]?.let { this[stringPreferencesKey(prefix + newId)] = it }
+        remove(old)
+    }
+}
+
+/** Forgets the per-book entries of books that no longer exist. */
+internal fun MutablePreferences.dropBookEntries(ids: Collection<String>) {
+    for (id in ids) for (prefix in listOf(BOOK_LANGUAGE_PREFIX, PDF_VIEW_PREFIX)) {
+        remove(stringPreferencesKey(prefix + id))
+    }
+}
 
 data class AppSettings(
     val libraryFolderUri: String?,
@@ -112,14 +135,8 @@ class SettingsRepository(private val context: Context) {
         /** Voices are stored one key per language, e.g. `voice_de`. */
         const val VOICE_PREFIX = "voice_"
 
-        /** Language overrides are stored one key per book, e.g. `booklang_<sha1>`. */
-        const val BOOK_LANGUAGE_PREFIX = "booklang_"
-
         /** Per-voice speaking-speed accumulators, keyed by voice name. */
         const val SPEED_PREFIX = "speed_"
-
-        /** How each PDF is shown, one key per book, e.g. `pdfview_<sha1>`. */
-        const val PDF_VIEW_PREFIX = "pdfview_"
 
         /** The variant each language is read in, e.g. `variant_pt` = `pt-BR`. */
         const val VARIANT_PREFIX = "variant_"
@@ -145,12 +162,12 @@ class SettingsRepository(private val context: Context) {
                 // says, and a white page inside it is a jolt nobody asked for.
                 ?: ReaderTheme.DARK,
             voices = prefs.stringsWithPrefix(Keys.VOICE_PREFIX),
-            bookLanguages = prefs.stringsWithPrefix(Keys.BOOK_LANGUAGE_PREFIX),
+            bookLanguages = prefs.stringsWithPrefix(BOOK_LANGUAGE_PREFIX),
             charsPerSecond = prefs[Keys.charsPerSecond] ?: AppSettings.DEFAULT_CHARS_PER_SECOND,
             speeds = prefs.stringsWithPrefix(Keys.SPEED_PREFIX),
             ankiDeckId = prefs[Keys.ankiDeckId],
             ankiModelId = prefs[Keys.ankiModelId],
-            pdfViews = prefs.stringsWithPrefix(Keys.PDF_VIEW_PREFIX),
+            pdfViews = prefs.stringsWithPrefix(PDF_VIEW_PREFIX),
             variants = prefs.stringsWithPrefix(Keys.VARIANT_PREFIX),
             favoriteVoices = splitFavorites(prefs[Keys.favoriteVoices]).toSet(),
         )
@@ -201,7 +218,7 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setPdfView(bookId: String, view: PdfView) {
         context.dataStore.edit {
-            val key = stringPreferencesKey(Keys.PDF_VIEW_PREFIX + bookId)
+            val key = stringPreferencesKey(PDF_VIEW_PREFIX + bookId)
             if (view == PdfView.PAGES) it.remove(key) else it[key] = view.name
         }
     }
@@ -233,6 +250,16 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit {
             it[stringPreferencesKey(Keys.VARIANT_PREFIX + locale.language)] = locale.toLanguageTag()
         }
+    }
+
+    /** Carries a moved book's language override and PDF view over to its new id. */
+    suspend fun moveBookSettings(oldId: String, newId: String) {
+        context.dataStore.edit { it.moveBookEntries(oldId, newId) }
+    }
+
+    /** Drops the language override and PDF view of books that were deleted. */
+    suspend fun forgetBooks(ids: Collection<String>) {
+        if (ids.isNotEmpty()) context.dataStore.edit { it.dropBookEntries(ids) }
     }
 
     /** Overrides the language for one book, or clears it (null) to trust its `dc:language`. */

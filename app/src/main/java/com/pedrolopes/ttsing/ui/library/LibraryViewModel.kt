@@ -6,6 +6,7 @@ import com.pedrolopes.ttsing.TTSingApp
 import com.pedrolopes.ttsing.data.BookRepository
 import com.pedrolopes.ttsing.data.db.BookEntity
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +27,8 @@ data class LibraryUiState(
     val totalBooks: Int = 0,
     val hasFolder: Boolean = false,
     val isScanning: Boolean = false,
+    /** The library folder is set but couldn't be read (permission lost, storage gone). */
+    val unreadable: Boolean = false,
 )
 
 class LibraryViewModel(
@@ -35,6 +38,7 @@ class LibraryViewModel(
 
     private val scanning = MutableStateFlow(false)
     private val folder = MutableStateFlow("")
+    private val readable = MutableStateFlow(true)
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
@@ -43,7 +47,8 @@ class LibraryViewModel(
         settings.settings.map { it.libraryFolderUri != null },
         scanning,
         folder,
-    ) { books, hasFolder, isScanning, folder ->
+        readable,
+    ) { books, hasFolder, isScanning, folder, readable ->
         val prefix = if (folder.isEmpty()) "" else "$folder/"
         val subfolders = books
             .filter { it.folder.startsWith(prefix) && it.folder.length > prefix.length }
@@ -58,6 +63,7 @@ class LibraryViewModel(
             totalBooks = books.size,
             hasFolder = hasFolder,
             isScanning = isScanning,
+            unreadable = hasFolder && !readable,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), LibraryUiState())
 
@@ -74,11 +80,20 @@ class LibraryViewModel(
         folder.value = folder.value.substringBeforeLast('/', missingDelimiterValue = "")
     }
 
-    suspend fun folders(): List<String> = runCatching { repo.libraryFolders() }.getOrDefault(emptyList())
+    /** The folders a book can move to, or the failure to list them — which isn't "no folders". */
+    suspend fun folders(): Result<List<String>> = try {
+        Result.success(repo.libraryFolders())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
 
     fun deleteBook(id: String) = fileAction { repo.deleteBook(id) }
 
-    fun moveBook(id: String, folder: String) = fileAction { repo.moveBook(id, folder) }
+    /** [onMoved] hears the book's old and new id, which change with its file's address. */
+    fun moveBook(id: String, folder: String, onMoved: (oldId: String, newId: String) -> Unit) =
+        fileAction { repo.moveBook(id, folder)?.let { onMoved(id, it) } }
 
     private fun fileAction(action: suspend () -> Unit) {
         viewModelScope.launch {
@@ -108,7 +123,7 @@ class LibraryViewModel(
     fun refresh() {
         viewModelScope.launch {
             scanning.value = true
-            runCatching { repo.syncLibrary() }
+            readable.value = runCatching { repo.syncLibrary() }.getOrDefault(true)
             scanning.value = false
         }
     }
