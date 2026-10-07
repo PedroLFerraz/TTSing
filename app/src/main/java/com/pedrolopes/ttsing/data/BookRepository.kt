@@ -2,6 +2,8 @@ package com.pedrolopes.ttsing.data
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
 import com.pedrolopes.ttsing.data.book.BookDocument
 import com.pedrolopes.ttsing.data.book.BookFormat
@@ -35,14 +37,12 @@ class BookRepository(
 
     /** Rescans the configured library folder and refreshes the metadata cache. */
     suspend fun syncLibrary(): Unit = withContext(Dispatchers.IO) {
-        val folderUri = settings.settings.first().libraryFolderUri ?: return@withContext
-        val tree = DocumentFile.fromTreeUri(context, Uri.parse(folderUri)) ?: return@withContext
+        val tree = libraryTree() ?: return@withContext
         val existing = dao.getAll().associateBy { it.id }
         val seenIds = mutableSetOf<String>()
 
-        for (doc in tree.listFiles()) {
+        for ((doc, folder) in booksIn(tree)) {
             val name = doc.name ?: continue
-            if (!doc.isFile) continue
             val format = BookFormat.forFileName(name) ?: continue
             val id = sha1(doc.uri.toString())
             seenIds.add(id)
@@ -54,8 +54,8 @@ class BookRepository(
             if (known != null) cachedFile(id, format).delete()
             runCatching {
                 when (format) {
-                    BookFormat.EPUB -> indexEpub(id, doc, known)
-                    BookFormat.PDF -> indexPdf(id, doc, name, known)
+                    BookFormat.EPUB -> indexEpub(id, doc, folder, known)
+                    BookFormat.PDF -> indexPdf(id, doc, name, folder, known)
                 }
             }
         }
@@ -63,21 +63,129 @@ class BookRepository(
         val gone = existing.keys - seenIds
         if (gone.isNotEmpty()) {
             dao.delete(gone.toList())
-            for (id in gone) {
-                BookFormat.entries.forEach { cachedFile(id, it).delete() }
-                existing[id]?.coverFile?.let { File(it).delete() }
-            }
+            for (id in gone) dropFiles(id, existing[id]?.coverFile)
         }
     }
 
-    private suspend fun indexPdf(id: String, doc: DocumentFile, fileName: String, known: BookEntity?) {
+    private suspend fun libraryTree(): DocumentFile? =
+        settings.settings.first().libraryFolderUri?.let { DocumentFile.fromTreeUri(context, Uri.parse(it)) }
+
+    /** The folder at [path] under the library folder; "" is the library folder itself. */
+    private fun folderAt(tree: DocumentFile, path: String): DocumentFile? =
+        path.split('/').filter { it.isNotEmpty() }.fold(tree as DocumentFile?) { dir, name -> dir?.findFile(name) }
+
+    private fun dropFiles(id: String, coverFile: String?) {
+        BookFormat.entries.forEach { cachedFile(id, it).delete() }
+        coverFile?.let { File(it).delete() }
+    }
+
+    /** Every folder in the library, as paths relative to it, the library folder itself ("") first. */
+    suspend fun libraryFolders(): List<String> = withContext(Dispatchers.IO) {
+        fun walk(dir: DocumentFile, path: String): List<String> = listOf(path) +
+            dir.listFiles()
+                .filter { it.isDirectory && it.name?.startsWith(".") == false }
+                .sortedBy { it.name!!.lowercase() }
+                .flatMap { walk(it, if (path.isEmpty()) it.name!! else "$path/${it.name}") }
+        libraryTree()?.let { walk(it, "") }.orEmpty()
+    }
+
+    /** Deletes the book's file from the library folder, not just from TTSing. */
+    suspend fun deleteBook(id: String): Unit = withContext(Dispatchers.IO) {
+        val book = dao.get(id) ?: return@withContext
+        check(DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(book.uri))) { "Could not delete the file" }
+        dao.delete(listOf(id))
+        dropFiles(id, book.coverFile)
+    }
+
+    /**
+     * Moves the book's file to [folder] (a path from [libraryFolders]). The file's address, and
+     * so the book's id, changes; its reading position and statistics move with it.
+     */
+    suspend fun moveBook(id: String, folder: String): Unit = withContext(Dispatchers.IO) {
+        val book = dao.get(id) ?: return@withContext
+        if (book.folder == folder) return@withContext
+        val tree = checkNotNull(libraryTree()) { "No library folder" }
+        val from = checkNotNull(folderAt(tree, book.folder)) { "The book's folder is gone" }
+        val to = checkNotNull(folderAt(tree, folder)) { "That folder is gone" }
+        // ponytail: needs a provider that supports move (local storage does); copy + delete if others matter.
+        val newUri = checkNotNull(
+            DocumentsContract.moveDocument(context.contentResolver, Uri.parse(book.uri), from.uri, to.uri),
+        ) { "Could not move the file" }
+        val newId = sha1(newUri.toString())
+        BookFormat.entries.forEach { cachedFile(id, it).renameTo(cachedFile(newId, it)) }
+        dao.upsert(book.copy(id = newId, uri = newUri.toString(), folder = folder))
+        dao.delete(listOf(id))
+    }
+
+    /**
+     * A file handed over by another app ("Open with TTSing"), as a library book: copied into the
+     * library folder, unless a book of that name and size is already in it, then indexed.
+     * Returns its id; fails with a message fit to show when it can't.
+     *
+     * Copied rather than read in place because the other app's permission to read it lasts
+     * only as long as this screen, and the library is the books folder: a book outside it
+     * would be dropped on the next sync.
+     */
+    suspend fun addOpenedFile(uri: Uri, mimeType: String?): String = withContext(Dispatchers.IO) {
+        val tree = checkNotNull(libraryTree()) { "Choose a books folder in TTSing first, then open the file again" }
+        // Folders chosen before TTSing asked to write to them are read-only until chosen again.
+        check(tree.canWrite()) { "TTSing can't save into your books folder yet. Choose the folder again in the library, then open the file again" }
+        var name: String? = null
+        var size = -1L
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use {
+            if (it.moveToFirst()) {
+                name = it.getString(0)
+                if (!it.isNull(1)) size = it.getLong(1)
+            }
+        }
+        // Some apps hand over "document:1234" with only the type to say what it is.
+        val format = name?.let(BookFormat::forFileName)
+            ?: BookFormat.entries.firstOrNull { it.mimeType == mimeType }
+            ?: error("TTSing opens EPUB and PDF files")
+        val fileName = name?.takeIf { BookFormat.forFileName(it) != null }
+            ?: "${name ?: "book"}.${format.extension}"
+
+        // Opening a book that is already in the library opens that one.
+        dao.getAll().firstOrNull { book ->
+            val path = Uri.decode(book.uri)
+            book.fileSize == size && (path.endsWith("/$fileName") || path.endsWith(":$fileName"))
+        }?.let { return@withContext it.id }
+
+        val existing = tree.findFile(fileName)?.takeIf { it.length() == size }
+        if (existing == null) {
+            val copy = checkNotNull(tree.createFile(format.mimeType, fileName)) { "Could not create the file" }
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                context.contentResolver.openOutputStream(copy.uri)?.use { output -> input.copyTo(output) }
+            } ?: run {
+                copy.delete()
+                error("Could not read the file")
+            }
+        }
+        syncLibrary()
+        val id = (existing ?: tree.findFile(fileName))?.let { sha1(it.uri.toString()) }
+        checkNotNull(id?.takeIf { dao.get(it) != null }) { "Couldn't read that book" }
+    }
+
+    /** Every file under [dir], subfolders included, paired with its folder path relative to the top. */
+    private fun booksIn(dir: DocumentFile, path: String = ""): List<Pair<DocumentFile, String>> =
+        dir.listFiles().flatMap { doc ->
+            val name = doc.name ?: return@flatMap emptyList()
+            when {
+                doc.isFile -> listOf(doc to path)
+                doc.isDirectory && !name.startsWith(".") ->
+                    booksIn(doc, if (path.isEmpty()) name else "$path/$name")
+                else -> emptyList()
+            }
+        }
+
+    private suspend fun indexPdf(id: String, doc: DocumentFile, fileName: String, folder: String, known: BookEntity?) {
         val cached = ensureCachedFile(id, doc.uri, BookFormat.PDF)
         PdfDocument.open(cached, titleFromFileName(fileName)).use { pdf ->
             val coverFile = PdfDocument.renderCover(cached)?.let { bytes ->
                 File(coversDir, "$id.img").apply { writeBytes(bytes) }.absolutePath
             }
             dao.upsert(
-                entityFor(id, doc, known, pdf, coverFile, BookFormat.PDF),
+                entityFor(id, doc, known, pdf, coverFile, BookFormat.PDF).copy(folder = folder),
             )
         }
     }
@@ -111,7 +219,7 @@ class BookRepository(
         format = format.name,
     )
 
-    private suspend fun indexEpub(id: String, doc: DocumentFile, known: BookEntity?) {
+    private suspend fun indexEpub(id: String, doc: DocumentFile, folder: String, known: BookEntity?) {
         val cached = ensureCachedFile(id, doc.uri, BookFormat.EPUB)
         EpubParser(cached).use { parser ->
             val epub = parser.parseBook()
@@ -137,6 +245,7 @@ class BookRepository(
                     progressPercent = known?.progressPercent ?: 0f,
                     lastOpenedAt = known?.lastOpenedAt ?: 0,
                     format = BookFormat.EPUB.name,
+                    folder = folder,
                 ),
             )
         }

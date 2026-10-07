@@ -60,6 +60,14 @@ class FeedsViewModel(private val news: NewsRepository) : ViewModel() {
         viewModelScope.launch { news.removeFeed(url) }
     }
 
+    fun setGroup(url: String, group: String?) {
+        viewModelScope.launch { news.setGroup(url, group) }
+    }
+
+    fun createGroup(name: String, feedUrls: Set<String>) {
+        viewModelScope.launch { news.createGroup(name, feedUrls) }
+    }
+
     fun consumeMessage() {
         _message.value = null
     }
@@ -72,7 +80,7 @@ class FeedsViewModel(private val news: NewsRepository) : ViewModel() {
 /**
  * Backs both the "News" button's direct, all-feeds view and a single feed's article list.
  * [feedUrl] is null for the former, so the two share one screen and one code path rather than
- * maintaining a near-duplicate for each. Only the all-feeds view filters by topic.
+ * maintaining a near-duplicate for each. Only the all-feeds view filters by group.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ArticlesViewModel(
@@ -81,16 +89,16 @@ class ArticlesViewModel(
     private val images: ArticleImageStore,
 ) : ViewModel() {
 
-    private val _topic = MutableStateFlow<Topic?>(null)
-    /** The topic the all-feeds list is narrowed to, or null for every story. */
-    val topic: StateFlow<Topic?> = _topic.asStateFlow()
+    private val _group = MutableStateFlow<String?>(null)
+    /** The group the all-feeds list is narrowed to, or null for every story. */
+    val group: StateFlow<String?> = _group.asStateFlow()
 
     val articles: StateFlow<List<ArticleEntity>> =
         (
             if (feedUrl != null) {
                 news.observeArticles(feedUrl)
             } else {
-                _topic.flatMapLatest { topic -> if (topic == null) news.observeLatest() else news.observeLatestInTopic(topic) }
+                _group.flatMapLatest { group -> if (group == null) news.observeLatest() else news.observeLatestInGroup(group) }
             }
             )
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -98,10 +106,10 @@ class ArticlesViewModel(
     val feeds: StateFlow<List<FeedEntity>> =
         news.observeFeeds().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** Topics with at least one subscribed feed — the only ones worth a filter chip. */
-    val topics: StateFlow<List<Topic>> =
+    /** The groups the user has filed feeds under, one filter chip each. */
+    val groups: StateFlow<List<String>> =
         news.observeFeeds()
-            .map { feeds -> Topic.entries.filter { topic -> feeds.any { it.topic == topic.id } } }
+            .map { feeds -> groupsOf(feeds) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _refreshing = MutableStateFlow(false)
@@ -117,8 +125,16 @@ class ArticlesViewModel(
         refresh()
     }
 
-    fun selectTopic(topic: Topic?) {
-        _topic.value = topic
+    fun selectGroup(group: String?) {
+        _group.value = group
+    }
+
+    /** Makes the group and shows it straight away. */
+    fun createGroup(name: String, feedUrls: Set<String>) {
+        viewModelScope.launch {
+            news.createGroup(name, feedUrls)
+            _group.value = name.trim()
+        }
     }
 
     fun refresh() {
@@ -150,6 +166,10 @@ class ArticlesViewModel(
 }
 
 /** The topic catalogue: the biggest sources per topic, one tap to subscribe. */
+/** The distinct groups among [feeds], alphabetically. */
+fun groupsOf(feeds: List<FeedEntity>): List<String> =
+    feeds.mapNotNull { it.folder }.distinct().sortedWith(String.CASE_INSENSITIVE_ORDER)
+
 class DiscoverViewModel(private val news: NewsRepository) : ViewModel() {
 
     private val _topic = MutableStateFlow(Topic.entries.first())

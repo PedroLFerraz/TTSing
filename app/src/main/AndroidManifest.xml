@@ -40,6 +40,15 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- "Open with TTSing", and being the default, for EPUBs and PDFs from file
+                 managers, downloads and mail. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
         </activity>
 
         <service
@@ -53,6 +62,12 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </service>
+
+        <!-- Keeps a YouTube video playing with the screen off or the app in the background. -->
+        <service
+            android:name=".tts.VideoPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- Only the system can send this broadcast; it forwards media button presses
              (headphone/Bluetooth play, pause, next, previous) to ReadingService above

@@ -99,7 +99,10 @@ object RssParser {
     private fun parseAtom(feed: Element): ParsedFeed {
         val items = feed.getElementsByTag("entry").mapNotNull { entry ->
             val link = entry.atomLink() ?: return@mapNotNull null
+            // YouTube keeps a video's description in media:group rather than <summary>: plain
+            // text whose line breaks (chapter timestamps, links) are worth keeping.
             val summary = entry.childText("summary")
+                ?: entry.getElementsByTag("media:description").firstOrNull()?.wholeText()?.trim()?.takeIf { it.isNotEmpty() }
             val contentHtml = entry.childText("content")
             FeedItem(
                 title = entry.childTitle() ?: link,

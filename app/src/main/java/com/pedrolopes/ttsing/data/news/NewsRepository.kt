@@ -37,8 +37,17 @@ class NewsRepository(
 
     fun observeLatest(limit: Int = 100): Flow<List<ArticleEntity>> = dao.observeLatest(limit)
 
-    fun observeLatestInTopic(topic: Topic, limit: Int = 100): Flow<List<ArticleEntity>> =
-        dao.observeLatestInTopic(topic.id, limit)
+    fun observeLatestInGroup(group: String, limit: Int = 100): Flow<List<ArticleEntity>> =
+        dao.observeLatestInFolder(group, limit)
+
+    /** Files [feedUrl] under [group]; blank takes it out of any group. */
+    suspend fun setGroup(feedUrl: String, group: String?) =
+        dao.setFolder(feedUrl, group?.trim()?.takeIf { it.isNotEmpty() })
+
+    /** Files every feed in [feedUrls] under [group]: how a new group is made. */
+    suspend fun createGroup(group: String, feedUrls: Collection<String>) {
+        for (url in feedUrls) setGroup(url, group)
+    }
 
     suspend fun article(id: String): ArticleEntity? = dao.article(id)
 
@@ -52,7 +61,8 @@ class NewsRepository(
 
     /** The next unheard story in [queue] after [articleId], or null at the end of the list. */
     suspend fun nextUnread(articleId: String): String? =
-        queue.nextAfter(articleId) { id -> dao.article(id)?.isRead == false }
+        // Videos have nothing to read aloud; playing on skips past them.
+        queue.nextAfter(articleId) { id -> dao.article(id)?.let { !it.isRead && YouTube.videoId(it.link) == null } == true }
 
     sealed interface AddResult {
         data class Added(val feed: FeedEntity, val articleCount: Int) : AddResult
@@ -92,6 +102,8 @@ class NewsRepository(
             lastRefreshedAt = now,
             addedAt = now,
             topic = (topic ?: catalogued?.topic)?.id,
+            // Re-adding a feed keeps the group the user gave it.
+            folder = dao.feed(feedUrl)?.folder ?: (topic ?: catalogued?.topic)?.label,
         )
         dao.upsertFeed(feed)
         val fresh = storeItems(feedUrl, parsed.items)
@@ -183,16 +195,20 @@ class NewsRepository(
                 val extracted = inline?.let { ArticleExtractor.extract(it, item.link) }
                 val readable = extracted != null && extracted.textLength >= MIN_FULL_TEXT
                 val trusted = extracted != null && extracted.textLength >= TRUSTED_INLINE_TEXT
+                val isVideo = YouTube.videoId(item.link) != null
                 ArticleEntity(
                     id = id,
                     feedUrl = feedUrl,
                     title = item.title,
                     link = item.link,
-                    summary = item.summary?.let { stripHtml(it) },
+                    // A video's description is already plain text, laid out in lines.
+                    summary = if (isVideo) item.summary else item.summary?.let { stripHtml(it) },
                     contentHtml = extracted?.contentHtml?.takeIf { readable },
                     imageUrl = leadImageOf(item.imageUrl, extracted),
                     publishedAt = item.publishedAt,
-                    fetchedAt = if (trusted) System.currentTimeMillis() else 0,
+                    // A video's watch page has no story in it; marking it fetched keeps the
+                    // prefetch from scraping YouTube for nothing.
+                    fetchedAt = if (trusted || isVideo) System.currentTimeMillis() else 0,
                     textLength = if (readable) extracted!!.textLength else 0,
                 )
             },

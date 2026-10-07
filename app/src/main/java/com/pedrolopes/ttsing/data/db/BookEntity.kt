@@ -34,4 +34,6 @@ data class BookEntity(
      */
     val listenedMs: Long = 0,
     val listenedChars: Long = 0,
+    /** Path of the subfolder holding the book, relative to the library folder; "" at its top. */
+    val folder: String = "",
 )

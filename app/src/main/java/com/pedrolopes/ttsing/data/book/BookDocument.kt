@@ -51,9 +51,9 @@ interface BookDocument : Closeable {
 }
 
 /** What kind of file a library entry is; stored on the book so it opens the right way. */
-enum class BookFormat(val extension: String) {
-    EPUB("epub"),
-    PDF("pdf"),
+enum class BookFormat(val extension: String, val mimeType: String) {
+    EPUB("epub", "application/epub+zip"),
+    PDF("pdf", "application/pdf"),
     ;
 
     companion object {
