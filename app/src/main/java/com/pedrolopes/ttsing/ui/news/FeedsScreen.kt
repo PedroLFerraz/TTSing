@@ -17,12 +17,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RssFeed
@@ -31,6 +33,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -85,11 +88,14 @@ fun FeedsScreen(
     var pendingRemoval by remember { mutableStateOf<String?>(null) }
     var regrouping by remember { mutableStateOf<String?>(null) }
     var creatingGroup by remember { mutableStateOf(false) }
+    var renamingGroup by remember { mutableStateOf<String?>(null) }
+    var deletingGroup by remember { mutableStateOf<String?>(null) }
+    val addState by viewModel.add.collectAsStateWithLifecycle()
     val groups = remember(feeds) { groupsOf(feeds) }
     // Each group under its own heading, alphabetically, with ungrouped feeds last.
     val sections = remember(feeds, groups) {
         (groups + null).mapNotNull { group ->
-            feeds.filter { it.folder == group }.takeIf { it.isNotEmpty() }?.let { group to it }
+            feeds.filter { it.folder.equals(group, ignoreCase = true) }.takeIf { it.isNotEmpty() }?.let { group to it }
         }
     }
 
@@ -156,13 +162,24 @@ fun FeedsScreen(
                         // With no groups made yet there is nothing to head.
                         if (groups.isNotEmpty()) {
                             item(key = "group:$group") {
-                                MonoText(
-                                    group ?: "No group",
-                                    size = 11f,
-                                    tracking = 0.18f,
-                                    color = if (group != null) Ink.Live else Ink.Dim,
-                                    modifier = Modifier.padding(start = ScreenPadding, end = ScreenPadding, top = 18.dp, bottom = 10.dp),
-                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = ScreenPadding, end = ScreenPadding - 12.dp, top = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    MonoText(
+                                        group ?: "No group",
+                                        size = 11f,
+                                        tracking = 0.18f,
+                                        color = if (group != null) Ink.Live else Ink.Dim,
+                                        modifier = Modifier.weight(1f).padding(vertical = 10.dp),
+                                    )
+                                    if (group != null) {
+                                        RowAction(Icons.Filled.Edit, "Rename group $group") { renamingGroup = group }
+                                        RowAction(Icons.Filled.Delete, "Delete group $group") { deletingGroup = group }
+                                    }
+                                }
                             }
                         }
                         items(sectionFeeds, key = { it.url }) { feed -> FeedRow(feed, onOpenFeed, { regrouping = feed.url }, { pendingRemoval = feed.url }) }
@@ -182,10 +199,49 @@ fun FeedsScreen(
 
     if (showAdd) {
         AddFeedDialog(
-            onDismiss = { showAdd = false },
-            onAdd = { url ->
+            state = addState,
+            onDismiss = {
+                viewModel.cancelAdd()
                 showAdd = false
-                viewModel.addFeed(url)
+            },
+            onAdd = { url -> viewModel.addFeed(url) { showAdd = false } },
+            onEdit = viewModel::clearAddError,
+        )
+    }
+
+    renamingGroup?.let { group ->
+        RenameGroupDialog(
+            current = group,
+            onDismiss = { renamingGroup = null },
+            onRename = { name ->
+                renamingGroup = null
+                viewModel.renameGroup(group, name)
+            },
+        )
+    }
+    deletingGroup?.let { group ->
+        AlertDialog(
+            onDismissRequest = { deletingGroup = null },
+            containerColor = Ink.Raised,
+            title = { MonoText("Delete group?", size = 12f, tracking = 0.18f, color = Ink.Text, weight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "The feeds in \"$group\" stay subscribed, with no group.",
+                    fontFamily = AppFonts.Grotesk,
+                    fontSize = 14.sp,
+                    color = Ink.Muted,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteGroup(group)
+                    deletingGroup = null
+                }) { MonoText("Delete", size = 11f, tracking = 0.16f, color = Ink.Live, weight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingGroup = null }) {
+                    MonoText("Cancel", size = 11f, tracking = 0.16f, color = Ink.Muted)
+                }
             },
         )
     }
@@ -243,9 +299,19 @@ fun FeedsScreen(
     }
 }
 
+/**
+ * Stays open while the address is checked (a spinner in place of "Add"), shows what went wrong
+ * under the field and keeps what was typed so it can be fixed; [FeedsViewModel] closes it on success.
+ */
 @Composable
-private fun AddFeedDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+private fun AddFeedDialog(
+    state: FeedsViewModel.AddState,
+    onDismiss: () -> Unit,
+    onAdd: (String) -> Unit,
+    onEdit: () -> Unit,
+) {
     var url by remember { mutableStateOf("") }
+    val canAdd = url.isNotBlank() && !state.checking
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Ink.Raised,
@@ -254,11 +320,26 @@ private fun AddFeedDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 DialogTextField(
                     value = url,
-                    onValueChange = { url = it },
+                    onValueChange = {
+                        url = it
+                        onEdit()
+                    },
                     label = "Feed or site address",
                     placeholder = "theverge.com",
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { if (canAdd) onAdd(url) }),
+                    enabled = !state.checking,
+                    isError = state.error != null,
                 )
+                if (state.error != null) {
+                    Text(
+                        state.error,
+                        fontFamily = AppFonts.Grotesk,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 Text(
                     "Paste a feed or just the site's address — its feed is found for you. It's checked " +
                         "now, so you'll know straight away if there isn't one.",
@@ -270,14 +351,50 @@ private fun AddFeedDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(onClick = { onAdd(url) }, enabled = url.isNotBlank()) {
-                MonoText(
-                    "Add",
-                    size = 11f,
-                    tracking = 0.16f,
-                    color = if (url.isNotBlank()) Ink.Live else Ink.Dim,
-                    weight = FontWeight.Bold,
-                )
+            if (state.checking) {
+                Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(strokeWidth = 2.dp, color = Ink.Live, modifier = Modifier.size(18.dp))
+                }
+            } else {
+                TextButton(onClick = { onAdd(url) }, enabled = canAdd) {
+                    MonoText(
+                        "Add",
+                        size = 11f,
+                        tracking = 0.16f,
+                        color = if (canAdd) Ink.Live else Ink.Dim,
+                        weight = FontWeight.Bold,
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { MonoText("Cancel", size = 11f, tracking = 0.16f, color = Ink.Muted) }
+        },
+    )
+}
+
+/** Gives a group a new name; one that matches another group merges into it. */
+@Composable
+private fun RenameGroupDialog(current: String, onDismiss: () -> Unit, onRename: (String) -> Unit) {
+    var name by remember { mutableStateOf(current) }
+    val ready = name.isNotBlank()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Ink.Raised,
+        title = { MonoText("Rename group", size = 12f, tracking = 0.18f, color = Ink.Text, weight = FontWeight.Bold) },
+        text = {
+            DialogTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = "Name",
+                placeholder = "Science",
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (ready) onRename(name) }),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onRename(name) }, enabled = ready) {
+                MonoText("Rename", size = 11f, tracking = 0.16f, color = if (ready) Ink.Live else Ink.Dim, weight = FontWeight.Bold)
             }
         },
         dismissButton = {
@@ -352,7 +469,7 @@ private fun GroupDialog(
                 )
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ChoiceChip("None", selected = name.isBlank()) { name = "" }
-                    groups.forEach { group -> ChoiceChip(group, selected = name.trim() == group) { name = group } }
+                    groups.forEach { group -> ChoiceChip(group, selected = name.trim().equals(group, ignoreCase = true)) { name = group } }
                 }
                 DialogTextField(
                     value = name,
@@ -381,6 +498,9 @@ private fun DialogTextField(
     label: String,
     placeholder: String,
     keyboardOptions: KeyboardOptions,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    enabled: Boolean = true,
+    isError: Boolean = false,
 ) {
     OutlinedTextField(
         value = value,
@@ -399,6 +519,9 @@ private fun DialogTextField(
             cursorColor = Ink.Live,
         ),
         keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
+        enabled = enabled,
+        isError = isError,
         modifier = Modifier.fillMaxWidth(),
     )
 }

@@ -51,13 +51,44 @@ class ArticleImageStore(context: Context) {
         runCatching { dir.listFiles()?.forEach { it.delete() } }
     }
 
-    private fun fileName(url: String): String =
-        MessageDigest.getInstance("SHA-1")
-            .digest(url.toByteArray())
-            .joinToString("") { "%02x".format(it) }
+    /**
+     * Drops cached photos no story needs any more. [keepUrls] are the thumbnails of the stories
+     * that remain; a photo cached from inside a story's body isn't in that set, so a file is
+     * only dropped once it is also older than the stories are kept for (see [evictable]).
+     */
+    suspend fun evict(keepUrls: Set<String>) = withContext(Dispatchers.IO) {
+        runCatching {
+            val files = dir.listFiles()?.map { CachedFile(it.name, it.lastModified()) }.orEmpty()
+            for (name in evictable(files, keepUrls, System.currentTimeMillis())) File(dir, name).delete()
+        }
+    }
 
-    private companion object {
+    private fun fileName(url: String): String = cacheName(url)
+
+    internal class CachedFile(val name: String, val modifiedAt: Long)
+
+    internal companion object {
         const val DIR = "article-images"
+
+        fun cacheName(url: String): String =
+            MessageDigest.getInstance("SHA-1")
+                .digest(url.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+
+        /**
+         * The names of [files] to delete: not the thumbnail of any of [keepUrls] and older than
+         * [maxAgeMs] (a month by default, as long as stories live). The age test is what spares
+         * the photos inside a still-listed story's body, which nothing here lists.
+         */
+        fun evictable(
+            files: List<CachedFile>,
+            keepUrls: Set<String>,
+            now: Long,
+            maxAgeMs: Long = NewsRepository.RETENTION_MS,
+        ): List<String> {
+            val keep = keepUrls.mapTo(HashSet(), ::cacheName)
+            return files.filter { it.name !in keep && now - it.modifiedAt > maxAgeMs }.map { it.name }
+        }
 
         /** Generous for a photo, small enough that a mis-linked video never lands here. */
         const val MAX_IMAGE_BYTES = 8 * 1024 * 1024

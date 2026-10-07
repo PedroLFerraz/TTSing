@@ -7,10 +7,12 @@ import com.pedrolopes.ttsing.data.news.ArticleImageStore
 import com.pedrolopes.ttsing.data.news.CatalogFeed
 import com.pedrolopes.ttsing.data.news.FeedCatalog
 import com.pedrolopes.ttsing.data.news.NewsRepository
+import com.pedrolopes.ttsing.data.news.RefreshResult
 import com.pedrolopes.ttsing.data.news.Topic
 import com.pedrolopes.ttsing.data.news.db.ArticleEntity
 import com.pedrolopes.ttsing.data.news.db.FeedEntity
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,32 +29,68 @@ class FeedsViewModel(private val news: NewsRepository) : ViewModel() {
     val feeds: StateFlow<List<FeedEntity>> =
         news.observeFeeds().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** A "Refresh all" is running. Adding a feed is independent of it, see [add]. */
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    fun addFeed(url: String) {
-        if (_busy.value) return
-        _busy.value = true
-        viewModelScope.launch {
-            _message.value = when (val result = news.addFeed(url)) {
-                is NewsRepository.AddResult.Added ->
-                    "Added ${result.feed.title} · ${result.articleCount} stories"
-                is NewsRepository.AddResult.Failed -> result.message
+    /** The add-feed dialog's state: [checking] the address, or [error], why it didn't work. */
+    data class AddState(val checking: Boolean = false, val error: String? = null)
+
+    private val _add = MutableStateFlow(AddState())
+    val add: StateFlow<AddState> = _add.asStateFlow()
+    private var addJob: Job? = null
+
+    /**
+     * Checks and subscribes to [url] while the dialog stays open. [onDone] runs when the dialog
+     * can close: the feed was added, or was already there. A failure is left in [add] for the
+     * dialog to show next to the address, which stays as typed. Works during a refresh.
+     */
+    fun addFeed(url: String, onDone: () -> Unit) {
+        if (_add.value.checking) return
+        _add.value = AddState(checking = true)
+        addJob = viewModelScope.launch {
+            try {
+                when (val result = news.addFeed(url)) {
+                    is NewsRepository.AddResult.Added -> {
+                        _message.value = "Added ${result.feed.title} · ${result.articleCount} stories"
+                        _add.value = AddState()
+                        onDone()
+                    }
+                    is NewsRepository.AddResult.AlreadySubscribed -> {
+                        _message.value = "Already subscribed to ${result.feed.title}"
+                        _add.value = AddState()
+                        onDone()
+                    }
+                    is NewsRepository.AddResult.Failed -> _add.value = AddState(error = result.message)
+                }
+            } finally {
+                if (_add.value.checking) _add.value = AddState()
             }
-            _busy.value = false
         }
+    }
+
+    /** The dialog was closed: stop checking, forget the error. */
+    fun cancelAdd() {
+        addJob?.cancel()
+        _add.value = AddState()
+    }
+
+    fun clearAddError() {
+        _add.update { it.copy(error = null) }
     }
 
     fun refreshAll() {
         if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
-            val added = news.refreshAll()
-            _message.value = if (added == 0) "No new stories" else "$added new stories"
-            _busy.value = false
+            try {
+                _message.value = news.refreshAll().describe()
+            } finally {
+                _busy.value = false
+            }
         }
     }
 
@@ -66,6 +104,14 @@ class FeedsViewModel(private val news: NewsRepository) : ViewModel() {
 
     fun createGroup(name: String, feedUrls: Set<String>) {
         viewModelScope.launch { news.createGroup(name, feedUrls) }
+    }
+
+    fun renameGroup(from: String, to: String) {
+        viewModelScope.launch { news.renameGroup(from, to) }
+    }
+
+    fun deleteGroup(group: String) {
+        viewModelScope.launch { news.deleteGroup(group) }
     }
 
     fun consumeMessage() {
@@ -115,12 +161,29 @@ class ArticlesViewModel(
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
+    private val _lastRefresh = MutableStateFlow<RefreshResult?>(null)
+    /** How the latest refresh went, so an empty list can say "couldn't connect" rather than "no stories". */
+    val lastRefresh: StateFlow<RefreshResult?> = _lastRefresh.asStateFlow()
+
+    private val _message = MutableStateFlow<String?>(null)
+    /** A refresh that couldn't reach some feeds, to tell the user once. */
+    val message: StateFlow<String?> = _message.asStateFlow()
+
     private val _feedTitle = MutableStateFlow("")
     val feedTitle: StateFlow<String> = _feedTitle.asStateFlow()
 
     init {
         if (feedUrl != null) {
             viewModelScope.launch { _feedTitle.value = news.feed(feedUrl)?.title.orEmpty() }
+        }
+        // A group that disappears (its last feed moved or the group deleted) takes the filter
+        // with it; a group that was never there yet (just created) is left alone.
+        viewModelScope.launch {
+            var previous = emptyList<String>()
+            news.observeFeeds().map { groupsOf(it) }.collect { current ->
+                _group.update { groupAfterChange(it, previous, current) }
+                previous = current
+            }
         }
         refresh()
     }
@@ -132,8 +195,7 @@ class ArticlesViewModel(
     /** Makes the group and shows it straight away. */
     fun createGroup(name: String, feedUrls: Set<String>) {
         viewModelScope.launch {
-            news.createGroup(name, feedUrls)
-            _group.value = name.trim()
+            _group.value = news.createGroup(name, feedUrls) ?: return@launch
         }
     }
 
@@ -141,9 +203,28 @@ class ArticlesViewModel(
         if (_refreshing.value) return
         _refreshing.value = true
         viewModelScope.launch {
-            if (feedUrl != null) news.refresh(feedUrl) else news.refreshAll()
-            _refreshing.value = false
+            try {
+                val result = if (feedUrl != null) news.refresh(feedUrl) else news.refreshAll()
+                _lastRefresh.value = result
+                if (result.failedFeeds > 0) _message.value = result.describe()
+            } finally {
+                _refreshing.value = false
+            }
         }
+    }
+
+    fun consumeMessage() {
+        _message.value = null
+    }
+
+    /** Marks every story in the list as it is now filtered (a group, or one feed) read. */
+    fun markAllRead() {
+        val ids = articles.value.map { it.id }
+        viewModelScope.launch { news.setRead(ids, true) }
+    }
+
+    fun setRead(articleId: String, read: Boolean) {
+        viewModelScope.launch { news.setRead(listOf(articleId), read) }
     }
 
     /**
@@ -165,10 +246,27 @@ class ArticlesViewModel(
     }
 }
 
-/** The topic catalogue: the biggest sources per topic, one tap to subscribe. */
-/** The distinct groups among [feeds], alphabetically. */
+/** The distinct groups among [feeds], alphabetically; "science" and "Science" are one group. */
 fun groupsOf(feeds: List<FeedEntity>): List<String> =
-    feeds.mapNotNull { it.folder }.distinct().sortedWith(String.CASE_INSENSITIVE_ORDER)
+    feeds.mapNotNull { it.folder }.distinctBy { it.lowercase() }.sortedWith(String.CASE_INSENSITIVE_ORDER)
+
+/**
+ * The group the list should be filtered by after the groups went from [previous] to [current]:
+ * [selected], unless it was among [previous] and is gone from [current]. A group not in
+ * [previous] yet (one just created, whose feeds haven't been filed in the list yet) is not
+ * dropped for being absent.
+ */
+internal fun groupAfterChange(selected: String?, previous: List<String>, current: List<String>): String? =
+    if (selected != null &&
+        previous.any { it.equals(selected, ignoreCase = true) } &&
+        current.none { it.equals(selected, ignoreCase = true) }
+    ) {
+        null
+    } else {
+        selected
+    }
+
+/** The topic catalogue: the biggest sources per topic, one tap to subscribe. */
 
 class DiscoverViewModel(private val news: NewsRepository) : ViewModel() {
 
@@ -204,6 +302,7 @@ class DiscoverViewModel(private val news: NewsRepository) : ViewModel() {
         viewModelScope.launch {
             _message.value = when (val result = subscribe(feed)) {
                 is NewsRepository.AddResult.Added -> "Added ${feed.title} · ${result.articleCount} stories"
+                is NewsRepository.AddResult.AlreadySubscribed -> "Already subscribed to ${result.feed.title}"
                 is NewsRepository.AddResult.Failed -> "${feed.title}: ${result.message}"
             }
         }
@@ -223,6 +322,7 @@ class DiscoverViewModel(private val news: NewsRepository) : ViewModel() {
             for (feed in todo) {
                 when (subscribe(feed)) {
                     is NewsRepository.AddResult.Added -> added++
+                    is NewsRepository.AddResult.AlreadySubscribed -> Unit
                     is NewsRepository.AddResult.Failed -> failed += feed.title
                 }
             }

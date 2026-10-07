@@ -3,6 +3,7 @@ package com.pedrolopes.ttsing.data.news
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.parser.Parser
+import java.text.ParsePosition
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -214,29 +215,66 @@ object RssParser {
         "EEE, dd MMM yyyy HH:mm:ss Z",   // RFC-822, the RSS norm
         "EEE, dd MMM yyyy HH:mm:ss z",
         "EEE, dd MMM yyyy HH:mm Z",
+        "EEE, dd MMM yyyy HH:mm:ss",     // no zone: taken as UTC
         "dd MMM yyyy HH:mm:ss Z",
+        "dd MMM yyyy HH:mm:ss z",
+        "dd MMM yyyy HH:mm Z",
+        "dd MMM yyyy HH:mm:ss",
+        "dd MMM yyyy",
+        "EEE, dd MMM yy HH:mm:ss Z",     // two-digit year; see plausible()
         "yyyy-MM-dd'T'HH:mm:ssXXX",      // ISO-8601, the Atom norm
         "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+        "yyyy-MM-dd'T'HH:mm:ssZ",        // offset without the colon
+        "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
         "yyyy-MM-dd'T'HH:mm:ss'Z'",
         "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss",         // no zone
+        "yyyy-MM-dd'T'HH:mm:ss.SSS",
+        "yyyy-MM-dd HH:mm:ss Z",
+        "yyyy-MM-dd HH:mm:ssZ",
+        "yyyy-MM-dd HH:mm:ss",
+        "yyyy-MM-dd HH:mm",
         "yyyy-MM-dd",
+        "dd/MM/yyyy HH:mm:ss",
     )
 
     /** Epoch millis, or 0 if the date is missing or in a format we don't recognise. */
     fun parseDate(raw: String?): Long {
         val text = raw?.trim().orEmpty()
         if (text.isEmpty()) return 0
-        for (pattern in DATE_FORMATS) {
-            val parsed = runCatching {
-                SimpleDateFormat(pattern, Locale.US).apply {
-                    isLenient = false
-                    if (pattern.endsWith("'Z'") || pattern == "yyyy-MM-dd") {
-                        timeZone = TimeZone.getTimeZone("UTC")
-                    }
-                }.parse(text)
-            }.getOrNull()
-            if (parsed != null) return parsed.time
+        val cleaned = text
+            .replace(LONG_FRACTION, "$1")       // ".123456Z" -> ".123Z"
+            .replace(UT_ZONE, " GMT")           // "UT" isn't a zone Java knows
+            .replace(COLON_OFFSET, "$1$2")      // "-03:00" -> "-0300" for the Z patterns
+        // A wrong weekday ("Tue, 12 Mar" on a Wednesday) fails a strict parse; the date is still right.
+        val withoutWeekday = cleaned.replace(WEEKDAY, "")
+        for (candidate in listOf(text, cleaned, withoutWeekday).distinct()) {
+            for (pattern in DATE_FORMATS) {
+                val time = tryParse(candidate, pattern) ?: continue
+                if (time > PLAUSIBLE_AFTER) return time
+            }
         }
         return 0
     }
+
+    /** [text] read as [pattern], only if the pattern accounts for all of it (a zone-less one mustn't swallow "+0200" and ignore it). */
+    private fun tryParse(text: String, pattern: String): Long? = runCatching {
+        val position = ParsePosition(0)
+        SimpleDateFormat(pattern, Locale.US).apply {
+            isLenient = false
+            // No zone in the pattern (or a literal 'Z'): the clock reading is UTC.
+            if (!ZONE_LETTERS.containsMatchIn(pattern.replace(QUOTED, "")) || pattern.contains("'Z'")) {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+        }.parse(text, position)?.takeIf { position.index == text.length }?.time
+    }.getOrNull()
+
+    /** Rules out a two-digit year read by a four-digit pattern as year 14 AD. 1990-01-01. */
+    private const val PLAUSIBLE_AFTER = 631_152_000_000L
+    private val LONG_FRACTION = Regex("""(\.\d{3})\d+""")
+    private val UT_ZONE = Regex("""\s+UT$""")
+    private val COLON_OFFSET = Regex("""([+-]\d{2}):(\d{2})$""")
+    private val WEEKDAY = Regex("""^[A-Za-z]{3,9},?\s+""")
+    private val ZONE_LETTERS = Regex("[ZzX]")
+    private val QUOTED = Regex("'[^']*'")
 }

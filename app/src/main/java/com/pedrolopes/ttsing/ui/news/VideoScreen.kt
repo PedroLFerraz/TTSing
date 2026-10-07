@@ -60,7 +60,7 @@ import com.pedrolopes.ttsing.ui.theme.Ink
 fun VideoScreen(articleId: String, onBack: () -> Unit) {
     val news = TTSingApp.instance.news
     val article by produceState<ArticleEntity?>(null, articleId) { value = news.article(articleId) }
-    LaunchedEffect(articleId) { news.savePosition(articleId, 0, 0) }
+    LaunchedEffect(articleId) { news.setRead(listOf(articleId), true) }
     val uriHandler = LocalUriHandler.current
 
     Scaffold(containerColor = Ink.Surface) { padding ->
