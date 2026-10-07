@@ -20,6 +20,7 @@ import com.pedrolopes.ttsing.data.settings.SettingsRepository
 import com.pedrolopes.ttsing.tts.BookContentSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,9 +42,10 @@ data class LoadedChapter(
 /**
  * A one-off instruction to move the pager — opening the book, a table-of-contents jump, the
  * « » buttons. Reading along never produces one; the pager just turns. [id] makes two jumps to
- * the same place distinct.
+ * the same place distinct. [offsetInBlock] picks the page when a block spans several, so the
+ * reader lands where the sentence is rather than on the block's first page.
  */
-data class JumpRequest(val chapterIndex: Int, val blockIndex: Int, val id: Long)
+data class JumpRequest(val chapterIndex: Int, val blockIndex: Int, val id: Long, val offsetInBlock: Int = 0)
 
 data class ReaderUiState(
     val title: String = "",
@@ -149,7 +151,7 @@ class ReaderViewModel(
                 if (counts.isNotEmpty()) _ui.value = _ui.value.copy(chapterCharCounts = counts)
             }
             val chapter = (saved?.chapterIndex ?: 0).coerceIn(0, opened.sectionCount - 1)
-            recenter(chapter, jumpToBlock = saved?.blockIndex ?: 0)
+            recenter(chapter, jumpToBlock = saved?.blockIndex ?: 0, jumpToSentence = saved?.sentenceIndex ?: 0)
         }
     }
 
@@ -180,7 +182,17 @@ class ReaderViewModel(
                 is NewsRepository.ArticleBody.Ready -> {
                     // The declared language, as for a book: the override goes on top of it.
                     articleLocale = feedLocale
+                    // A story listened to part-way opens where the voice stopped, not on page 1
+                    // with its highlight off-screen.
+                    val savedBlock = article.blockIndex.coerceIn(0, (body.blocks.size - 1).coerceAtLeast(0))
+                    val jump = JumpRequest(
+                        0,
+                        savedBlock,
+                        nextJumpId++,
+                        sentenceStart(body.blocks, ReadingPosition(0, savedBlock, article.sentenceIndex)),
+                    )
                     _ui.value = _ui.value.copy(
+                        jump = jump,
                         title = article.title,
                         chapterCount = 1,
                         window = listOf(LoadedChapter(0, null, body.blocks)),
@@ -201,20 +213,38 @@ class ReaderViewModel(
 
     // ---- the window of chapters ----
 
-    /** Table of contents: go to the start of [index]. */
-    fun showChapter(index: Int) {
+    /**
+     * Table of contents: go to the start of [index]. [onLanded] gets the chapter actually
+     * landed on (an empty one is passed over), so the voice can be taken there too.
+     */
+    fun showChapter(index: Int, onLanded: (Int) -> Unit = {}) {
         if (isArticle) return
-        viewModelScope.launch { recenter(index, jumpToBlock = 0) }
+        viewModelScope.launch { recenter(index, jumpToBlock = 0)?.let(onLanded) }
     }
 
-    /** « and »: the chapter after or before [visibleChapter], skipping any with nothing in it. */
-    fun stepChapter(visibleChapter: Int, forward: Boolean) {
+    /**
+     * « and »: the chapter after or before [visibleChapter], skipping any with nothing in it.
+     * [onLanded] as for [showChapter].
+     */
+    fun stepChapter(visibleChapter: Int, forward: Boolean, onLanded: (Int) -> Unit = {}) {
         if (isArticle) return
         viewModelScope.launch {
             val target = readableFrom(visibleChapter + if (forward) 1 else -1, if (forward) 1 else -1)
                 ?: return@launch
-            recenter(target.index, jumpToBlock = 0)
+            recenter(target.index, jumpToBlock = 0)?.let(onLanded)
         }
+    }
+
+    /**
+     * The reader browsed to [position] (the first sentence of the page it settled on): remember
+     * it, as the voice would have. Not for articles, whose saved place also marks them heard.
+     * Fire-and-forget on purpose: leaving the screen right after a swipe must not lose it.
+     */
+    fun saveBrowsedPosition(position: ReadingPosition) {
+        if (isArticle) return
+        val blocks = (_ui.value.window.firstOrNull { it.index == position.chapterIndex } ?: chapters[position.chapterIndex])?.blocks
+        val fraction = browseFraction(_ui.value.chapterCharCounts, blocks, position, _ui.value.chapterCount)
+        viewModelScope.launch(NonCancellable) { repo.savePosition(bookId, position, fraction) }
     }
 
     /**
@@ -243,14 +273,15 @@ class ReaderViewModel(
         if (_ui.value.jump?.id == id) _ui.value = _ui.value.copy(jump = null)
     }
 
-    private suspend fun recenter(requested: Int, jumpToBlock: Int?) = windowLock.withLock {
-        val count = document?.sectionCount ?: return
+    /** Recentres the window; returns the chapter it landed on, or null when none could be loaded. */
+    private suspend fun recenter(requested: Int, jumpToBlock: Int?, jumpToSentence: Int = 0): Int? = windowLock.withLock {
+        val count = document?.sectionCount ?: return null
         val start = requested.coerceIn(0, count - 1)
         // Land on something readable: forwards first, as a reader moving through the book would.
         val current = readableFrom(start, 1) ?: readableFrom(start, -1) ?: loadChapter(start)
         if (current == null) {
             _ui.value = _ui.value.copy(isLoading = false, error = "Could not load this chapter.")
-            return
+            return null
         }
         val previous = readableFrom(current.index - 1, -1)
         val next = readableFrom(current.index + 1, 1)
@@ -260,11 +291,19 @@ class ReaderViewModel(
             isLoading = false,
             error = null,
             jump = if (jumpToBlock != null) {
-                JumpRequest(current.index, if (current.index == start) jumpToBlock else 0, nextJumpId++)
+                val block = if (current.index == start) jumpToBlock else 0
+                val sentence = if (current.index == start) jumpToSentence else 0
+                JumpRequest(
+                    current.index,
+                    block,
+                    nextJumpId++,
+                    sentenceStart(current.blocks, ReadingPosition(current.index, block, sentence)),
+                )
             } else {
                 _ui.value.jump
             },
         )
+        current.index
     }
 
     /** The first chapter from [start] stepping by [step] that has anything to show. */

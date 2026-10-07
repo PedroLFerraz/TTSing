@@ -85,6 +85,8 @@ internal fun PdfPageView(
     activeBlockIndex: Int?,
     sentenceRange: IntRange?,
     wordRange: IntRange?,
+    /** False while the voice sits where the reader parked it: scrolling to it would undo their browsing. */
+    followVoice: Boolean,
     onTap: (page: Int, x: Float, y: Float) -> Unit,
     onLongPress: (page: Int, x: Float, y: Float) -> Unit,
     onVisiblePage: (VisiblePage) -> Unit,
@@ -93,7 +95,18 @@ internal fun PdfPageView(
 ) {
     val pageCount = remember(pdf) { pdf.pageCount }
     val sectionPages = remember(pdf) { pdf.sectionPageCounts() }
-    val listState = rememberLazyListState()
+    // Starts on the page it was asked for, rather than on the first and scrolling there once the
+    // book's text is known: that is a second or more of page 1, and of reports saying so. Only
+    // the chapter's first page is known without that wait; a jump into the middle of a chapter
+    // is refined below.
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = remember {
+            jump?.let { pdf.firstPageOf(it.chapterIndex) }?.coerceIn(0, (pageCount - 1).coerceAtLeast(0)) ?: 0
+        },
+    )
+    // False until the jump in hand has put the list where it was asked to be. Until then what
+    // the list shows is not where the reader is, and saying so would recentre the book on it.
+    var landed by remember(jump?.id) { mutableStateOf(jump == null) }
 
     // What the voice is reading, as rectangles on the pages.
     // Tagged with its chapter: until a newly tapped chapter's geometry loads, the old one's
@@ -117,7 +130,16 @@ internal fun PdfPageView(
         firstOffset = offset,
     )
 
-    val voicePage = (wordRects.firstOrNull() ?: sentenceRects.firstOrNull())?.page
+    // What the page follows: the word, kept through a pause (which clears it) so that pausing
+    // in a sentence that started further up does not scroll back to its start.
+    val lastWord = remember { arrayOfNulls<Pair<Pair<Int?, IntRange?>, PageRect>>(1) }
+    val followRect = remember(wordRects, sentenceRects, activeBlockIndex, sentenceRange) {
+        val sentenceKey = activeBlockIndex to sentenceRange
+        val word = wordRects.firstOrNull()
+        if (word != null) lastWord[0] = sentenceKey to word
+        word ?: lastWord[0]?.takeIf { it.first == sentenceKey }?.second ?: sentenceRects.firstOrNull()
+    }
+    val voicePage = followRect?.page
     LaunchedEffect(voicePage, voiceChapter) {
         val chapter = voiceChapter
         onVoicePage(
@@ -143,15 +165,17 @@ internal fun PdfPageView(
                 pdf.geometry(target.chapterIndex).pageOf(target.blockIndex) ?: pdf.firstPageOf(target.chapterIndex)
             }
             listState.scrollToItem(page.coerceIn(0, (pageCount - 1).coerceAtLeast(0)))
+            landed = true
         }
 
-        FollowTheVoice(listState, wordRects.firstOrNull() ?: sentenceRects.firstOrNull(), viewportHeight, ::pxPerPoint)
+        FollowTheVoice(listState, followRect, followVoice, viewportHeight, widthPx, ::pxPerPoint)
 
         // The page at the top of the screen, and where its text starts: the footer's position
         // and the place reading resumes from when nothing is playing.
         val reportVisible by rememberUpdatedState(onVisiblePage)
         val reportSettled by rememberUpdatedState(onSettledChapter)
-        LaunchedEffect(listState, pdf) {
+        LaunchedEffect(listState, pdf, landed) {
+            if (!landed) return@LaunchedEffect
             snapshotFlow {
                 listState.layoutInfo.visibleItemsInfo
                     .firstOrNull { it.offset + it.size > viewportHeight / 3 }?.index
@@ -160,6 +184,9 @@ internal fun PdfPageView(
                 .distinctUntilChanged()
                 .collect { page ->
                     val chapter = pdf.sectionOfPage(page)
+                    // The page number is known at once; where its text starts takes the
+                    // chapter's text to be read.
+                    reportVisible(visiblePage(chapter, page, 0, 0))
                     val first = pdf.geometry(chapter).firstOn(page)
                     reportVisible(visiblePage(chapter, page, first?.blockIndex ?: 0, first?.offset ?: 0))
                     reportSettled(chapter)
@@ -209,10 +236,18 @@ private fun rectsFor(geometry: SectionGeometry?, blockIndex: Int?, range: IntRan
 private fun FollowTheVoice(
     listState: LazyListState,
     target: PageRect?,
+    follow: Boolean,
     viewportHeight: Int,
+    widthPx: Int,
     pxPerPoint: (Int) -> Float,
 ) {
     var previous by remember { mutableStateOf<PageRect?>(null) }
+    val following by rememberUpdatedState(follow)
+    // A rotation (or any change of the page area) can leave the sentence being read off-screen
+    // from the start, and "it was on screen a moment ago" is how a reader still following the
+    // voice is told from one who scrolled away. Forget the moment ago, so the next word scrolls
+    // it back into view once.
+    LaunchedEffect(viewportHeight, widthPx) { previous = null }
     // The scroll runs on its own: the next word arrives mid-animation, and restarting the
     // effect for it must not cancel the scroll halfway.
     val scope = rememberCoroutineScope()
@@ -221,6 +256,7 @@ private fun FollowTheVoice(
         val now = target ?: return@LaunchedEffect
         val before = previous
         previous = now
+        if (!following) return@LaunchedEffect
         if (scrolling?.isActive == true) return@LaunchedEffect
         fun onScreen(rect: PageRect): Boolean {
             val item = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == rect.page } ?: return false
