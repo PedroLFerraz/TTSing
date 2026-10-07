@@ -33,6 +33,7 @@ class TTSingApp : Application() {
                 com.pedrolopes.ttsing.data.news.db.MIGRATION_1_2,
                 com.pedrolopes.ttsing.data.news.db.MIGRATION_2_3,
                 com.pedrolopes.ttsing.data.news.db.MIGRATION_3_4,
+                com.pedrolopes.ttsing.data.news.db.MIGRATION_4_5,
             )
             .build()
     }
@@ -49,7 +50,7 @@ class TTSingApp : Application() {
      */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    val news: NewsRepository by lazy { NewsRepository(newsDatabase.newsDao(), appScope) }
+    val news: NewsRepository by lazy { NewsRepository(newsDatabase.newsDao(), appScope, com.pedrolopes.ttsing.data.news.ArticleImageStore(this)) }
 
     override fun onCreate() {
         super.onCreate()

@@ -150,10 +150,7 @@ object FeedCatalog {
     fun group(topic: Topic, kind: SourceKind, language: String): List<CatalogFeed> =
         feeds.filter { it.topic == topic && it.kind == kind && it.language == language }
 
-    private fun key(url: String): String =
-        url.trim().lowercase()
-            .removePrefix("https://").removePrefix("http://").removePrefix("www.")
-            .trimEnd('/')
+    private fun key(url: String): String = NewsRepository.feedKey(url)
 
     // ---- builders, so each group reads as a plain list ----
 

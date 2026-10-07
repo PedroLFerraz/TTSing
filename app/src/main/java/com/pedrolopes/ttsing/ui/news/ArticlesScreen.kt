@@ -2,7 +2,8 @@ package com.pedrolopes.ttsing.ui.news
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,12 +19,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pedrolopes.ttsing.data.news.RefreshResult
 import com.pedrolopes.ttsing.data.news.YouTube
 import com.pedrolopes.ttsing.data.news.db.ArticleEntity
 import com.pedrolopes.ttsing.ui.common.ChoiceChip
@@ -83,16 +90,20 @@ fun ArticlesScreen(
     val feedTitle by viewModel.feedTitle.collectAsStateWithLifecycle()
     val groups by viewModel.groups.collectAsStateWithLifecycle()
     val group by viewModel.group.collectAsStateWithLifecycle()
+    val lastRefresh by viewModel.lastRefresh.collectAsStateWithLifecycle()
+    val message by viewModel.message.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
     val feedNames = remember(feeds) { feeds.associate { it.url to it.title } }
     var creatingGroup by remember { mutableStateOf(false) }
 
-    // Emptying a group takes its chip away; don't leave the list filtered by something that
-    // can no longer be seen or cleared.
-    LaunchedEffect(group, groups) {
-        if (group != null && group !in groups) viewModel.selectGroup(null)
+    LaunchedEffect(message) {
+        message?.let {
+            snackbar.showSnackbar(it)
+            viewModel.consumeMessage()
+        }
     }
 
-    Scaffold(containerColor = Ink.Surface) { padding ->
+    Scaffold(containerColor = Ink.Surface, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             ScreenHeader(
                 title = if (feedUrl != null) feedTitle.ifEmpty { "Stories" }.uppercase() else "NEWS",
@@ -111,6 +122,9 @@ fun ArticlesScreen(
                     } else {
                         HeaderIcon(Icons.Filled.Refresh, "Refresh") { viewModel.refresh() }
                     }
+                    if (articles.any { !it.isRead }) {
+                        HeaderIcon(Icons.Filled.DoneAll, "Mark all as read") { viewModel.markAllRead() }
+                    }
                     // Only the all-feeds view needs a way to subscriptions; a single feed's
                     // list is itself reached from there.
                     if (feedUrl == null) {
@@ -124,7 +138,7 @@ fun ArticlesScreen(
                 ChipRow(modifier = Modifier.padding(top = 14.dp)) {
                     ChoiceChip("All", selected = group == null) { viewModel.selectGroup(null) }
                     groups.forEach { entry ->
-                        ChoiceChip(entry, selected = entry == group) { viewModel.selectGroup(entry) }
+                        ChoiceChip(entry, selected = entry.equals(group, ignoreCase = true)) { viewModel.selectGroup(entry) }
                     }
                     ChoiceChip("+ New group", selected = false) { creatingGroup = true }
                 }
@@ -133,7 +147,7 @@ fun ArticlesScreen(
             when {
                 feedUrl == null && feeds.isEmpty() -> NoFeedsYet(onDiscover, onManageFeeds, Modifier.weight(1f))
                 articles.isEmpty() && !refreshing -> EmptyMessage(
-                    if (group != null) "No stories in $group yet." else "Nothing here yet — this feed has no stories.",
+                    emptyText(group, feedUrl != null, lastRefresh),
                     Modifier.weight(1f),
                 )
                 else -> {
@@ -155,6 +169,7 @@ fun ArticlesScreen(
                                 // One feed's own list needn't repeat its name on every row.
                                 source = if (feedUrl == null) feedNames[article.feedUrl] else null,
                                 loadImage = viewModel::imageBytes,
+                                onSetRead = { read -> viewModel.setRead(article.id, read) },
                                 onClick = {
                                     viewModel.onOpen()
                                     if (YouTube.videoId(article.link) != null) onOpenVideo(article.id) else onOpenArticle(article.id)
@@ -178,6 +193,15 @@ fun ArticlesScreen(
             },
         )
     }
+}
+
+/** What an empty list says: no connection when that is why, otherwise that nothing is there. */
+internal fun emptyText(group: String?, singleFeed: Boolean, lastRefresh: RefreshResult?): String = when {
+    lastRefresh != null && lastRefresh.failedFeeds > 0 && lastRefresh.newStories == 0 ->
+        "Couldn't load stories — check your connection, then refresh."
+    group != null -> "No stories in $group yet."
+    singleFeed -> "Nothing here yet — this feed has no stories."
+    else -> "Nothing here yet."
 }
 
 @Composable
@@ -232,14 +256,18 @@ private fun NoFeedsYet(onDiscover: () -> Unit, onManageFeeds: () -> Unit, modifi
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ArticleRow(
     article: ArticleEntity,
     /** The feed's name, when the list mixes several feeds. */
     source: String?,
     loadImage: suspend (String) -> ByteArray?,
+    /** Long-press menu: mark this story heard or not heard. */
+    onSetRead: (Boolean) -> Unit,
     onClick: () -> Unit,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     // A story you've already heard steps back a whole tone: lighter weight, greyer text,
     // and its timestamp loses the live colour.
     val titleColor = if (article.isRead) Ink.Muted else Ink.Text
@@ -249,7 +277,7 @@ private fun ArticleRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
             .padding(horizontal = ScreenPadding, vertical = 16.dp),
         verticalAlignment = Alignment.Top,
     ) {
@@ -299,6 +327,15 @@ private fun ArticleRow(
                     )
                 }
             }
+        }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text(if (article.isRead) "Mark as unread" else "Mark as read") },
+                onClick = {
+                    menuOpen = false
+                    onSetRead(!article.isRead)
+                },
+            )
         }
         article.imageUrl?.let { url ->
             Box(
