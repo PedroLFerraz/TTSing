@@ -1,6 +1,13 @@
 package com.pedrolopes.ttsing.ui.reader
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
@@ -21,6 +28,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -38,6 +47,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowLeft
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowRight
 import androidx.compose.material.icons.filled.Pause
@@ -46,6 +59,8 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalDrawerSheet
@@ -63,13 +78,19 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -83,6 +104,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -98,9 +123,11 @@ import com.pedrolopes.ttsing.tts.SpeedSteps
 import com.pedrolopes.ttsing.tts.piper.PiperCatalog
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.LocalImage
+import com.pedrolopes.ttsing.ui.common.MinTouchTarget
 import com.pedrolopes.ttsing.ui.common.MonoText
 import com.pedrolopes.ttsing.ui.common.ScreenPadding
 import com.pedrolopes.ttsing.ui.common.ThinProgress
+import com.pedrolopes.ttsing.ui.common.bookImageKey
 import com.pedrolopes.ttsing.ui.common.simpleFactory
 import com.pedrolopes.ttsing.ui.theme.AppFonts
 import com.pedrolopes.ttsing.ui.theme.Ink
@@ -172,6 +199,23 @@ fun ReaderScreen(
     val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = DefaultSettings)
     val palette = readerPalette(settings.readerTheme)
 
+    // The activity draws the status and navigation bars' icons light, for the app's black. Over
+    // a light or sepia page they would vanish, so they follow the page while it is open.
+    val activity = LocalActivity.current
+    val pageIsLight = palette.isLight
+    DisposableEffect(activity, pageIsLight) {
+        val window = activity?.window
+        val bars = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        val wasStatus = bars?.isAppearanceLightStatusBars
+        val wasNavigation = bars?.isAppearanceLightNavigationBars
+        bars?.isAppearanceLightStatusBars = pageIsLight
+        bars?.isAppearanceLightNavigationBars = pageIsLight
+        onDispose {
+            if (bars != null && wasStatus != null) bars.isAppearanceLightStatusBars = wasStatus
+            if (bars != null && wasNavigation != null) bars.isAppearanceLightNavigationBars = wasNavigation
+        }
+    }
+
     // Minutes left on the sleep timer, ticking down for the footer and the settings sheet.
     // CHAPTER_END stands for a timer that runs to the end of the chapter instead of a clock.
     var sleepMinutesLeft by remember { mutableStateOf<Int?>(null) }
@@ -198,6 +242,36 @@ fun ReaderScreen(
     var voicePage by remember { mutableStateOf<VisiblePage?>(null) }
     var cardDraft by remember { mutableStateOf<CardDraft?>(null) }
     val snackbarHost = remember { SnackbarHostState() }
+
+    // ---- chrome: the header and footer can be put away to leave the page the whole screen ----
+    // A phone on its side starts with a slimmer header and a one-row footer; hiding both is one
+    // tap on the page's margin (anywhere that isn't text) or the header's fullscreen button.
+    val compactChrome = isCompactHeight(LocalConfiguration.current.screenHeightDp)
+    var chromeShown by rememberSaveable { mutableStateOf(true) }
+    var chromeHintShown by rememberSaveable { mutableStateOf(false) }
+    val setChromeShown: (Boolean) -> Unit = { show ->
+        chromeShown = show
+        if (!show && !chromeHintShown) {
+            chromeHintShown = true
+            scope.launch { snackbarHost.showSnackbar("Tap outside the text to bring the controls back") }
+        }
+    }
+    val toggleChrome: () -> Unit = { setChromeShown(!chromeShown) }
+
+    // ---- notifications: asked for the first time Play is pressed, never in the way of playing ----
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val askForNotifications: () -> Unit = {
+        val granted = Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (notificationAsk.shouldAskNow(Build.VERSION.SDK_INT, granted)) {
+            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    /** Starts the voice (at [position], or where it left off), then asks about notifications. */
+    val startReading: (ReadingPosition?) -> Unit = { position ->
+        controller.play(bookId, position)
+        askForNotifications()
+    }
     val drawerState = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
 
     // Counting pages happens off the main thread, so it gets its own measurer: the one the
@@ -237,6 +311,14 @@ fun ReaderScreen(
     // reads what is on screen. While the voice speaks, the service owns the position.
     val browse = remember { BrowseState() }
     val latestPlayback by rememberUpdatedState(playback)
+    // Back from installing voice data in the system's settings: the engine has to be asked again
+    // whether the language is there now, or the "no voice" banner stays until the book is reopened.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        val now = latestPlayback
+        if (now.isActive && now.bookId == bookId && !now.languageAvailable) {
+            controller.activeLocale()?.let { controller.selectLanguage(it.toLanguageTag()) }
+        }
+    }
     val latestWindow by rememberUpdatedState(ui.window)
     val latestVoicePage by rememberUpdatedState(voicePage)
     val speakingHere = isThisBook && playback.isSpeaking
@@ -446,19 +528,23 @@ fun ReaderScreen(
             containerColor = palette.background,
             snackbarHost = { SnackbarHost(snackbarHost) },
             topBar = {
-                ReaderTopBar(
+                if (chromeShown) ReaderTopBar(
                     title = ui.title,
                     chapterLabel = chapterLabel(visibleChapter, ui.chapterCount, visibleTitle),
                     palette = palette,
                     articleLink = ui.articleLink,
+                    compact = compactChrome,
                     onBack = onBack,
                     onOpenLink = { link -> openInBrowser(context, link) },
                     onOpenContents = { scope.launch { drawerState.open() } },
                     onOpenSettings = { showSettings = true },
+                    // Room for one more glyph: always for a book, and on its side for an article.
+                    onHideChrome = { setChromeShown(false) }.takeIf { compactChrome || ui.articleLink == null },
                 )
             },
             bottomBar = {
-                ReaderFooter(
+                if (chromeShown) ReaderFooter(
+                    compact = compactChrome,
                     // A book that could not be opened has no pages to count or time to run.
                     showPosition = ui.error == null && ui.window.isNotEmpty(),
                     pageLabel = pageLabel,
@@ -473,14 +559,17 @@ fun ReaderScreen(
                     speechRate = settings.speechRate,
                     sleepMinutesLeft = sleepMinutesLeft,
                     palette = palette,
-                    onCycleSpeed = {
-                        val next = SpeedSteps.next(settings.speechRate)
+                    onSelectSpeed = { next ->
                         scope.launch { app.settings.setSpeechRate(next) }
                         controller.setSpeechRate(next)
                     },
                     onPrevChapter = { viewModel.stepChapter(visibleChapter, forward = false, onLanded = seekVoiceToChapter) },
                     onNextChapter = { viewModel.stepChapter(visibleChapter, forward = true, onLanded = seekVoiceToChapter) },
-                    onPlayPause = { controller.togglePlayPause(bookId) },
+                    onPlayPause = {
+                        val wasSpeaking = isThisBook && playback.isSpeaking
+                        controller.togglePlayPause(bookId)
+                        if (!wasSpeaking) askForNotifications()
+                    },
                     onNextSentence = { controller.next() },
                     onPrevSentence = { controller.previous() },
                 )
@@ -511,7 +600,9 @@ fun ReaderScreen(
                         followVoice = followVoice,
                         onTap = { page, x, y ->
                             scope.launch {
-                                viewModel.pdfPositionAt(page, x, y)?.let { (position, _) -> controller.play(bookId, position) }
+                                // A tap that is on no text is a tap on the margin: it toggles the chrome.
+                                val hit = viewModel.pdfPositionAt(page, x, y)
+                                if (hit != null) startReading(hit.first) else toggleChrome()
                             }
                         },
                         onLongPress = { page, x, y ->
@@ -526,6 +617,7 @@ fun ReaderScreen(
                         onSettledChapter = viewModel::onVisibleChapter,
                     )
                     else -> PagedBook(
+                        bookId = bookId,
                         window = ui.window,
                         jump = ui.jump,
                         fontScale = settings.fontScale,
@@ -538,7 +630,8 @@ fun ReaderScreen(
                         sentenceRange = playback.sentenceRange,
                         wordRange = playback.wordRange,
                         followVoice = followVoice,
-                        onTapStart = { position -> controller.play(bookId, position) },
+                        onTapStart = { position -> startReading(position) },
+                        onToggleChrome = toggleChrome,
                         onMakeCard = { chapter, blockIndex, offset ->
                             cardDraft = viewModel.draftFor(chapter, blockIndex, offset)
                         },
@@ -554,18 +647,50 @@ fun ReaderScreen(
                 }
 
                 val playbackError = playback.error.takeIf { isThisBook }
+                val finishedHere = playback.finished && playback.bookId == bookId
+                // Each banner can be sent away; it comes back if what it says happens again.
+                var errorDismissed by rememberSaveable(playbackError) { mutableStateOf(false) }
+                var voiceDismissed by rememberSaveable(playback.languageAvailable) { mutableStateOf(false) }
+                var finishedDismissed by rememberSaveable(finishedHere) { mutableStateOf(false) }
+                var summaryDismissed by rememberSaveable { mutableStateOf(false) }
+                var retrying by remember { mutableStateOf(false) }
                 when {
                     // An engine failure is the most urgent thing to say: without it, a voice
                     // that cannot speak just looks like a reader that stopped working.
-                    playbackError != null && ui.error == null -> EngineErrorBanner(
+                    playbackError != null && ui.error == null && !errorDismissed -> EngineErrorBanner(
                         message = playbackError,
                         onOpenSettings = { showSettings = true },
+                        onDismiss = { errorDismissed = true },
                         modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
                     )
-                    isThisBook && !playback.languageAvailable ->
-                        MissingVoiceBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
-                    ui.isTruncated ->
-                        TruncatedArticleBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
+                    isThisBook && !playback.languageAvailable && !voiceDismissed ->
+                        MissingVoiceBanner(
+                            onDismiss = { voiceDismissed = true },
+                            modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                        )
+                    finishedHere && !finishedDismissed -> FinishedBanner(
+                        onStartOver = { startReading(null) },
+                        onDismiss = { finishedDismissed = true },
+                        modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                    )
+                    ui.isTruncated && !summaryDismissed -> TruncatedArticleBanner(
+                        message = summaryBannerMessage(ui.articleIssue),
+                        retrying = retrying,
+                        onRetry = {
+                            retrying = true
+                            viewModel.retryFullText { ok ->
+                                retrying = false
+                                if (ok) {
+                                    // The voice holds the old, short text: it has to read the new.
+                                    if (latestPlayback.isActive && latestPlayback.bookId == bookId) controller.reloadBook(bookId)
+                                } else {
+                                    scope.launch { snackbarHost.showSnackbar("Still couldn't get the full article") }
+                                }
+                            }
+                        },
+                        onDismiss = { summaryDismissed = true },
+                        modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                    )
                 }
             }
         }
@@ -733,6 +858,8 @@ private class PagedWindow(val window: List<LoadedChapter>, val layout: PageLayou
  */
 @Composable
 private fun PagedBook(
+    /** Whose images these are: the same path in two books is two pictures. */
+    bookId: String,
     window: List<LoadedChapter>,
     jump: JumpRequest?,
     fontScale: Float,
@@ -745,6 +872,8 @@ private fun PagedBook(
     /** False while the voice sits where the reader parked it: turning to it would undo their browsing. */
     followVoice: Boolean,
     onTapStart: (ReadingPosition) -> Unit,
+    /** A tap on the page that is not on any text: show or hide the header and footer. */
+    onToggleChrome: () -> Unit,
     onMakeCard: (chapterIndex: Int, blockIndex: Int, offsetInBlock: Int) -> Unit,
     loadImage: suspend (String) -> ByteArray?,
     onGeometry: (PageGeometry) -> Unit,
@@ -754,9 +883,16 @@ private fun PagedBook(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val widthPx = (constraints.maxWidth - with(density) { PageHorizontalPadding.toPx() * 2 }).toInt().coerceAtLeast(1)
+        val widthPx = pageWidthPx(
+            constraints.maxWidth.toFloat(),
+            with(density) { ReaderColumnMaxWidth.toPx() },
+            with(density) { PageHorizontalPadding.toPx() },
+        )
         val heightPx = (constraints.maxHeight - with(density) { (PageVerticalPadding * 2 + PageBottomSlack).toPx() })
             .toInt().coerceAtLeast(1)
+        // A line of text across a tablet, or a phone on its side, is too long to follow: the
+        // column stops at a readable width and sits in the middle, the rest being margin.
+        val sideInset = with(density) { columnInsetPx(constraints.maxWidth.toFloat(), ReaderColumnMaxWidth.toPx()).toDp() }
         val geometry = PageGeometry(widthPx, heightPx, fontScale, density.density)
         LaunchedEffect(geometry) { onGeometry(geometry) }
 
@@ -886,16 +1022,22 @@ private fun PagedBook(
                 currentPages.getOrNull(pagerState.settledPage)?.let { onSettledChapter(it.chapter.index) }
             }
 
+            val toggleChrome by rememberUpdatedState(onToggleChrome)
             HorizontalPager(
                 state = pagerState,
                 key = { index -> pages.getOrNull(index)?.key ?: "gap:$index" },
-                modifier = Modifier.fillMaxSize(),
+                // Text takes its own taps (read from here, make a card); what is left over —
+                // the margins, the gaps between paragraphs, the space around a narrow column —
+                // comes up to here.
+                modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { toggleChrome() }) },
             ) { index ->
                 val page = pages.getOrNull(index) ?: return@HorizontalPager
                 val isVoiceChapter = page.chapter.index == voiceChapter
                 PageView(
                     page = page.content,
                     blocks = page.chapter.blocks,
+                    bookId = bookId,
+                    sideInset = sideInset,
                     chapterIndex = page.chapter.index,
                     // The font the pages were laid out in, not the one just chosen: the two only
                     // differ for the moment before the new pages arrive.
@@ -945,6 +1087,9 @@ private fun indexOfBlock(pages: List<BookPage>, chapterIndex: Int, blockIndex: I
 }
 
 private val PageHorizontalPadding = 24.dp
+
+/** The widest the column of text gets; past it the page has margins of its own. */
+private val ReaderColumnMaxWidth = 640.dp
 private val PageVerticalPadding = 16.dp
 
 /** A little room under the last line, so descenders never meet the footer. */
@@ -954,6 +1099,9 @@ private val PageBottomSlack = 8.dp
 private fun PageView(
     page: ReaderPage,
     blocks: List<Block>,
+    bookId: String,
+    /** Margin on both sides beyond [PageHorizontalPadding], for a page wider than the text column. */
+    sideInset: Dp,
     chapterIndex: Int,
     fontScale: Float,
     palette: ReaderPalette,
@@ -965,7 +1113,7 @@ private fun PageView(
     loadImage: suspend (String) -> ByteArray?,
 ) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = PageHorizontalPadding, vertical = PageVerticalPadding),
+        modifier = Modifier.fillMaxSize().padding(horizontal = PageHorizontalPadding + sideInset, vertical = PageVerticalPadding),
     ) {
         page.forEach { element ->
             when (element) {
@@ -1028,7 +1176,7 @@ private fun PageView(
                         contentAlignment = Alignment.Center,
                     ) {
                         LocalImage(
-                            key = element.zipPath,
+                            key = bookImageKey(bookId, element.zipPath),
                             contentDescription = element.alt,
                             modifier = Modifier.fillMaxWidth().height(ImageDisplayHeight),
                             contentScale = androidx.compose.ui.layout.ContentScale.Fit,
@@ -1091,10 +1239,14 @@ private fun ReaderTopBar(
     chapterLabel: String?,
     palette: ReaderPalette,
     articleLink: String?,
+    /** On its side the header gives up its padding: every dp of height is a line of text. */
+    compact: Boolean,
     onBack: () -> Unit,
     onOpenLink: (String) -> Unit,
     onOpenContents: () -> Unit,
     onOpenSettings: () -> Unit,
+    /** Puts the header and footer away; null when there is no room for the button. */
+    onHideChrome: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -1103,11 +1255,11 @@ private fun ReaderTopBar(
             // Scaffold insets its content but not a custom top bar, so the header has to
             // keep clear of the status bar itself.
             .statusBarsPadding()
-            .padding(start = 18.dp, end = 10.dp, top = 8.dp, bottom = 6.dp),
+            .padding(start = 18.dp, end = 10.dp, top = if (compact) 0.dp else 8.dp, bottom = if (compact) 0.dp else 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            modifier = Modifier.size(40.dp).clickable(onClick = onBack),
+            modifier = Modifier.size(MinTouchTarget).clickable(role = Role.Button, onClick = onBack),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -1142,6 +1294,7 @@ private fun ReaderTopBar(
         }
         ReaderAction(Icons.AutoMirrored.Filled.List, "Table of contents", palette, onClick = onOpenContents)
         ReaderAction(Icons.Filled.Tune, "Reading settings", palette, onClick = onOpenSettings)
+        onHideChrome?.let { ReaderAction(Icons.Filled.Fullscreen, "Hide controls", palette, onClick = it) }
     }
 }
 
@@ -1153,7 +1306,7 @@ private fun ReaderAction(
     onClick: () -> Unit,
 ) {
     Box(
-        modifier = Modifier.size(42.dp).clickable(onClick = onClick),
+        modifier = Modifier.size(MinTouchTarget).clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = contentDescription, tint = palette.secondaryText, modifier = Modifier.size(20.dp))
@@ -1162,7 +1315,8 @@ private fun ReaderAction(
 
 /**
  * Every message that overlays the page looks the same: a black block with a live-coloured
- * spine. Black regardless of the reader's theme, because it is chrome, not page.
+ * spine. Black regardless of the reader's theme, because it is chrome, not page. It can be
+ * sent away with the cross ([onDismiss]); [actionLabel] adds a button under the message.
  */
 @Composable
 private fun ReaderBanner(
@@ -1170,16 +1324,23 @@ private fun ReaderBanner(
     message: String,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .background(Ink.Raised)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier),
     ) {
         Box(modifier = Modifier.width(3.dp).fillMaxHeight().background(Ink.Live))
-        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 14.dp, top = 12.dp, bottom = if (actionLabel != null && onAction != null) 0.dp else 12.dp),
+        ) {
             MonoText(label, size = 10f, tracking = 0.18f, color = Ink.Live, weight = FontWeight.Bold)
             Text(
                 message,
@@ -1189,6 +1350,26 @@ private fun ReaderBanner(
                 color = Ink.Muted,
                 modifier = Modifier.padding(top = 5.dp),
             )
+            if (actionLabel != null && onAction != null) {
+                Box(
+                    modifier = Modifier
+                        .heightIn(min = MinTouchTarget)
+                        .clickable(role = Role.Button, onClick = onAction),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    MonoText(actionLabel, size = 11f, tracking = 0.16f, color = Ink.Live, weight = FontWeight.Bold)
+                }
+            }
+        }
+        if (onDismiss != null) {
+            Box(
+                modifier = Modifier.size(MinTouchTarget).clickable(role = Role.Button, onClick = onDismiss),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = "Dismiss", tint = Ink.Muted, modifier = Modifier.size(18.dp))
+            }
+        } else {
+            Spacer(Modifier.width(14.dp))
         }
     }
 }
@@ -1201,6 +1382,7 @@ private fun ReaderBanner(
 private fun EngineErrorBanner(
     message: String,
     onOpenSettings: () -> Unit,
+    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     ReaderBanner(
@@ -1208,21 +1390,47 @@ private fun EngineErrorBanner(
         message = "$message\nTap to open reading settings.",
         modifier = modifier,
         onClick = onOpenSettings,
+        onDismiss = onDismiss,
     )
 }
 
-/** Shown when the article's page couldn't be reached, so only the feed's teaser is available. */
+/**
+ * Shown when only the feed's teaser could be had for an article: [message] says why, and
+ * Retry goes for the page again.
+ */
 @Composable
-private fun TruncatedArticleBanner(modifier: Modifier = Modifier) {
+private fun TruncatedArticleBanner(
+    message: String,
+    retrying: Boolean,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     ReaderBanner(
         label = "Summary only",
-        message = "The full article couldn't be downloaded — this is the feed's own summary.",
+        message = message,
         modifier = modifier,
+        actionLabel = if (retrying) "Retrying…" else "Retry",
+        onAction = if (retrying) ({}) else onRetry,
+        onDismiss = onDismiss,
+    )
+}
+
+/** Shown when the book has been read to its end: Play would start it over anyway. */
+@Composable
+private fun FinishedBanner(onStartOver: () -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    ReaderBanner(
+        label = "Finished",
+        message = "You've reached the end of this book. Start over from the beginning?",
+        modifier = modifier,
+        actionLabel = "Start over",
+        onAction = onStartOver,
+        onDismiss = onDismiss,
     )
 }
 
 @Composable
-private fun MissingVoiceBanner(modifier: Modifier = Modifier) {
+private fun MissingVoiceBanner(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
     ReaderBanner(
         label = "No voice installed",
@@ -1236,6 +1444,7 @@ private fun MissingVoiceBanner(modifier: Modifier = Modifier) {
                 )
             }
         },
+        onDismiss = onDismiss,
     )
 }
 
@@ -1246,6 +1455,8 @@ private fun MissingVoiceBanner(modifier: Modifier = Modifier) {
  */
 @Composable
 private fun ReaderFooter(
+    /** One row of controls instead of three rows of figures and a big button: for a phone on its side. */
+    compact: Boolean,
     showPosition: Boolean,
     pageLabel: String,
     percent: Int,
@@ -1259,7 +1470,7 @@ private fun ReaderFooter(
     speechRate: Float,
     sleepMinutesLeft: Int?,
     palette: ReaderPalette,
-    onCycleSpeed: () -> Unit,
+    onSelectSpeed: (Float) -> Unit,
     onPrevChapter: () -> Unit,
     onNextChapter: () -> Unit,
     onPlayPause: () -> Unit,
@@ -1272,42 +1483,75 @@ private fun ReaderFooter(
             .fillMaxWidth()
             .navigationBarsPadding()
             .padding(horizontal = ScreenPadding)
-            .padding(top = 8.dp, bottom = 10.dp),
+            .padding(top = if (compact) 2.dp else 8.dp, bottom = if (compact) 2.dp else 10.dp),
     ) {
+        if (compact) {
+            if (showPosition) {
+                BookProgressBar(
+                    progress = progress,
+                    ticks = ticks,
+                    color = palette.accent,
+                    track = palette.hairline,
+                    tickColor = palette.secondaryText,
+                )
+            }
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (showPosition) {
+                    MonoText(
+                        text = "$pageLabel · $percent%",
+                        size = 10f,
+                        tracking = 0.16f,
+                        color = palette.secondaryText,
+                        maxLines = 2,
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                TransportControls(
+                    palette = palette,
+                    playSize = 52.dp,
+                    canGoBack = canGoBack,
+                    canGoForward = canGoForward,
+                    isSpeaking = isSpeaking,
+                    onPrevChapter = onPrevChapter,
+                    onNextChapter = onNextChapter,
+                    onPlayPause = onPlayPause,
+                    onNextSentence = onNextSentence,
+                    onPrevSentence = onPrevSentence,
+                    modifier = Modifier.widthIn(max = 360.dp),
+                )
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (sleepMinutesLeft != null) SleepLabel(sleepMinutesLeft, palette)
+                    SpeedControl(speechRate, palette, onSelectSpeed)
+                }
+            }
+            return@Column
+        }
         if (showPosition) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 7.dp),
-                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                // Takes what the figures on the right leave and wraps inside it, so a large font
+                // size makes two short lines rather than a cut-off one.
                 MonoText(
                     text = "$pageLabel · $percent%",
                     size = 10f,
                     tracking = 0.16f,
                     color = palette.secondaryText,
+                    maxLines = 2,
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
                 )
-                Spacer(Modifier.weight(1f).widthIn(min = 14.dp))
                 // Reading speed is the setting that gets changed most, and it used to be three
-                // taps deep in the settings sheet. Here it cycles through the usual steps.
-                MonoText(
-                    text = SpeedSteps.format(speechRate),
-                    size = 10f,
-                    tracking = 0.16f,
-                    color = if (speechRate == 1f) palette.secondaryText else palette.accent,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(2.dp))
-                        .clickable(onClick = onCycleSpeed)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                )
-                if (sleepMinutesLeft != null) {
-                    MonoText(
-                        text = if (sleepMinutesLeft == CHAPTER_END) "SLEEP CH" else "SLEEP $sleepMinutesLeft",
-                        size = 10f,
-                        tracking = 0.16f,
-                        color = palette.accent,
-                        modifier = Modifier.padding(end = 10.dp),
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
+                // taps deep in the settings sheet. Here it opens the list of steps.
+                SpeedControl(speechRate, palette, onSelectSpeed)
+                if (sleepMinutesLeft != null) SleepLabel(sleepMinutesLeft, palette)
+                Spacer(Modifier.width(8.dp))
                 MonoText(text = rememberClock(), size = 10f, tracking = 0.16f, color = palette.secondaryText)
             }
             BookProgressBar(
@@ -1319,11 +1563,12 @@ private fun ReaderFooter(
                 modifier = Modifier.padding(bottom = 7.dp),
             )
             Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
             ) {
                 // The chapter's time left is the one figure worth colouring: it is what moves
-                // while the voice is speaking.
+                // while the voice is speaking. Each side wraps within its own half.
                 MonoText(
                     text = buildAnnotatedString {
                         withStyle(SpanStyle(color = palette.accent)) { append(chapterTimeText.uppercase()) }
@@ -1332,67 +1577,169 @@ private fun ReaderFooter(
                     size = 10f,
                     tracking = 0.16f,
                     color = palette.secondaryText,
+                    maxLines = 2,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
-                Spacer(Modifier.weight(1f).widthIn(min = 14.dp))
                 if (bookTimeText != null) {
+                    Spacer(Modifier.width(12.dp))
                     MonoText(
                         text = "$bookTimeText in book",
                         size = 10f,
                         tracking = 0.16f,
                         color = palette.secondaryText,
+                        maxLines = 2,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                 }
             }
         }
-        Row(
+        TransportControls(
+            palette = palette,
+            playSize = 68.dp,
+            canGoBack = canGoBack,
+            canGoForward = canGoForward,
+            isSpeaking = isSpeaking,
+            onPrevChapter = onPrevChapter,
+            onNextChapter = onNextChapter,
+            onPlayPause = onPlayPause,
+            onNextSentence = onNextSentence,
+            onPrevSentence = onPrevSentence,
             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        )
+    }
+}
+
+@Composable
+private fun SleepLabel(minutesLeft: Int, palette: ReaderPalette) {
+    MonoText(
+        text = if (minutesLeft == CHAPTER_END) "SLEEP CH" else "SLEEP $minutesLeft",
+        size = 10f,
+        tracking = 0.16f,
+        color = palette.accent,
+        modifier = Modifier.padding(start = 6.dp),
+    )
+}
+
+/**
+ * The reading speed: a bordered chip with a caret, in a 48dp touch target, that opens the list
+ * of speeds ([SpeedSteps.ALL]) with the current one marked.
+ */
+@Composable
+private fun SpeedControl(speechRate: Float, palette: ReaderPalette, onSelect: (Float) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val tint = if (speechRate == 1f) palette.secondaryText else palette.accent
+    val current = SpeedSteps.selected(speechRate)
+    Box {
+        Box(
+            modifier = Modifier
+                .defaultMinSize(minWidth = MinTouchTarget, minHeight = MinTouchTarget)
+                .semantics { contentDescription = "Reading speed ${SpeedSteps.format(speechRate)}" }
+                .clickable(role = Role.Button, onClickLabel = "Choose reading speed") { open = true },
+            contentAlignment = Alignment.Center,
         ) {
-            TransportIcon(
-                icon = Icons.Filled.KeyboardDoubleArrowLeft,
-                contentDescription = "Previous chapter",
-                tint = palette.secondaryText,
-                enabled = canGoBack,
-                onClick = onPrevChapter,
-            )
-            TransportIcon(
-                icon = Icons.Filled.SkipPrevious,
-                contentDescription = "Previous sentence",
-                tint = palette.text,
-                size = 26.dp,
-                onClick = onPrevSentence,
-            )
-            Box(
+            Row(
                 modifier = Modifier
-                    .size(68.dp)
-                    .clip(CircleShape)
-                    .background(palette.accent)
-                    .clickable(onClick = onPlayPause),
-                contentAlignment = Alignment.Center,
+                    .border(1.dp, tint.copy(alpha = 0.55f), RoundedCornerShape(3.dp))
+                    .padding(start = 9.dp, end = 3.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    if (isSpeaking) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (isSpeaking) "Pause" else "Play",
-                    tint = palette.background,
-                    modifier = Modifier.size(32.dp),
+                MonoText(text = SpeedSteps.format(speechRate), size = 12f, tracking = 0.08f, color = tint, weight = FontWeight.Bold)
+                Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = Ink.Raised) {
+            SpeedSteps.ALL.forEach { step ->
+                val isCurrent = step == current
+                DropdownMenuItem(
+                    text = {
+                        MonoText(
+                            text = SpeedSteps.format(step),
+                            size = 13f,
+                            tracking = 0.1f,
+                            color = if (isCurrent) Ink.Live else Ink.Text,
+                            weight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    },
+                    trailingIcon = if (isCurrent) {
+                        { Icon(Icons.Filled.Check, contentDescription = null, tint = Ink.Live, modifier = Modifier.size(18.dp)) }
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        open = false
+                        onSelect(step)
+                    },
+                    modifier = Modifier.semantics { selected = isCurrent },
                 )
             }
-            TransportIcon(
-                icon = Icons.Filled.SkipNext,
-                contentDescription = "Next sentence",
-                tint = palette.text,
-                size = 26.dp,
-                onClick = onNextSentence,
-            )
-            TransportIcon(
-                icon = Icons.Filled.KeyboardDoubleArrowRight,
-                contentDescription = "Next chapter",
-                tint = palette.secondaryText,
-                enabled = canGoForward,
-                onClick = onNextChapter,
+        }
+    }
+}
+
+/** « ‹ play › »: the five transport buttons, [playSize] being the round one in the middle. */
+@Composable
+private fun TransportControls(
+    palette: ReaderPalette,
+    playSize: Dp,
+    canGoBack: Boolean,
+    canGoForward: Boolean,
+    isSpeaking: Boolean,
+    onPrevChapter: () -> Unit,
+    onNextChapter: () -> Unit,
+    onPlayPause: () -> Unit,
+    onNextSentence: () -> Unit,
+    onPrevSentence: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TransportIcon(
+            icon = Icons.Filled.KeyboardDoubleArrowLeft,
+            contentDescription = "Previous chapter",
+            tint = palette.secondaryText,
+            enabled = canGoBack,
+            onClick = onPrevChapter,
+        )
+        TransportIcon(
+            icon = Icons.Filled.SkipPrevious,
+            contentDescription = "Previous sentence",
+            tint = palette.text,
+            size = 26.dp,
+            onClick = onPrevSentence,
+        )
+        Box(
+            modifier = Modifier
+                .size(playSize)
+                .clip(CircleShape)
+                .background(palette.accent)
+                .clickable(role = Role.Button, onClick = onPlayPause),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (isSpeaking) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (isSpeaking) "Pause" else "Play",
+                tint = palette.background,
+                modifier = Modifier.size(playSize / 2),
             )
         }
+        TransportIcon(
+            icon = Icons.Filled.SkipNext,
+            contentDescription = "Next sentence",
+            tint = palette.text,
+            size = 26.dp,
+            onClick = onNextSentence,
+        )
+        TransportIcon(
+            icon = Icons.Filled.KeyboardDoubleArrowRight,
+            contentDescription = "Next chapter",
+            tint = palette.secondaryText,
+            enabled = canGoForward,
+            onClick = onNextChapter,
+        )
     }
 }
 
@@ -1448,7 +1795,7 @@ private fun TransportIcon(
     size: Dp = 24.dp,
 ) {
     Box(
-        modifier = Modifier.size(48.dp).clickable(enabled = enabled, onClick = onClick),
+        modifier = Modifier.size(MinTouchTarget).clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(

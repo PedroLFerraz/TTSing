@@ -207,6 +207,19 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         }
     }
 
+    /**
+     * Drops the loaded copy of [bookId] and opens it again, for a news story whose full text has
+     * just arrived: the sentences the voice holds are the old summary's. Pauses first if speaking.
+     */
+    fun reloadBook(bookId: String) {
+        lifecycleScope.launch {
+            if (_state.value.bookId != bookId) return@launch
+            if (_state.value.isSpeaking) pause()
+            openMutex.withLock { content = null }
+            openBookIfNeeded(bookId)
+        }
+    }
+
     fun play(bookId: String, position: ReadingPosition? = null) {
         continueJob?.cancel()
         // Built as "playing" already: the book may take a while to open, and a Play button

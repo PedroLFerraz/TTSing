@@ -2,6 +2,8 @@ package com.pedrolopes.ttsing.ui.theme
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
@@ -34,8 +36,11 @@ object Ink {
 
     /** Reserved for state: playing, unread, in progress, the primary action. */
     val Live = Color(0xFFFFD400)
-    /** The same accent for light surfaces, where #FFD400 has no contrast. */
-    val LiveOnPaper = Color(0xFFB58900)
+    /**
+     * The same accent for light surfaces, where #FFD400 has no contrast. A dark gold, 5.7:1
+     * on white and 4.8:1 on sepia: the old #B58900 was 3.2:1 and 2.7:1, too faint for 10sp text.
+     */
+    val LiveOnPaper = Color(0xFF856100)
 
     val Text = Color(0xFFFFFFFF)
     /** Body text in the reader — white at full strength is harsh over long stretches. */
@@ -100,6 +105,23 @@ fun wordmark(size: Float = 22f, color: Color = Ink.Text): TextStyle = TextStyle(
     color = color,
 )
 
+/** The stripes lean along (cos, sin) of the design's 115deg gradient: mostly across, down to the right. */
+private const val STRIPE_COS = 0.906f
+private const val STRIPE_SIN = 0.423f
+
+/**
+ * The gradient period that makes the stripes repeat a whole number of times across
+ * [widthPx], as close to [period] as that allows. [period] is measured along the gradient's
+ * axis; across the bar one repeat is wider by 1/cos of the lean. Without this the right edge
+ * cut the pattern wherever it happened to fall and ended in a sliver of yellow.
+ */
+internal fun fittedStripePeriod(widthPx: Float, period: Float): Float {
+    if (widthPx <= 0f || period <= 0f) return period
+    val acrossBar = period / STRIPE_COS
+    val repeats = kotlin.math.round(widthPx / acrossBar).coerceAtLeast(1f)
+    return widthPx / repeats * STRIPE_COS
+}
+
 /**
  * The diagonal yellow/black band that sits under every screen header — the one piece of
  * pure ornament in the design, and what makes a black screen recognisably this app.
@@ -107,20 +129,23 @@ fun wordmark(size: Float = 22f, color: Color = Ink.Text): TextStyle = TextStyle(
 @Composable
 fun HazardStripe(modifier: Modifier = Modifier, height: Dp = 10.dp, band: Dp = 14.dp, gap: Dp = 10.dp) {
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val period = with(density) { (band + gap).toPx() }
-    val bandPx = with(density) { band.toPx() }
-    // The gradient's axis has to be exactly one period long for the stops to land where the
-    // band and gap widths say they should — hence a unit vector scaled by the period, rather
-    // than a diagonal whose length is the period times root two. The direction is CSS's
-    // 115deg: mostly across, leaning down to the right.
-    val brush = Brush.linearGradient(
-        0f to Ink.Live,
-        (bandPx / period) to Ink.Live,
-        (bandPx / period) to Ink.Surface,
-        1f to Ink.Surface,
-        start = Offset.Zero,
-        end = Offset(period * 0.906f, period * 0.423f),
-        tileMode = TileMode.Repeated,
-    )
-    Box(modifier = modifier.fillMaxWidth().height(height).background(brush))
+    val wanted = with(density) { (band + gap).toPx() }
+    val bandShare = band / (band + gap)
+    BoxWithConstraints(modifier = modifier.fillMaxWidth().height(height)) {
+        val period = fittedStripePeriod(constraints.maxWidth.toFloat(), wanted)
+        val bandPx = period * bandShare
+        // The gradient's axis has to be exactly one period long for the stops to land where the
+        // band and gap widths say they should — hence a unit vector scaled by the period, rather
+        // than a diagonal whose length is the period times root two.
+        val brush = Brush.linearGradient(
+            0f to Ink.Live,
+            (bandPx / period) to Ink.Live,
+            (bandPx / period) to Ink.Surface,
+            1f to Ink.Surface,
+            start = Offset.Zero,
+            end = Offset(period * STRIPE_COS, period * STRIPE_SIN),
+            tileMode = TileMode.Repeated,
+        )
+        Box(modifier = Modifier.fillMaxSize().background(brush))
+    }
 }

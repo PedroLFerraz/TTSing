@@ -21,11 +21,19 @@ class BookPagesTest {
     }
 
     @Test
-    fun `progress is the page over the total, full on the last page`() {
-        assertEquals(0.025f, BookPages.fraction(counts, 1, 0), 0.0001f)
-        assertEquals(0.5f, BookPages.fraction(counts, 3, 4), 0.0001f)
-        assertEquals(1f, BookPages.fraction(counts, 3, 24), 0.0001f)
+    fun `progress is the pages before this one over the total`() {
+        assertEquals(0f, BookPages.fraction(counts, 1, 0), 0f)
+        assertEquals(0.225f, BookPages.fraction(counts, 1, 9), 0.0001f)
+        assertEquals(0.25f, BookPages.fraction(counts, 2, 0), 0.0001f)
+        assertEquals(0.5f, BookPages.fraction(counts, 3, 5), 0.0001f)
+        assertEquals(0.975f, BookPages.fraction(counts, 3, 24), 0.0001f)
         assertEquals(0f, BookPages.fraction(emptyList(), 0, 0), 0f)
+    }
+
+    @Test
+    fun `a fresh two page book reads 0 percent, not 50`() {
+        assertEquals(0f, BookPages.fraction(listOf(2), 0, 0), 0f)
+        assertEquals(0.5f, BookPages.fraction(listOf(2), 0, 1), 0.0001f)
     }
 
     @Test

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -33,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,6 +48,7 @@ import com.pedrolopes.ttsing.data.news.Topic
 import com.pedrolopes.ttsing.ui.common.ChoiceChip
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.HeaderIcon
+import com.pedrolopes.ttsing.ui.common.MinTouchTarget
 import com.pedrolopes.ttsing.ui.common.MonoText
 import com.pedrolopes.ttsing.ui.common.ScreenHeader
 import com.pedrolopes.ttsing.ui.common.ScreenPadding
@@ -184,7 +187,11 @@ private fun GroupHeader(label: String, count: Int, canAddAll: Boolean, onAddAll:
         MonoText("$label · $count", size = 11.5f, tracking = 0.18f, color = Ink.Text, modifier = Modifier.weight(1f))
         if (canAddAll) {
             Box(
-                modifier = Modifier.clickable(onClick = onAddAll).padding(horizontal = 12.dp, vertical = 10.dp),
+                modifier = Modifier
+                    .heightIn(min = MinTouchTarget)
+                    .clickable(role = Role.Button, onClick = onAddAll)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
             ) {
                 MonoText("Add all", size = 11f, tracking = 0.16f, color = Ink.Live, weight = FontWeight.Bold)
             }
@@ -202,7 +209,7 @@ private fun CatalogRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(start = ScreenPadding, end = ScreenPadding - 12.dp, top = 14.dp, bottom = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -232,7 +239,7 @@ private fun CatalogRow(
                 MonoText("Teasers only", size = 10f, tracking = 0.14f, color = Ink.Dim, modifier = Modifier.padding(top = 6.dp))
             }
         }
-        Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(MinTouchTarget), contentAlignment = Alignment.Center) {
             when {
                 isPending -> CircularProgressIndicator(strokeWidth = 2.dp, color = Ink.Live, modifier = Modifier.size(18.dp))
                 isSubscribed -> Icon(Icons.Filled.Check, contentDescription = "Subscribed — tap to remove", tint = Ink.Live, modifier = Modifier.size(20.dp))
