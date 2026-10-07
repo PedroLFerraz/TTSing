@@ -89,7 +89,8 @@ fun VideoScreen(articleId: String, onBack: () -> Unit) {
                 )
                 video.summary?.takeIf { it.isNotBlank() }?.let {
                     Text(
-                        it,
+                        // Descriptions are full of addresses; tapping one opens it.
+                        linkified(it, Ink.Live),
                         fontFamily = AppFonts.Grotesk,
                         fontSize = 14.sp,
                         lineHeight = 20.sp,

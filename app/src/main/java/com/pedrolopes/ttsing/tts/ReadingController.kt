@@ -78,6 +78,11 @@ class ReadingController(context: Context) {
         service?.prepareBook(bookId, onReady)
     }
 
+    /** The story's text changed underneath the service (its full text arrived): read it afresh. */
+    fun reloadBook(bookId: String) {
+        service?.reloadBook(bookId)
+    }
+
     fun play(bookId: String, position: ReadingPosition? = null) {
         ContextCompat.startForegroundService(appContext, ReadingService.playIntent(appContext, bookId, position))
     }

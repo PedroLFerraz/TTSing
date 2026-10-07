@@ -50,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -64,6 +65,7 @@ import com.pedrolopes.ttsing.data.news.db.FeedEntity
 import com.pedrolopes.ttsing.ui.common.ChoiceChip
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.HeaderIcon
+import com.pedrolopes.ttsing.ui.common.MinTouchTarget
 import com.pedrolopes.ttsing.ui.common.MonoText
 import com.pedrolopes.ttsing.ui.common.PillButton
 import com.pedrolopes.ttsing.ui.common.ScreenHeader
@@ -439,7 +441,10 @@ private fun FeedRow(feed: FeedEntity, onOpen: (String) -> Unit, onRegroup: () ->
 
 @Composable
 private fun RowAction(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
-    Box(modifier = Modifier.size(44.dp).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+    Box(
+        modifier = Modifier.size(MinTouchTarget).clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
         Icon(icon, contentDescription = contentDescription, tint = Ink.Dim, modifier = Modifier.size(18.dp))
     }
 }
@@ -559,7 +564,8 @@ internal fun NewGroupDialog(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { picked = if (checked) picked - feed.url else picked + feed.url },
+                                .heightIn(min = MinTouchTarget)
+                                .clickable(role = Role.Checkbox) { picked = if (checked) picked - feed.url else picked + feed.url },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(

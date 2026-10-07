@@ -51,11 +51,14 @@ object BookPages {
     fun bookPage(counts: List<Int>, chapter: Int, pageInChapter: Int): Int =
         firstPageOf(counts, chapter) + pageInChapter.coerceAtLeast(0) + 1
 
-    /** How far through the book that page is: 1.0 on the last page. */
+    /**
+     * How far through the book the page's *start* is: 0 on the first page, so a fresh book
+     * reads 0% rather than 50% of a two-page one. Pages before it are what has been read.
+     */
     fun fraction(counts: List<Int>, chapter: Int, pageInChapter: Int): Float {
         val total = total(counts)
         if (total <= 0) return 0f
-        return (bookPage(counts, chapter, pageInChapter).toFloat() / total).coerceIn(0f, 1f)
+        return ((bookPage(counts, chapter, pageInChapter) - 1).toFloat() / total).coerceIn(0f, 1f)
     }
 
     /**

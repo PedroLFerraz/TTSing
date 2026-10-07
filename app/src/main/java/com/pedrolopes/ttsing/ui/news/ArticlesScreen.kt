@@ -317,6 +317,9 @@ private fun ArticleRow(
                     size = 10f,
                     tracking = 0.14f,
                     color = metaColor,
+                    // Wraps at large font sizes instead of cutting itself off at "1 MI…".
+                    maxLines = 2,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
                 if (article.isRead) {
                     Icon(

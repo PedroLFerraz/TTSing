@@ -74,6 +74,8 @@ data class ReaderUiState(
     val isSavingCard: Boolean = false,
     /** Article only: the full page couldn't be fetched, so this is just the feed's teaser. */
     val isTruncated: Boolean = false,
+    /** Article only: why there is no full text, as [com.pedrolopes.ttsing.data.news.db.ArticleEntity.fullTextIssue] says. */
+    val articleIssue: String? = null,
     /** Article only: its address on the web, so the reader can offer to open it there. */
     val articleLink: String? = null,
     /**
@@ -201,6 +203,7 @@ class ReaderViewModel(
                         isLoading = false,
                         error = null,
                         isTruncated = body.truncated,
+                        articleIssue = article.fullTextIssue,
                         articleLink = article.link,
                         chapterCharCounts = listOf(
                             body.blocks.filterIsInstance<Block.Text>().sumOf { it.text.length },
@@ -208,6 +211,26 @@ class ReaderViewModel(
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * Article only: downloads the page again for its full text. When it is there the article is
+     * loaded afresh (its positions shift, so the reader lands on the saved sentence in the new
+     * text); either way [onDone] says whether it worked, and [ReaderUiState.articleIssue] is
+     * brought up to date with the reason it did not.
+     */
+    fun retryFullText(onDone: (Boolean) -> Unit) {
+        if (!isArticle) return
+        viewModelScope.launch {
+            val ok = news.retryFullText(bookId)
+            if (ok) {
+                articleLoaded = false
+                loadArticle()
+            } else {
+                _ui.value = _ui.value.copy(articleIssue = news.article(bookId)?.fullTextIssue)
+            }
+            onDone(ok)
         }
     }
 
