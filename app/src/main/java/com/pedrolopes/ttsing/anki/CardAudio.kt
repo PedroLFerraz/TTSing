@@ -37,7 +37,7 @@ class CardAudio(context: Context) {
             }
 
             override fun onStop(utteranceId: String, interrupted: Boolean) {
-                // Synthesis was stopped: treat it as completion (the file may be partial).
+                // Synthesis was stopped: the file may be partial, so report failure.
                 synchronized(pending) { pending.remove(utteranceId) }?.complete(false)
             }
 
@@ -86,6 +86,7 @@ class CardAudio(context: Context) {
 
         // Synthesis has a 60-second timeout; long sentences or slow engines.
         if (withTimeoutOrNull(60_000) { done.await() } != true || file.length() <= 0) {
+            synchronized(pending) { pending.remove(utteranceId) }
             file.delete()
             return@withContext null
         }
@@ -102,8 +103,8 @@ class CardAudio(context: Context) {
         tts.setLanguage(locale)
         voiceName?.let { name -> tts.voices?.firstOrNull { it.name == name }?.let { tts.voice = it } }
         tts.setSpeechRate(1f)
-        // Use QUEUE_ADD to avoid flushing the card synthesis queue; a preview should not disrupt synthesis.
-        tts.speak(text, TextToSpeech.QUEUE_ADD, null, "card-preview")
+        // Preview is disabled while a card is being saved, so flushing only drops a stale preview.
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "card-preview")
     }
 
     /** Clears previously synthesized files; they only exist to be handed to AnkiDroid. */

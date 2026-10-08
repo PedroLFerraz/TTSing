@@ -126,6 +126,63 @@ class CardDraftTest {
     }
 
     @Test
+    fun `meaning html escapes markup and quotes and turns newlines into br`() {
+        val card = CardDraft(sentence = "x", meaning = "A < B & C > D \"q\"\nline two\r\nline three")
+        assertEquals("A &lt; B &amp; C &gt; D &quot;q&quot;<br>line two<br>line three", card.meaningHtml())
+    }
+
+    @Test
+    fun `ampersand is escaped once and plain meaning is untouched`() {
+        assertEquals("&amp;lt;", CardDraft(sentence = "x", meaning = "&lt;").meaningHtml())
+        assertEquals("coracao", CardDraft(sentence = "x", meaning = "coracao").meaningHtml())
+        assertEquals("", CardDraft(sentence = "x").meaningHtml())
+    }
+
+    @Test
+    fun `only a typed meaning counts as unsaved work`() {
+        assertFalse(CardDraft(sentence = "Ele foi").hasUnsavedWork)
+        assertFalse(draft("Ele foi embora.", "foi").hasUnsavedWork)
+        assertFalse(CardDraft(sentence = "Ele foi", meaning = "  \n").hasUnsavedWork)
+        assertTrue(CardDraft(sentence = "Ele foi", meaning = "went").hasUnsavedWork)
+    }
+
+    @Test
+    fun `hint follows the selection rules`() {
+        val sentence = "Ela deu de ombros."
+        val none = CardDraft(sentence = sentence)
+        assertEquals("Tap the word you didn't know.", none.selectionHint)
+        val one = none.withWordAt(4, 7)
+        assertTrue(one.selectionHint.contains("this word again to clear"))
+        val several = one.withWordAt(11, 17)
+        assertTrue(several.selectionHint.contains("word at either end to drop it"))
+    }
+
+    @Test
+    fun `extending forwards from a multi-word selection`() {
+        val card = CardDraft(sentence = "Ela deu de ombros ontem.")
+            .withWordAt(4, 7).withWordAt(8, 10) // deu de
+            .withWordAt(11, 17)                 // ombros
+        assertEquals("deu de ombros", card.targetWord)
+    }
+
+    @Test
+    fun `extending backwards from a multi-word selection`() {
+        val card = CardDraft(sentence = "Ela deu de ombros.")
+            .withWordAt(8, 10).withWordAt(11, 17) // de ombros
+            .withWordAt(0, 3)                     // Ela
+        assertEquals("Ela deu de ombros", card.targetWord)
+    }
+
+    @Test
+    fun `dropping the end words down to one word then clearing`() {
+        val card = CardDraft(sentence = "Ela deu de ombros.")
+            .withWordAt(4, 7).withWordAt(8, 10) // deu de
+            .withWordAt(8, 10)                  // drop de
+        assertEquals("deu", card.targetWord)
+        assertFalse(card.withWordAt(4, 7).hasTarget)
+    }
+
+    @Test
     fun `meaning is html-escaped`() {
         val card = draft("Ele foi embora.", "foi").copy(meaning = "A < B & C > D")
         // The front is already tested; just verify the meaning field escaping.

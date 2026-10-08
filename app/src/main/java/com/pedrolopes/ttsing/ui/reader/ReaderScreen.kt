@@ -590,21 +590,23 @@ fun ReaderScreen(
             ?.takeIf { it.language.isNotEmpty() }
         val effectiveLocale = settings.localeFor(bookId, declaredLocale ?: viewModel.bookLocale())
 
+        val cardStatus by viewModel.cardStatus.collectAsStateWithLifecycle()
         CardSheet(
             draft = draft,
             locale = effectiveLocale,
             isSubmitting = ui.isSavingCard,
+            error = cardStatus.error,
+            offerWithoutAudio = cardStatus.offerWithoutAudio,
+            isAnkiInstalled = viewModel::isAnkiInstalled,
             onDraftChange = { viewModel.updateCardDraft(it) },
             onPreviewAudio = { viewModel.previewCardAudio(it) },
-            onDismiss = {
-                if (draft.hasTarget || draft.meaning.isNotEmpty()) {
-                    // Ask for confirmation before losing unsaved work.
-                    scope.launch { snackbarHost.showSnackbar("Card discarded") }
-                }
-                viewModel.updateCardDraft(null)
-            },
+            // The sheet has already asked before discarding typed work.
+            onDismiss = { viewModel.updateCardDraft(null) },
             onSubmit = { toAdd ->
-                viewModel.submitCard(toAdd) { message ->
+                viewModel.submitCard(toAdd) { message -> scope.launch { snackbarHost.showSnackbar(message) } }
+            },
+            onSubmitWithoutAudio = { toAdd ->
+                viewModel.submitCard(toAdd, withAudio = false) { message ->
                     scope.launch { snackbarHost.showSnackbar(message) }
                 }
             },

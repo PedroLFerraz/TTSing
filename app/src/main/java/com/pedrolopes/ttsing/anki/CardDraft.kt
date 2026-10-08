@@ -23,6 +23,21 @@ data class CardDraft(
     val targetWord: String
         get() = if (hasTarget) sentence.substring(targetStart!!, targetEnd!!) else ""
 
+    /** Typed work that dismissing the sheet would throw away. */
+    val hasUnsavedWork: Boolean get() = meaning.isNotBlank()
+
+    /** The meaning as Anki HTML: escaped, with line breaks kept as `<br>`. */
+    fun meaningHtml(): String = escapeHtml(meaning).replace("\r\n", "\n").replace("\n", "<br>")
+
+    /** Instruction line for the word picker; mirrors the rules of [withWordAt]. */
+    val selectionHint: String
+        get() = when {
+            !hasTarget -> "Tap the word you didn't know."
+            !targetWord.any { it.isWhitespace() } ->
+                "Tap a neighbouring word to cover an expression, or this word again to clear it."
+            else -> "Tap a neighbouring word to extend, or a word at either end to drop it."
+        }
+
     /**
      * Selects the word at [start, end), or extends/shrinks the current selection:
      * - Tapping the same word clears the selection.
