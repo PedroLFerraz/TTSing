@@ -23,14 +23,52 @@ data class CardDraft(
     val targetWord: String
         get() = if (hasTarget) sentence.substring(targetStart!!, targetEnd!!) else ""
 
+    /** Typed work that dismissing the sheet would throw away. */
+    val hasUnsavedWork: Boolean get() = meaning.isNotBlank()
+
+    /** The meaning as Anki HTML: escaped, with line breaks kept as `<br>`. */
+    fun meaningHtml(): String = escapeHtml(meaning).replace("\r\n", "\n").replace("\n", "<br>")
+
+    /** Instruction line for the word picker; mirrors the rules of [withWordAt]. */
+    val selectionHint: String
+        get() = when {
+            !hasTarget -> "Tap the word you didn't know."
+            !targetWord.any { it.isWhitespace() } ->
+                "Tap a neighbouring word to cover an expression, or this word again to clear it."
+            else -> "Tap a neighbouring word to extend, or a word at either end to drop it."
+        }
+
     /**
-     * Selects the word at [start, end), or extends the current selection to cover it, so
-     * multi-word expressions ("deu de ombros", "look forward to") can be picked as one
-     * target. Tapping the only selected word again clears the selection.
+     * Selects the word at [start, end), or extends/shrinks the current selection:
+     * - Tapping the same word clears the selection.
+     * - Tapping the first or last word removes that word from that end (skipping inter-word spaces).
+     * - Tapping a word strictly inside shrinks the selection to end at that word.
+     * - Multi-word expressions ("deu de ombros", "look forward to") can be picked as one target.
      */
     fun withWordAt(start: Int, end: Int): CardDraft = when {
         !hasTarget -> copy(targetStart = start, targetEnd = end)
         start == targetStart && end == targetEnd -> copy(targetStart = null, targetEnd = null)
+        // Tapping the first word of a multi-word selection: remove it from the start,
+        // advancing past the word and any trailing space(s).
+        start == targetStart && end < targetEnd!! -> {
+            var newStart = end
+            while (newStart < sentence.length && sentence[newStart].isWhitespace()) newStart++
+            if (newStart >= targetEnd!!) copy(targetStart = null, targetEnd = null) else copy(targetStart = newStart)
+        }
+        // Tapping the last word of a multi-word selection: remove it from the end,
+        // backing up past the word and any preceding space(s).
+        start > targetStart!! && end == targetEnd -> {
+            var newEnd = start
+            while (newEnd > targetStart!! && sentence[newEnd - 1].isWhitespace()) newEnd--
+            if (newEnd <= targetStart!!) copy(targetStart = null, targetEnd = null) else copy(targetEnd = newEnd)
+        }
+        // Tapping a word strictly inside: shrink to end at it.
+        start > targetStart!! && end < targetEnd!! -> copy(targetEnd = end)
+        // Tapping a word before the selection: extend backwards.
+        start < targetStart!! -> copy(targetStart = start)
+        // Tapping a word after the selection: extend forwards.
+        end > targetEnd!! -> copy(targetEnd = end)
+        // Shouldn't reach here, but extend to encompass both as a fallback.
         else -> copy(
             targetStart = minOf(targetStart!!, start),
             targetEnd = maxOf(targetEnd!!, end),

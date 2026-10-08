@@ -7,6 +7,7 @@ import android.speech.tts.UtteranceProgressListener
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.Locale
 
@@ -35,6 +36,11 @@ class CardAudio(context: Context) {
                 synchronized(pending) { pending.remove(utteranceId) }?.complete(true)
             }
 
+            override fun onStop(utteranceId: String, interrupted: Boolean) {
+                // Synthesis was stopped: the file may be partial, so report failure.
+                synchronized(pending) { pending.remove(utteranceId) }?.complete(false)
+            }
+
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String) {
                 synchronized(pending) { pending.remove(utteranceId) }?.complete(false)
@@ -58,7 +64,8 @@ class CardAudio(context: Context) {
         locale: Locale,
         voiceName: String?,
     ): File? = withContext(Dispatchers.IO) {
-        if (!ready.await()) return@withContext null
+        // Engine initialization has a 30-second timeout; failure returns null.
+        if (withTimeoutOrNull(30_000) { ready.await() } != true) return@withContext null
 
         tts.setLanguage(locale)
         voiceName?.let { name -> tts.voices?.firstOrNull { it.name == name }?.let { tts.voice = it } }
@@ -77,12 +84,13 @@ class CardAudio(context: Context) {
             return@withContext null
         }
 
-        if (done.await() && file.length() > 0) {
-            file
-        } else {
+        // Synthesis has a 60-second timeout; long sentences or slow engines.
+        if (withTimeoutOrNull(60_000) { done.await() } != true || file.length() <= 0) {
+            synchronized(pending) { pending.remove(utteranceId) }
             file.delete()
-            null
+            return@withContext null
         }
+        file
     }
 
     /**
@@ -90,10 +98,12 @@ class CardAudio(context: Context) {
      * class's own engine, so read-aloud playback is untouched.
      */
     suspend fun speak(text: String, locale: Locale, voiceName: String?) {
-        if (!ready.await()) return
+        // Engine initialization has a 30-second timeout.
+        if (withTimeoutOrNull(30_000) { ready.await() } != true) return
         tts.setLanguage(locale)
         voiceName?.let { name -> tts.voices?.firstOrNull { it.name == name }?.let { tts.voice = it } }
         tts.setSpeechRate(1f)
+        // Preview is disabled while a card is being saved, so flushing only drops a stale preview.
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "card-preview")
     }
 

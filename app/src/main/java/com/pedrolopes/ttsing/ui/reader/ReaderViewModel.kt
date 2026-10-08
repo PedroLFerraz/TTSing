@@ -8,6 +8,8 @@ import com.pedrolopes.ttsing.TTSingApp
 import com.pedrolopes.ttsing.anki.AnkiExporter
 import com.pedrolopes.ttsing.anki.CardAudio
 import com.pedrolopes.ttsing.anki.CardDraft
+import com.pedrolopes.ttsing.anki.CardOutcome
+import com.pedrolopes.ttsing.anki.cardOutcome
 import com.pedrolopes.ttsing.data.BookRepository
 import com.pedrolopes.ttsing.data.book.BookDocument
 import com.pedrolopes.ttsing.data.epub.Block
@@ -18,6 +20,7 @@ import com.pedrolopes.ttsing.data.news.NewsRepository
 import com.pedrolopes.ttsing.data.pdf.PdfDocument
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
 import com.pedrolopes.ttsing.tts.BookContentSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -106,6 +109,15 @@ class ReaderViewModel(
 
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
+
+    private val _cardDraft = MutableStateFlow<CardDraft?>(null)
+    val cardDraft: StateFlow<CardDraft?> = _cardDraft.asStateFlow()
+
+    /** The last failed add attempt, shown inline in the card sheet that is still open. */
+    data class CardStatus(val error: String? = null, val offerWithoutAudio: Boolean = false)
+
+    private val _cardStatus = MutableStateFlow(CardStatus())
+    val cardStatus: StateFlow<CardStatus> = _cardStatus.asStateFlow()
 
     /** Recently loaded chapters, so recentring the window on a neighbour is instant. */
     private val chapters = object : LinkedHashMap<Int, LoadedChapter>(16, 0.75f, true) {
@@ -444,6 +456,13 @@ class ReaderViewModel(
         )
     }
 
+    fun updateCardDraft(draft: CardDraft?) {
+        _cardDraft.value = draft
+        if (draft == null) _cardStatus.value = CardStatus()
+    }
+
+    fun isAnkiInstalled(): Boolean = anki.isAnkiInstalled()
+
     /** Speaks the draft's sentence so the user can hear the card before saving it. */
     fun previewCardAudio(draft: CardDraft) {
         viewModelScope.launch {
@@ -454,40 +473,54 @@ class ReaderViewModel(
     }
 
     /**
-     * Synthesizes the sentence audio and adds the note to AnkiDroid, reporting a
-     * user-facing message either way. Runs in [viewModelScope] so it survives rotation.
+     * Synthesizes the sentence audio (unless [withAudio] is false) and adds the note to
+     * AnkiDroid. Runs in [viewModelScope] so it survives rotation.
+     *
+     * The draft is cleared only when the card was added. A failure is left in [cardStatus]
+     * for the still-open sheet to show; [onResult] gets the message for the success case, or
+     * for a failure that arrives after the sheet was dismissed.
      */
-    fun submitCard(draft: CardDraft, onResult: (String) -> Unit) {
+    fun submitCard(draft: CardDraft, withAudio: Boolean = true, onResult: (String) -> Unit) {
         if (_ui.value.isSavingCard) return
         _ui.value = _ui.value.copy(isSavingCard = true)
+        _cardStatus.value = CardStatus()
         viewModelScope.launch {
-            val message = try {
+            val outcome = try {
                 if (!anki.isAnkiInstalled()) {
-                    "AnkiDroid isn't installed"
+                    cardOutcome(audioFailed = false, result = AnkiExporter.Result.AnkiNotInstalled)
                 } else {
                     val current = settings.settings.first()
                     val locale = current.localeFor(bookId, bookLocale())
-                    val audio = cardAudio.synthesize(
-                        text = draft.sentence,
-                        locale = locale,
-                        voiceName = current.voiceFor(locale.language),
-                    )
-                    when (val result = anki.addCard(draft, audio)) {
-                        is AnkiExporter.Result.Added ->
-                            if (result.audioAttached) {
-                                "Card added to ${AnkiExporter.DECK_NAME}"
-                            } else {
-                                "Card added to ${AnkiExporter.DECK_NAME} (without audio)"
-                            }
-                        AnkiExporter.Result.AnkiNotInstalled -> "AnkiDroid isn't installed"
-                        AnkiExporter.Result.PermissionDenied -> "AnkiDroid permission denied"
-                        is AnkiExporter.Result.Failed -> "Could not add the card: ${result.message}"
+                    val audio = if (withAudio) {
+                        cardAudio.synthesize(
+                            text = draft.sentence,
+                            locale = locale,
+                            voiceName = current.voiceFor(locale.language),
+                        )
+                    } else {
+                        null
+                    }
+                    if (withAudio && audio == null) {
+                        cardOutcome(audioFailed = true, result = null)
+                    } else {
+                        cardOutcome(audioFailed = false, result = anki.addCard(draft, audio))
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                CardOutcome(true, "Could not add the card: ${error.message ?: error::class.java.simpleName}")
             } finally {
+                // AnkiDroid copies the WAV on addMediaFromUri, so it is garbage after any attempt.
+                cardAudio.clearCache()
                 _ui.value = _ui.value.copy(isSavingCard = false)
             }
-            onResult(message)
+            if (outcome.keepDraft && _cardDraft.value != null) {
+                _cardStatus.value = CardStatus(outcome.message, outcome.offerWithoutAudio)
+            } else {
+                if (!outcome.keepDraft) _cardDraft.value = null
+                onResult(outcome.message)
+            }
         }
     }
 

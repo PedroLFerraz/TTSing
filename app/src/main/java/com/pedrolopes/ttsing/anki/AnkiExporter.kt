@@ -59,7 +59,7 @@ class AnkiExporter(
 
             // Media is best-effort: a card without audio still beats losing the card.
             val sound = audio?.let { attachMedia(it, ankiPackage, draft) }
-            val fields = arrayOf(draft.frontHtml(), sound.orEmpty(), draft.meaning)
+            val fields = arrayOf(draft.frontHtml(), sound.orEmpty(), draft.meaningHtml())
 
             if (api.addNote(modelId, deckId, fields, draft.tags()) == null) {
                 return@withContext Result.Failed("AnkiDroid rejected the note")
