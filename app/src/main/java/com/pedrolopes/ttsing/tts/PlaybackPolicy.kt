@@ -18,6 +18,27 @@ internal object PlaybackPolicy {
     ): ReadingPosition = requested ?: if (finished) ReadingPosition.START else current ?: restored
 
     /**
+     * The chapter a "stop at the end of the chapter" timer waits for once playing starts at
+     * [start]: the chapter it starts in, whichever chapter the timer was set in.
+     */
+    fun sleepChapterAtStart(sleepChapter: Int?, start: ReadingPosition): Int? =
+        sleepChapter?.let { start.chapterIndex }
+
+    /**
+     * True when [position] is the last sentence of [source]. A book read to its end is saved
+     * parked there, and a service started afresh must still know to start it over.
+     */
+    suspend fun isParkedAtEnd(source: Narrator.ContentSource, position: ReadingPosition): Boolean =
+        source.next(position) == null
+
+    /**
+     * Whether a finished book stays finished when the narrator reports a sentence start: only
+     * when it is not speaking and settles on the sentence the book is parked on.
+     */
+    fun keepsFinished(finished: Boolean, speaking: Boolean, parked: ReadingPosition, reported: ReadingPosition): Boolean =
+        finished && !speaking && reported == parked
+
+    /**
      * What to save when playback ends. A finished article is saved at its start, so opening it
      * again reads it from the top rather than from its last sentence.
      */
