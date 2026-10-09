@@ -80,9 +80,14 @@ class AudioTrackNarrator(
     /** Language in use, for the word-splitting fallback below. */
     private var locale: Locale = Locale.getDefault()
 
+    /** Skips run one at a time, so a quick second tap starts from where the first one landed. */
+    private val skipLock = Mutex()
+
+    @Volatile
     override var currentRef: SentenceRef? = null
         private set
 
+    @Volatile
     override var isSpeaking: Boolean = false
         private set
 
@@ -94,6 +99,8 @@ class AudioTrackNarrator(
 
     override fun setContentSource(contentSource: Narrator.ContentSource) {
         source = contentSource
+        // The previous book's sentence must not be what a Play in this one resumes from.
+        currentRef = null
     }
 
     override suspend fun configureLanguage(locale: Locale, preferredVoiceName: String?): Boolean {
@@ -102,11 +109,15 @@ class AudioTrackNarrator(
         val result = tts.setLanguage(locale)
         val available = result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
         val bundled = PiperVoices.find(appContext, preferredVoiceName)
-        if (bundled != null && piper.prepare(bundled)) {
+        // The model is loaded and let go under the synthesis lock, so it is never swapped out
+        // from under a sentence being synthesized.
+        if (bundled != null && synthesis.withLock { piper.prepare(bundled) }) {
             piperVoice = bundled
             return true
         }
+        // Moving to a device voice: the neural model's memory (~270 MB) is no longer needed.
         piperVoice = null
+        synthesis.withLock { piper.release() }
         val voices = tts.voices.orEmpty()
         val chosenName = preferredVoiceName?.takeIf { name -> voices.any { it.name == name } }
             ?: VoiceChoice.pick(locale, voices.map { it.info() }, tts.defaultVoice?.info())
@@ -156,7 +167,7 @@ class AudioTrackNarrator(
             runCatching { earlier?.cancelAndJoin() }
             stopReading()
             // Reloads the model when a long pause let it go; a no-op the rest of the time.
-            piperVoice?.let { if (!piper.prepare(it)) piperVoice = null }
+            piperVoice?.let { if (!synthesis.withLock { piper.prepare(it) }) piperVoice = null }
             if (!awaitReady()) {
                 listener.onEngineError("Text-to-speech engine failed to initialize")
                 return@launch
@@ -231,7 +242,10 @@ class AudioTrackNarrator(
                 // The position poll runs far faster than words change; only publish on change.
                 if (range != lastRange) {
                     lastRange = range
-                    scope.launch(Dispatchers.Main) { listener.onWordRange(speaking, range) }
+                    scope.launch(Dispatchers.Main) {
+                        // Late word of a sentence already left behind (or of another book).
+                        if (currentRef === speaking) listener.onWordRange(speaking, range)
+                    }
                 }
             }
             if (!completed || !coroutineIsActive()) return@coroutineScope
@@ -325,6 +339,16 @@ class AudioTrackNarrator(
         scheduleModelRelease()
     }
 
+    override suspend fun halt() {
+        val reading = readingJob
+        pause()
+        // pause() cancels a start still under way; wait for it so it cannot launch a reading
+        // after this returns, then for the reading itself (which may be in the middle of a
+        // synthesis the model cannot interrupt).
+        startJob?.join()
+        reading?.cancelAndJoin()
+    }
+
     /**
      * Gives the neural model's memory back when the reading has been stopped for a while.
      * onnxruntime holds around 270 MB once it has been running, which is a lot to sit on in
@@ -335,7 +359,7 @@ class AudioTrackNarrator(
         releaseJob?.cancel()
         releaseJob = scope.launch(Dispatchers.Default) {
             delay(IDLE_RELEASE_MS)
-            if (!isSpeaking) piper.release()
+            synthesis.withLock { if (!isSpeaking) piper.release() }
         }
     }
 
@@ -343,30 +367,20 @@ class AudioTrackNarrator(
         currentRef?.let { playFrom(it.position) }
     }
 
-    override fun skipToNext() {
-        scope.launch(Dispatchers.Main) {
-            val src = source ?: return@launch
-            val current = currentRef ?: return@launch
-            val next = src.next(current.position) ?: return@launch
-            if (isSpeaking) {
-                playFrom(next.position)
-            } else {
-                currentRef = next
-                listener.onSentenceStart(next)
-            }
-        }
-    }
+    override fun skipToNext() = skip(forward = true)
 
-    override fun skipToPrev() {
+    override fun skipToPrev() = skip(forward = false)
+
+    private fun skip(forward: Boolean) {
         scope.launch(Dispatchers.Main) {
-            val src = source ?: return@launch
-            val current = currentRef ?: return@launch
-            val prev = src.prev(current.position) ?: current
-            if (isSpeaking) {
-                playFrom(prev.position)
-            } else {
-                currentRef = prev
-                listener.onSentenceStart(prev)
+            skipLock.withLock {
+                val src = source ?: return@launch
+                val current = currentRef ?: return@launch
+                val target = PlaybackPolicy.skipTarget(src, current, forward) ?: return@launch
+                // Set before the (asynchronous) restart, so a second tap while it is under way
+                // moves on from here and not from the sentence that was playing.
+                currentRef = target
+                if (isSpeaking) playFrom(target.position) else listener.onSentenceStart(target)
             }
         }
     }
@@ -383,7 +397,9 @@ class AudioTrackNarrator(
     override fun shutdown() {
         pause()
         releaseJob?.cancel()
-        piper.release()
+        // Under the synthesis lock, on a scope of its own (the caller's is going away): a
+        // sentence still being synthesized finishes before the model is freed.
+        CoroutineScope(Dispatchers.Default).launch { synthesis.withLock { piper.release() } }
         runCatching { tts.shutdown() }
     }
 

@@ -54,6 +54,7 @@ fun TTSingNavHost(
             LibraryScreen(
                 onOpenBook = { bookId -> navController.navigate(Routes.reader(bookId)) },
                 onOpenNews = { navController.navigate(Routes.NEWS) },
+                onBookMoved = controller::bookMoved,
             )
         }
         composable(Routes.NEWS) {

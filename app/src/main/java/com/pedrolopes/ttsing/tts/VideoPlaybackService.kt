@@ -146,7 +146,15 @@ class VideoPlaybackService : Service() {
         fun onPlayerState(context: Context, isPlaying: Boolean) {
             playing = isPlaying
             instance?.render() ?: run {
-                if (isPlaying) ContextCompat.startForegroundService(context, Intent(context, VideoPlaybackService::class.java))
+                // The page reports from a JS callback, possibly after the app went to the
+                // background; from Android 12 starting a foreground service then throws
+                // (ForegroundServiceStartNotAllowedException). Better no lock-screen controls
+                // than a crash.
+                if (isPlaying) {
+                    runCatching {
+                        ContextCompat.startForegroundService(context, Intent(context, VideoPlaybackService::class.java))
+                    }
+                }
             }
         }
 

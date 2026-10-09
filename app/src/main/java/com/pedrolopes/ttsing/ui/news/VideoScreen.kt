@@ -60,7 +60,7 @@ import com.pedrolopes.ttsing.ui.theme.Ink
 fun VideoScreen(articleId: String, onBack: () -> Unit) {
     val news = TTSingApp.instance.news
     val article by produceState<ArticleEntity?>(null, articleId) { value = news.article(articleId) }
-    LaunchedEffect(articleId) { news.savePosition(articleId, 0, 0) }
+    LaunchedEffect(articleId) { news.setRead(listOf(articleId), true) }
     val uriHandler = LocalUriHandler.current
 
     Scaffold(containerColor = Ink.Surface) { padding ->
@@ -89,7 +89,8 @@ fun VideoScreen(articleId: String, onBack: () -> Unit) {
                 )
                 video.summary?.takeIf { it.isNotBlank() }?.let {
                     Text(
-                        it,
+                        // Descriptions are full of addresses; tapping one opens it.
+                        linkified(it, Ink.Live),
                         fontFamily = AppFonts.Grotesk,
                         fontSize = 14.sp,
                         lineHeight = 20.sp,

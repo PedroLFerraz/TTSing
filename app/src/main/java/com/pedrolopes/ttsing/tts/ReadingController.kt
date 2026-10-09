@@ -78,13 +78,26 @@ class ReadingController(context: Context) {
         service?.prepareBook(bookId, onReady)
     }
 
+    /** The story's text changed underneath the service (its full text arrived): read it afresh. */
+    fun reloadBook(bookId: String) {
+        service?.reloadBook(bookId)
+    }
+
     fun play(bookId: String, position: ReadingPosition? = null) {
         ContextCompat.startForegroundService(appContext, ReadingService.playIntent(appContext, bookId, position))
     }
 
     fun togglePlayPause(bookId: String) {
         val svc = service
-        if (svc != null && svc.state.value.isSpeaking) svc.pause() else play(bookId, _state.value.position)
+        if (svc != null && svc.state.value.isSpeaking) {
+            svc.pause()
+        } else {
+            // No position for a finished book (it plays from the start; its parked position is
+            // the last sentence, which would be spoken alone) nor for one that isn't the loaded
+            // book (the position is another book's; the saved place is used).
+            val current = _state.value
+            play(bookId, current.position.takeIf { current.bookId == bookId && !current.finished })
+        }
     }
 
     fun pause() {
@@ -134,5 +147,10 @@ class ReadingController(context: Context) {
 
     fun selectVoice(voiceName: String?) {
         service?.selectVoice(voiceName)
+    }
+
+    /** The book at [oldId] was moved to a new file, so it is now [newId]: keep playing it under that. */
+    fun bookMoved(oldId: String, newId: String) {
+        service?.bookMoved(oldId, newId)
     }
 }

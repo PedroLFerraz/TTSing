@@ -2,10 +2,15 @@ package com.pedrolopes.ttsing.data.news.db
 
 import androidx.room.Dao
 import androidx.room.Database
+import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.Transaction
 import androidx.room.Upsert
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.room.migration.Migration
@@ -41,7 +46,7 @@ data class FeedEntity(
  * One story. [contentHtml] holds the full article body once fetched — the feed's own
  * [summary] is nearly always a truncated teaser, so it is only a fallback.
  */
-@Entity(tableName = "articles")
+@Entity(tableName = "articles", indices = [Index("feedUrl")])
 data class ArticleEntity(
     @PrimaryKey val id: String,
     val feedUrl: String,
@@ -65,7 +70,24 @@ data class ArticleEntity(
     val sentenceIndex: Int = 0,
     val lastOpenedAt: Long = 0,
     val isRead: Boolean = false,
-)
+    /**
+     * Blocks in the body as the reader indexes them (headline included), recorded when the
+     * story is opened; 0 until then. Lets a saved position be read as a fraction of the way
+     * through, which is what decides whether the story counts as heard.
+     */
+    @ColumnInfo(defaultValue = "0") val blockCount: Int = 0,
+    /**
+     * Why [contentHtml] holds no full text, once a fetch has been tried: [ISSUE_DOWNLOAD_FAILED]
+     * (the page couldn't be loaded) or [ISSUE_TOO_SHORT] (it loaded, but the text found was a
+     * stub or paywall). Null while the full text is there, or not yet tried.
+     */
+    val fullTextIssue: String? = null,
+) {
+    companion object {
+        const val ISSUE_DOWNLOAD_FAILED = "download_failed"
+        const val ISSUE_TOO_SHORT = "too_short"
+    }
+}
 
 @Dao
 interface NewsDao {
@@ -82,26 +104,80 @@ interface NewsDao {
     @Upsert
     suspend fun upsertFeed(feed: FeedEntity)
 
+    /** Subscribes unless the exact URL is already there; -1 when it was, with the row untouched. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertFeedIfAbsent(feed: FeedEntity): Long
+
+    /**
+     * What a refresh learned about a feed. An UPDATE, so it can't bring back a feed removed
+     * meanwhile or undo a group set meanwhile; what the feed doesn't say is left as it was.
+     */
+    @Query(
+        """UPDATE feeds SET title = :title, siteLink = COALESCE(:siteLink, siteLink),
+           language = COALESCE(:language, language), lastRefreshedAt = :refreshedAt,
+           topic = COALESCE(topic, :topic) WHERE url = :url""",
+    )
+    suspend fun updateFeedInfo(url: String, title: String, siteLink: String?, language: String?, refreshedAt: Long, topic: String?)
+
     @Query("DELETE FROM feeds WHERE url = :url")
     suspend fun deleteFeed(url: String)
 
     @Query("DELETE FROM articles WHERE feedUrl = :url")
     suspend fun deleteArticlesOfFeed(url: String)
 
+    /** Both in one transaction, so a refresh can't find the feed gone but its stories half there. */
+    @Transaction
+    suspend fun removeFeed(url: String) {
+        deleteArticlesOfFeed(url)
+        deleteFeed(url)
+    }
+
+    /**
+     * Stores [articles] only while [feedUrl] is still subscribed, and says whether it did. A
+     * refresh that was mid-download when the feed was removed must not bring its stories back.
+     */
+    @Transaction
+    suspend fun upsertArticlesIfSubscribed(feedUrl: String, articles: List<ArticleEntity>): Boolean {
+        if (feed(feedUrl) == null) return false
+        upsertArticles(articles)
+        return true
+    }
+
     @Query("SELECT * FROM articles WHERE feedUrl = :feedUrl ORDER BY publishedAt DESC, title ASC")
     fun observeArticles(feedUrl: String): Flow<List<ArticleEntity>>
 
-    @Query("SELECT * FROM articles ORDER BY publishedAt DESC LIMIT :limit")
-    fun observeLatest(limit: Int): Flow<List<ArticleEntity>>
+    /**
+     * The newest stories across all feeds, but at most [perFeed] from any one, so a feed that
+     * posts all day can't push a quiet one's latest story off the list. (A correlated count
+     * rather than ROW_NUMBER(): window functions need SQLite 3.25, newer than API 26's.)
+     */
+    @Query(
+        """SELECT a.* FROM articles a WHERE (
+             SELECT COUNT(*) FROM articles b WHERE b.feedUrl = a.feedUrl AND
+               (b.publishedAt > a.publishedAt OR (b.publishedAt = a.publishedAt AND b.id < a.id))
+           ) < :perFeed ORDER BY a.publishedAt DESC LIMIT :limit""",
+    )
+    fun observeLatest(perFeed: Int, limit: Int): Flow<List<ArticleEntity>>
 
     @Query(
-        """SELECT articles.* FROM articles JOIN feeds ON articles.feedUrl = feeds.url
-           WHERE feeds.folder = :folder ORDER BY articles.publishedAt DESC LIMIT :limit""",
+        """SELECT a.* FROM articles a JOIN feeds f ON a.feedUrl = f.url
+           WHERE f.folder = :folder COLLATE NOCASE AND (
+             SELECT COUNT(*) FROM articles b WHERE b.feedUrl = a.feedUrl AND
+               (b.publishedAt > a.publishedAt OR (b.publishedAt = a.publishedAt AND b.id < a.id))
+           ) < :perFeed ORDER BY a.publishedAt DESC LIMIT :limit""",
     )
-    fun observeLatestInFolder(folder: String, limit: Int): Flow<List<ArticleEntity>>
+    fun observeLatestInFolder(folder: String, perFeed: Int, limit: Int): Flow<List<ArticleEntity>>
 
     @Query("UPDATE feeds SET folder = :folder WHERE url = :url")
     suspend fun setFolder(url: String, folder: String?)
+
+    /** Every spelling of [from] ("science", "Science") becomes [to]. */
+    @Query("UPDATE feeds SET folder = :to WHERE folder = :from COLLATE NOCASE")
+    suspend fun renameFolder(from: String, to: String)
+
+    /** The feeds in the group become ungrouped. */
+    @Query("UPDATE feeds SET folder = NULL WHERE folder = :folder COLLATE NOCASE")
+    suspend fun clearFolder(folder: String)
 
     /** Stories without a usable date (`publishedAt == 0`) are never old enough to go. */
     @Query("DELETE FROM articles WHERE publishedAt > 0 AND publishedAt < :cutoff")
@@ -115,6 +191,36 @@ interface NewsDao {
 
     @Upsert
     suspend fun upsertArticle(article: ArticleEntity)
+
+    /**
+     * Writes back what a page fetch learned, and only that. Unlike upserting a whole copy of the
+     * row it can't undo a reading position saved while the page was downloading, and it does
+     * nothing for a story that has since been deleted with its feed.
+     */
+    @Query(
+        """UPDATE articles SET contentHtml = :contentHtml, fetchedAt = :fetchedAt,
+           textLength = :textLength, title = :title, imageUrl = :imageUrl,
+           fullTextIssue = :issue WHERE id = :id""",
+    )
+    suspend fun updateFetched(
+        id: String,
+        contentHtml: String?,
+        fetchedAt: Long,
+        textLength: Int,
+        title: String,
+        imageUrl: String?,
+        issue: String?,
+    )
+
+    @Query("UPDATE articles SET blockCount = :count WHERE id = :id")
+    suspend fun setBlockCount(id: String, count: Int)
+
+    @Query("UPDATE articles SET isRead = :read WHERE id IN (:ids)")
+    suspend fun setRead(ids: List<String>, read: Boolean)
+
+    /** Thumbnails still in use, so the cache can drop the rest. */
+    @Query("SELECT imageUrl FROM articles WHERE imageUrl IS NOT NULL")
+    suspend fun imageUrls(): List<String>
 
     @Query("SELECT id FROM articles WHERE feedUrl = :feedUrl")
     suspend fun articleIds(feedUrl: String): List<String>
@@ -138,9 +244,9 @@ interface NewsDao {
 
     @Query(
         """UPDATE articles SET blockIndex = :block, sentenceIndex = :sentence,
-           lastOpenedAt = :openedAt, isRead = 1 WHERE id = :id""",
+           lastOpenedAt = :openedAt, isRead = :read WHERE id = :id""",
     )
-    suspend fun updatePosition(id: String, block: Int, sentence: Int, openedAt: Long)
+    suspend fun updatePosition(id: String, block: Int, sentence: Int, openedAt: Long, read: Boolean)
 }
 
 /** Adds the article thumbnail column; existing feeds and reading positions are untouched. */
@@ -181,12 +287,27 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
 }
 
 /**
+ * Why a story has no full text and how far through it the listener is (see [ArticleEntity]),
+ * plus an index on the feed, which the per-feed list and the duplicate check look up by.
+ * Stories without a date (they sort last and were never pruned) are dated now, so they age
+ * out like the rest.
+ */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE articles ADD COLUMN blockCount INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE articles ADD COLUMN fullTextIssue TEXT")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_articles_feedUrl ON articles (feedUrl)")
+        db.execSQL("UPDATE articles SET publishedAt = ? WHERE publishedAt = 0", arrayOf<Any>(System.currentTimeMillis()))
+    }
+}
+
+/**
  * Kept separate from the books database on purpose. That one is
  * `fallbackToDestructiveMigration` because it is a rebuildable cache of a folder of EPUBs;
  * feed subscriptions are user-created and cannot be rebuilt, so they need a database that
  * forces real migrations instead of quietly dropping everything on a schema bump.
  */
-@Database(entities = [FeedEntity::class, ArticleEntity::class], version = 4, exportSchema = false)
+@Database(entities = [FeedEntity::class, ArticleEntity::class], version = 5, exportSchema = false)
 abstract class NewsDatabase : RoomDatabase() {
     abstract fun newsDao(): NewsDao
 }

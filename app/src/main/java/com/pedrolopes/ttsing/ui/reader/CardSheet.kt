@@ -1,15 +1,24 @@
 package com.pedrolopes.ttsing.ui.reader
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -20,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -27,15 +37,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,16 +56,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.ichi2.anki.api.AddContentApi
+import com.pedrolopes.ttsing.anki.AnkiState
 import com.pedrolopes.ttsing.anki.CardDraft
+import com.pedrolopes.ttsing.anki.ankiState
 import com.pedrolopes.ttsing.data.epub.WordSplitter
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
@@ -65,31 +89,61 @@ fun CardSheet(
     draft: CardDraft,
     locale: Locale,
     isSubmitting: Boolean,
+    /** Why the last add failed, shown in the sheet itself: a snackbar can sit behind the modal. */
+    error: String?,
+    /** The failure was the audio: offer saving the card without it. */
+    offerWithoutAudio: Boolean,
+    isAnkiInstalled: () -> Boolean,
     onDraftChange: (CardDraft) -> Unit,
     onPreviewAudio: (CardDraft) -> Unit,
     onDismiss: () -> Unit,
     onSubmit: (CardDraft) -> Unit,
+    onSubmitWithoutAudio: (CardDraft) -> Unit,
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val meaningFocus = remember { FocusRequester() }
     val words = remember(draft.sentence, locale) { WordSplitter.split(draft.sentence, locale) }
 
-    var permissionDenied by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    var confirmDiscard by remember { mutableStateOf(false) }
+
+    // Installed and permitted are re-read on resume: the user may come back from the Play
+    // Store or the app settings with either fixed.
+    var installed by remember { mutableStateOf(isAnkiInstalled()) }
+    var granted by remember { mutableStateOf(hasAnkiPermission(context)) }
+    var deniedOnce by remember { mutableStateOf(false) }
+    LifecycleResumeEffect(Unit) {
+        installed = isAnkiInstalled()
+        granted = hasAnkiPermission(context)
+        onPauseOrDispose { }
+    }
+    val ankiState = ankiState(
+        installed = installed,
+        granted = granted,
+        deniedOnce = deniedOnce,
+        canAskAgain = context.findActivity()
+            ?.let { ActivityCompat.shouldShowRequestPermissionRationale(it, AddContentApi.READ_WRITE_PERMISSION) }
+            ?: true,
+    )
+
     // The draft changes as the user types, so read the latest one when the permission
     // dialog returns rather than capturing the value this launcher was created with.
     val latestDraft by rememberUpdatedState(draft)
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) onSubmit(latestDraft) else permissionDenied = true
+    ) { result ->
+        granted = result
+        if (result) onSubmit(latestDraft) else deniedOnce = true
     }
 
     fun submit() {
-        permissionDenied = false
-        val granted = ContextCompat.checkSelfPermission(context, AddContentApi.READ_WRITE_PERMISSION) ==
-            PackageManager.PERMISSION_GRANTED
-        if (granted) onSubmit(draft) else permissionLauncher.launch(AddContentApi.READ_WRITE_PERMISSION)
+        if (ankiState != AnkiState.Ready && ankiState != AnkiState.PermissionDenied) return
+        if (hasAnkiPermission(context)) onSubmit(draft) else permissionLauncher.launch(AddContentApi.READ_WRITE_PERMISSION)
+    }
+
+    fun requestDismiss() {
+        if (draft.hasUnsavedWork) confirmDiscard = true else onDismiss()
     }
 
     // Focus the meaning field only once a word is picked — focusing on open would raise the
@@ -98,7 +152,7 @@ fun CardSheet(
         if (draft.hasTarget) runCatching { meaningFocus.requestFocus() }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    ModalBottomSheet(onDismissRequest = ::requestDismiss, sheetState = sheetState) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -108,11 +162,7 @@ fun CardSheet(
         ) {
             Text("New flashcard", style = MaterialTheme.typography.titleLarge)
             Text(
-                text = if (draft.hasTarget) {
-                    "Tap another word to cover an expression, or the same one to clear it."
-                } else {
-                    "Tap the word you didn't know."
-                },
+                text = draft.selectionHint,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
@@ -138,7 +188,7 @@ fun CardSheet(
             OutlinedTextField(
                 value = draft.meaning,
                 onValueChange = { onDraftChange(draft.copy(meaning = it)) },
-                label = { Text("What it means (Verso)") },
+                label = { Text("Back — what it means") },
                 singleLine = false,
                 minLines = 2,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
@@ -149,23 +199,54 @@ fun CardSheet(
 
             CardPreview(
                 draft = draft,
+                isSubmitting = isSubmitting,
                 onPlay = { onPreviewAudio(draft) },
             )
 
-            if (permissionDenied) {
-                Text(
-                    "TTSing needs permission to write to your AnkiDroid collection.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 12.dp),
+            when (ankiState) {
+                AnkiState.NotInstalled -> AnkiProblem(
+                    message = "AnkiDroid isn't installed",
+                    action = "Get AnkiDroid",
+                    onAction = { openAnkiPlayStore(context) },
                 )
+                AnkiState.PermissionBlocked -> AnkiProblem(
+                    message = "TTSing needs permission to write to your AnkiDroid collection. " +
+                        "Allow it in the app settings.",
+                    action = "Open app settings",
+                    onAction = { openAppSettings(context) },
+                )
+                AnkiState.PermissionDenied -> AnkiProblem(
+                    message = "TTSing needs permission to write to your AnkiDroid collection.",
+                )
+                AnkiState.Ready -> Unit
+            }
+
+            if (error != null) {
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .padding(top = 12.dp)
+                        .semantics { liveRegion = LiveRegionMode.Polite },
+                )
+                if (offerWithoutAudio) {
+                    OutlinedButton(
+                        onClick = { onSubmitWithoutAudio(draft) },
+                        enabled = !isSubmitting,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    ) {
+                        Text("Add without audio")
+                    }
+                }
             }
 
             Spacer(Modifier.height(20.dp))
 
             Button(
                 onClick = { submit() },
-                enabled = draft.hasTarget && !isSubmitting,
+                enabled = draft.hasTarget && !isSubmitting &&
+                    (ankiState == AnkiState.Ready || ankiState == AnkiState.PermissionDenied),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 if (isSubmitting) {
@@ -182,6 +263,77 @@ fun CardSheet(
             }
         }
     }
+
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("Discard this card?") },
+            text = { Text("What you typed hasn't been saved.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDiscard = false
+                    onDismiss()
+                }) { Text("Discard") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    confirmDiscard = false
+                    // A swipe or scrim tap may already have hidden the sheet.
+                    scope.launch { sheetState.show() }
+                }) { Text("Keep editing") }
+            },
+        )
+    }
+}
+
+/** A line saying what stops the card reaching AnkiDroid, with the button that fixes it. */
+@Composable
+private fun AnkiProblem(message: String, action: String? = null, onAction: () -> Unit = {}) {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        Text(
+            message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        )
+        if (action != null) {
+            OutlinedButton(onClick = onAction, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Text(action)
+            }
+        }
+    }
+}
+
+private fun hasAnkiPermission(context: Context): Boolean =
+    ContextCompat.checkSelfPermission(context, AddContentApi.READ_WRITE_PERMISSION) ==
+        PackageManager.PERMISSION_GRANTED
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/** The Play Store app if there is one, otherwise the web page. */
+private fun openAnkiPlayStore(context: Context) {
+    val id = "com.ichi2.anki"
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$id")))
+    } catch (_: ActivityNotFoundException) {
+        runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$id")),
+            )
+        }
+    }
+}
+
+private fun openAppSettings(context: Context) {
+    runCatching {
+        context.startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
+        )
+    }
 }
 
 @Composable
@@ -193,25 +345,32 @@ private fun WordChip(text: String, selected: Boolean, onClick: () -> Unit) {
             MaterialTheme.colorScheme.surfaceVariant
         },
         shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { this.selected = selected },
     ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            color = if (selected) {
-                MaterialTheme.colorScheme.onPrimaryContainer
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-        )
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp).padding(horizontal = 12.dp),
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
     }
 }
 
 /** Shows the card front exactly as Anki will render it: sentence, bold word, audio. */
 @Composable
-private fun CardPreview(draft: CardDraft, onPlay: () -> Unit) {
+private fun CardPreview(draft: CardDraft, isSubmitting: Boolean, onPlay: () -> Unit) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
@@ -223,7 +382,7 @@ private fun CardPreview(draft: CardDraft, onPlay: () -> Unit) {
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "Frente",
+                    "Front",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -233,7 +392,7 @@ private fun CardPreview(draft: CardDraft, onPlay: () -> Unit) {
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
-            IconButton(onClick = onPlay) {
+            IconButton(onClick = onPlay, enabled = !isSubmitting) {
                 Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Hear the sentence")
             }
         }

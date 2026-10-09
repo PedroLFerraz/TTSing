@@ -36,6 +36,20 @@ data class PageGeometry(
 fun List<Block>.hasReadableContent(): Boolean =
     any { (it is Block.Text && it.text.isNotBlank()) || it is Block.Image }
 
+/** A chapter's pages with the blocks they were cut from: pages only mean anything for those. */
+internal class CachedPages(val blocks: List<Block>, val pages: List<ReaderPage>) {
+    /** False once the chapter at this index has been swapped for other text (an article's full text). */
+    fun isFor(current: List<Block>): Boolean = blocks === current || blocks == current
+}
+
+/**
+ * The text a page slice stands for, or null when the slice does not fit [blocks] (a page laid
+ * out for other text): showing nothing beats crashing on it.
+ */
+internal fun sliceText(blocks: List<Block>, slice: TextSlice): Block.Text? =
+    (blocks.getOrNull(slice.blockIndex) as? Block.Text)
+        ?.takeIf { slice.start in 0..slice.end && slice.end <= it.text.length }
+
 /**
  * Whole-book page arithmetic over per-chapter page counts, the way KOReader numbers pages:
  * one continuous run from the first page of the book to the last.
@@ -51,11 +65,14 @@ object BookPages {
     fun bookPage(counts: List<Int>, chapter: Int, pageInChapter: Int): Int =
         firstPageOf(counts, chapter) + pageInChapter.coerceAtLeast(0) + 1
 
-    /** How far through the book that page is: 1.0 on the last page. */
+    /**
+     * How far through the book the page's *start* is: 0 on the first page, so a fresh book
+     * reads 0% rather than 50% of a two-page one. Pages before it are what has been read.
+     */
     fun fraction(counts: List<Int>, chapter: Int, pageInChapter: Int): Float {
         val total = total(counts)
         if (total <= 0) return 0f
-        return (bookPage(counts, chapter, pageInChapter).toFloat() / total).coerceIn(0f, 1f)
+        return ((bookPage(counts, chapter, pageInChapter) - 1).toFloat() / total).coerceIn(0f, 1f)
     }
 
     /**

@@ -8,6 +8,8 @@ import com.pedrolopes.ttsing.TTSingApp
 import com.pedrolopes.ttsing.anki.AnkiExporter
 import com.pedrolopes.ttsing.anki.CardAudio
 import com.pedrolopes.ttsing.anki.CardDraft
+import com.pedrolopes.ttsing.anki.CardOutcome
+import com.pedrolopes.ttsing.anki.cardOutcome
 import com.pedrolopes.ttsing.data.BookRepository
 import com.pedrolopes.ttsing.data.book.BookDocument
 import com.pedrolopes.ttsing.data.epub.Block
@@ -18,8 +20,10 @@ import com.pedrolopes.ttsing.data.news.NewsRepository
 import com.pedrolopes.ttsing.data.pdf.PdfDocument
 import com.pedrolopes.ttsing.data.settings.SettingsRepository
 import com.pedrolopes.ttsing.tts.BookContentSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,9 +45,10 @@ data class LoadedChapter(
 /**
  * A one-off instruction to move the pager — opening the book, a table-of-contents jump, the
  * « » buttons. Reading along never produces one; the pager just turns. [id] makes two jumps to
- * the same place distinct.
+ * the same place distinct. [offsetInBlock] picks the page when a block spans several, so the
+ * reader lands where the sentence is rather than on the block's first page.
  */
-data class JumpRequest(val chapterIndex: Int, val blockIndex: Int, val id: Long)
+data class JumpRequest(val chapterIndex: Int, val blockIndex: Int, val id: Long, val offsetInBlock: Int = 0)
 
 data class ReaderUiState(
     val title: String = "",
@@ -72,6 +77,8 @@ data class ReaderUiState(
     val isSavingCard: Boolean = false,
     /** Article only: the full page couldn't be fetched, so this is just the feed's teaser. */
     val isTruncated: Boolean = false,
+    /** Article only: why there is no full text, as [com.pedrolopes.ttsing.data.news.db.ArticleEntity.fullTextIssue] says. */
+    val articleIssue: String? = null,
     /** Article only: its address on the web, so the reader can offer to open it there. */
     val articleLink: String? = null,
     /**
@@ -102,6 +109,15 @@ class ReaderViewModel(
 
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
+
+    private val _cardDraft = MutableStateFlow<CardDraft?>(null)
+    val cardDraft: StateFlow<CardDraft?> = _cardDraft.asStateFlow()
+
+    /** The last failed add attempt, shown inline in the card sheet that is still open. */
+    data class CardStatus(val error: String? = null, val offerWithoutAudio: Boolean = false)
+
+    private val _cardStatus = MutableStateFlow(CardStatus())
+    val cardStatus: StateFlow<CardStatus> = _cardStatus.asStateFlow()
 
     /** Recently loaded chapters, so recentring the window on a neighbour is instant. */
     private val chapters = object : LinkedHashMap<Int, LoadedChapter>(16, 0.75f, true) {
@@ -149,7 +165,7 @@ class ReaderViewModel(
                 if (counts.isNotEmpty()) _ui.value = _ui.value.copy(chapterCharCounts = counts)
             }
             val chapter = (saved?.chapterIndex ?: 0).coerceIn(0, opened.sectionCount - 1)
-            recenter(chapter, jumpToBlock = saved?.blockIndex ?: 0)
+            recenter(chapter, jumpToBlock = saved?.blockIndex ?: 0, jumpToSentence = saved?.sentenceIndex ?: 0)
         }
     }
 
@@ -180,7 +196,17 @@ class ReaderViewModel(
                 is NewsRepository.ArticleBody.Ready -> {
                     // The declared language, as for a book: the override goes on top of it.
                     articleLocale = feedLocale
+                    // A story listened to part-way opens where the voice stopped, not on page 1
+                    // with its highlight off-screen.
+                    val savedBlock = article.blockIndex.coerceIn(0, (body.blocks.size - 1).coerceAtLeast(0))
+                    val jump = JumpRequest(
+                        0,
+                        savedBlock,
+                        nextJumpId++,
+                        sentenceStart(body.blocks, ReadingPosition(0, savedBlock, article.sentenceIndex)),
+                    )
                     _ui.value = _ui.value.copy(
+                        jump = jump,
                         title = article.title,
                         chapterCount = 1,
                         window = listOf(LoadedChapter(0, null, body.blocks)),
@@ -189,6 +215,7 @@ class ReaderViewModel(
                         isLoading = false,
                         error = null,
                         isTruncated = body.truncated,
+                        articleIssue = article.fullTextIssue,
                         articleLink = article.link,
                         chapterCharCounts = listOf(
                             body.blocks.filterIsInstance<Block.Text>().sumOf { it.text.length },
@@ -199,22 +226,60 @@ class ReaderViewModel(
         }
     }
 
-    // ---- the window of chapters ----
-
-    /** Table of contents: go to the start of [index]. */
-    fun showChapter(index: Int) {
-        if (isArticle) return
-        viewModelScope.launch { recenter(index, jumpToBlock = 0) }
+    /**
+     * Article only: downloads the page again for its full text. When it is there the article is
+     * loaded afresh (its positions shift, so the reader lands on the saved sentence in the new
+     * text); either way [onDone] says whether it worked, and [ReaderUiState.articleIssue] is
+     * brought up to date with the reason it did not.
+     */
+    fun retryFullText(onDone: (Boolean) -> Unit) {
+        if (!isArticle) return
+        viewModelScope.launch {
+            val ok = news.retryFullText(bookId)
+            if (ok) {
+                articleLoaded = false
+                loadArticle()
+            } else {
+                _ui.value = _ui.value.copy(articleIssue = news.article(bookId)?.fullTextIssue)
+            }
+            onDone(ok)
+        }
     }
 
-    /** « and »: the chapter after or before [visibleChapter], skipping any with nothing in it. */
-    fun stepChapter(visibleChapter: Int, forward: Boolean) {
+    // ---- the window of chapters ----
+
+    /**
+     * Table of contents: go to the start of [index]. [onLanded] gets the chapter actually
+     * landed on (an empty one is passed over), so the voice can be taken there too.
+     */
+    fun showChapter(index: Int, onLanded: (Int) -> Unit = {}) {
+        if (isArticle) return
+        viewModelScope.launch { recenter(index, jumpToBlock = 0)?.let(onLanded) }
+    }
+
+    /**
+     * « and »: the chapter after or before [visibleChapter], skipping any with nothing in it.
+     * [onLanded] as for [showChapter].
+     */
+    fun stepChapter(visibleChapter: Int, forward: Boolean, onLanded: (Int) -> Unit = {}) {
         if (isArticle) return
         viewModelScope.launch {
             val target = readableFrom(visibleChapter + if (forward) 1 else -1, if (forward) 1 else -1)
                 ?: return@launch
-            recenter(target.index, jumpToBlock = 0)
+            recenter(target.index, jumpToBlock = 0)?.let(onLanded)
         }
+    }
+
+    /**
+     * The reader browsed to [position] (the first sentence of the page it settled on): remember
+     * it, as the voice would have. Not for articles, whose saved place also marks them heard.
+     * Fire-and-forget on purpose: leaving the screen right after a swipe must not lose it.
+     */
+    fun saveBrowsedPosition(position: ReadingPosition) {
+        if (isArticle) return
+        val blocks = (_ui.value.window.firstOrNull { it.index == position.chapterIndex } ?: chapters[position.chapterIndex])?.blocks
+        val fraction = browseFraction(_ui.value.chapterCharCounts, blocks, position, _ui.value.chapterCount)
+        viewModelScope.launch(NonCancellable) { repo.savePosition(bookId, position, fraction) }
     }
 
     /**
@@ -243,14 +308,15 @@ class ReaderViewModel(
         if (_ui.value.jump?.id == id) _ui.value = _ui.value.copy(jump = null)
     }
 
-    private suspend fun recenter(requested: Int, jumpToBlock: Int?) = windowLock.withLock {
-        val count = document?.sectionCount ?: return
+    /** Recentres the window; returns the chapter it landed on, or null when none could be loaded. */
+    private suspend fun recenter(requested: Int, jumpToBlock: Int?, jumpToSentence: Int = 0): Int? = windowLock.withLock {
+        val count = document?.sectionCount ?: return null
         val start = requested.coerceIn(0, count - 1)
         // Land on something readable: forwards first, as a reader moving through the book would.
         val current = readableFrom(start, 1) ?: readableFrom(start, -1) ?: loadChapter(start)
         if (current == null) {
             _ui.value = _ui.value.copy(isLoading = false, error = "Could not load this chapter.")
-            return
+            return null
         }
         val previous = readableFrom(current.index - 1, -1)
         val next = readableFrom(current.index + 1, 1)
@@ -260,11 +326,19 @@ class ReaderViewModel(
             isLoading = false,
             error = null,
             jump = if (jumpToBlock != null) {
-                JumpRequest(current.index, if (current.index == start) jumpToBlock else 0, nextJumpId++)
+                val block = if (current.index == start) jumpToBlock else 0
+                val sentence = if (current.index == start) jumpToSentence else 0
+                JumpRequest(
+                    current.index,
+                    block,
+                    nextJumpId++,
+                    sentenceStart(current.blocks, ReadingPosition(current.index, block, sentence)),
+                )
             } else {
                 _ui.value.jump
             },
         )
+        current.index
     }
 
     /** The first chapter from [start] stepping by [step] that has anything to show. */
@@ -382,6 +456,13 @@ class ReaderViewModel(
         )
     }
 
+    fun updateCardDraft(draft: CardDraft?) {
+        _cardDraft.value = draft
+        if (draft == null) _cardStatus.value = CardStatus()
+    }
+
+    fun isAnkiInstalled(): Boolean = anki.isAnkiInstalled()
+
     /** Speaks the draft's sentence so the user can hear the card before saving it. */
     fun previewCardAudio(draft: CardDraft) {
         viewModelScope.launch {
@@ -392,40 +473,54 @@ class ReaderViewModel(
     }
 
     /**
-     * Synthesizes the sentence audio and adds the note to AnkiDroid, reporting a
-     * user-facing message either way. Runs in [viewModelScope] so it survives rotation.
+     * Synthesizes the sentence audio (unless [withAudio] is false) and adds the note to
+     * AnkiDroid. Runs in [viewModelScope] so it survives rotation.
+     *
+     * The draft is cleared only when the card was added. A failure is left in [cardStatus]
+     * for the still-open sheet to show; [onResult] gets the message for the success case, or
+     * for a failure that arrives after the sheet was dismissed.
      */
-    fun submitCard(draft: CardDraft, onResult: (String) -> Unit) {
+    fun submitCard(draft: CardDraft, withAudio: Boolean = true, onResult: (String) -> Unit) {
         if (_ui.value.isSavingCard) return
         _ui.value = _ui.value.copy(isSavingCard = true)
+        _cardStatus.value = CardStatus()
         viewModelScope.launch {
-            val message = try {
+            val outcome = try {
                 if (!anki.isAnkiInstalled()) {
-                    "AnkiDroid isn't installed"
+                    cardOutcome(audioFailed = false, result = AnkiExporter.Result.AnkiNotInstalled)
                 } else {
                     val current = settings.settings.first()
                     val locale = current.localeFor(bookId, bookLocale())
-                    val audio = cardAudio.synthesize(
-                        text = draft.sentence,
-                        locale = locale,
-                        voiceName = current.voiceFor(locale.language),
-                    )
-                    when (val result = anki.addCard(draft, audio)) {
-                        is AnkiExporter.Result.Added ->
-                            if (result.audioAttached) {
-                                "Card added to ${AnkiExporter.DECK_NAME}"
-                            } else {
-                                "Card added to ${AnkiExporter.DECK_NAME} (without audio)"
-                            }
-                        AnkiExporter.Result.AnkiNotInstalled -> "AnkiDroid isn't installed"
-                        AnkiExporter.Result.PermissionDenied -> "AnkiDroid permission denied"
-                        is AnkiExporter.Result.Failed -> "Could not add the card: ${result.message}"
+                    val audio = if (withAudio) {
+                        cardAudio.synthesize(
+                            text = draft.sentence,
+                            locale = locale,
+                            voiceName = current.voiceFor(locale.language),
+                        )
+                    } else {
+                        null
+                    }
+                    if (withAudio && audio == null) {
+                        cardOutcome(audioFailed = true, result = null)
+                    } else {
+                        cardOutcome(audioFailed = false, result = anki.addCard(draft, audio))
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                CardOutcome(true, "Could not add the card: ${error.message ?: error::class.java.simpleName}")
             } finally {
+                // AnkiDroid copies the WAV on addMediaFromUri, so it is garbage after any attempt.
+                cardAudio.clearCache()
                 _ui.value = _ui.value.copy(isSavingCard = false)
             }
-            onResult(message)
+            if (outcome.keepDraft && _cardDraft.value != null) {
+                _cardStatus.value = CardStatus(outcome.message, outcome.offerWithoutAudio)
+            } else {
+                if (!outcome.keepDraft) _cardDraft.value = null
+                onResult(outcome.message)
+            }
         }
     }
 

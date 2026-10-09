@@ -5,7 +5,7 @@ import kotlin.math.roundToInt
 /** The reading speeds the reader offers, and how a neural voice reaches them. */
 object SpeedSteps {
 
-    /** Every speed the reader offers, in the footer's chip and in the settings sheet. */
+    /** Every speed the reader offers, in the footer's menu and in the settings sheet. */
     val ALL = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.25f, 2.5f, 2.75f, 3f)
 
     /**
@@ -23,8 +23,14 @@ object SpeedSteps {
         return Split(model = model, playback = if (model > 0f) rate / model else 1f)
     }
 
+    /** The step [rate] is, or null when it sits between steps (the settings slider can leave it there). */
+    fun selected(rate: Float): Float? = ALL.firstOrNull { kotlin.math.abs(it - rate) < 0.01f }
+
     /** The next speed up from [rate], wrapping round to the slowest past the top. */
     fun next(rate: Float): Float = ALL.firstOrNull { it > rate + 0.01f } ?: ALL.first()
+
+    /** The step closest to [rate], for a stored speed that sits between steps (an old slider value). */
+    fun nearest(rate: Float): Float = ALL.minBy { kotlin.math.abs(it - rate) }
 
     /** "1×", "1.5×", "2.25×" — no trailing zeros, because the chip is tiny. */
     fun format(rate: Float): String {

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -22,7 +23,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -30,6 +36,9 @@ import com.pedrolopes.ttsing.ui.theme.HazardStripe
 import com.pedrolopes.ttsing.ui.theme.Ink
 import com.pedrolopes.ttsing.ui.theme.monoLabel
 import com.pedrolopes.ttsing.ui.theme.wordmark
+
+/** The smallest size Android recommends for anything tapped. */
+val MinTouchTarget: Dp = 48.dp
 
 /** The horizontal margin every screen's content lines up to. */
 val ScreenPadding: Dp = 22.dp
@@ -85,7 +94,9 @@ fun StatusStrip(
             }
         },
         style = monoLabel(size = 11.5f, tracking = 0.18f),
-        maxLines = 1,
+        // Wraps rather than clips: at large font sizes the census no longer fits one line.
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
         modifier = modifier.padding(horizontal = ScreenPadding, vertical = 12.dp),
     )
 }
@@ -114,7 +125,7 @@ fun PillButton(
         modifier = modifier
             .fillMaxWidth()
             .background(if (enabled) Ink.Live else Ink.Raised, RoundedCornerShape(999.dp))
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(vertical = 16.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -149,7 +160,7 @@ fun ThinProgress(
     }
 }
 
-/** A header action: 20dp, muted, no ripple-heavy Material padding around it. */
+/** A header action: a 20dp glyph in a 48dp touch target, muted, no ripple-heavy Material padding around it. */
 @Composable
 fun HeaderIcon(
     icon: ImageVector,
@@ -158,7 +169,7 @@ fun HeaderIcon(
     onClick: () -> Unit,
 ) {
     Box(
-        modifier = Modifier.size(44.dp).clickable(onClick = onClick),
+        modifier = Modifier.size(MinTouchTarget).clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = contentDescription, tint = tint, modifier = Modifier.size(20.dp))
@@ -176,12 +187,14 @@ fun MonoText(
     weight: FontWeight = FontWeight.Normal,
     maxLines: Int = 1,
     uppercase: Boolean = true,
+    textAlign: TextAlign? = null,
 ) {
     Text(
         text = if (uppercase) text.uppercase() else text,
         style = monoLabel(size = size, tracking = tracking, weight = weight, color = color),
         maxLines = maxLines,
-        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        overflow = TextOverflow.Ellipsis,
+        textAlign = textAlign,
         modifier = modifier,
     )
 }
@@ -200,28 +213,38 @@ fun MonoText(
         text = text,
         style = monoLabel(size = size, tracking = tracking, color = color),
         maxLines = maxLines,
-        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        overflow = TextOverflow.Ellipsis,
         modifier = modifier,
     )
 }
 
-/** Square, mono, no elevation: selected is a yellow block, everything else is an outline. */
+/**
+ * Square, mono, no elevation: selected is a yellow block, everything else is an outline. The
+ * block is drawn at its own size inside a 48dp-tall touch target.
+ */
 @Composable
 fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .background(if (selected) Ink.Live else Color.Transparent)
-            .then(if (selected) Modifier else Modifier.border(1.dp, Ink.Edge))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 9.dp),
+            .defaultMinSize(minHeight = MinTouchTarget)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { this.selected = selected },
+        contentAlignment = Alignment.Center,
     ) {
-        MonoText(
-            label,
-            size = 11f,
-            tracking = 0.14f,
-            color = if (selected) Ink.Surface else Ink.Muted,
-            weight = if (selected) FontWeight.Bold else FontWeight.Normal,
-        )
+        Box(
+            modifier = Modifier
+                .background(if (selected) Ink.Live else Color.Transparent)
+                .then(if (selected) Modifier else Modifier.border(1.dp, Ink.Edge))
+                .padding(horizontal = 14.dp, vertical = 9.dp),
+        ) {
+            MonoText(
+                label,
+                size = 11f,
+                tracking = 0.14f,
+                color = if (selected) Ink.Surface else Ink.Muted,
+                weight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            )
+        }
     }
 }
 

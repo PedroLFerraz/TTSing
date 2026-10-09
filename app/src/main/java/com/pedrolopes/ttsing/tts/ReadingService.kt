@@ -34,7 +34,11 @@ import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.tts.piper.PiperCatalog
 import com.pedrolopes.ttsing.tts.piper.PiperVoices
 import com.pedrolopes.ttsing.data.news.NewsRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +47,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
@@ -75,6 +80,15 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     private var resumeOnFocusGain = false
     private var sentencesSinceSave = 0
     private var saveJob: Job? = null
+
+    /**
+     * Saves run here, not in [lifecycleScope]: stopping the service cancels that scope, and the
+     * save of where the reading stopped is the one that must not be lost.
+     */
+    private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Loading the most recent book for a Play that arrived with nothing loaded; see [resume]. */
+    private var resumeJob: Job? = null
 
     /** Runs out when the sleep timer does; [sleepChapter] is the chapter to stop after. */
     private var sleepJob: Job? = null
@@ -147,13 +161,19 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             // was no longer the one Android routes hardware media keys to directly (e.g.
             // this service got killed while paused) - translates the KeyEvent back into
             // the same onPlay/onPause/onSkipToNext/onSkipToPrevious calls below.
+            //
+            // The system started us with startForegroundService, so the foreground promise
+            // has to be kept whatever the key turns out to do.
+            ensureForeground()
             mediaSession?.let { MediaButtonReceiver.handleIntent(it, intent) }
+            // A key with nothing to act on (a fresh service, no book anywhere): don't linger.
+            if (_state.value.bookId == null && resumeJob?.isActive != true) stopSelfIfIdle()
             return START_NOT_STICKY
         }
         when (intent?.action) {
             ACTION_PLAY -> {
                 // Foreground must be established quickly; do it before the (async) book open.
-                ensureForeground()
+                ensureForeground(playing = true)
                 val bookId = intent.getStringExtra(EXTRA_BOOK_ID) ?: _state.value.bookId
                 val position = if (intent.hasExtra(EXTRA_CHAPTER)) {
                     ReadingPosition(
@@ -187,18 +207,40 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         }
     }
 
+    /**
+     * Drops the loaded copy of [bookId] and opens it again, for a news story whose full text has
+     * just arrived: the sentences the voice holds are the old summary's. Pauses first if speaking.
+     */
+    fun reloadBook(bookId: String) {
+        lifecycleScope.launch {
+            if (_state.value.bookId != bookId) return@launch
+            openBookIfNeeded(bookId, reload = true)
+        }
+    }
+
     fun play(bookId: String, position: ReadingPosition? = null) {
         continueJob?.cancel()
-        ensureForeground()
-        // Jumping somewhere on purpose keeps a "stop at the chapter's end" timer, moved to
-        // whichever chapter you jumped into.
-        if (sleepChapter != null && position != null) sleepChapter = position.chapterIndex
+        // Built as "playing" already: the book may take a while to open, and a Play button
+        // showing meanwhile is wrong. The failure paths below put it right.
+        ensureForeground(playing = true)
         lifecycleScope.launch {
             val restored = openBookIfNeeded(bookId) ?: run { stopSelfIfIdle(); return@launch }
-            if (!requestAudioFocus()) return@launch
+            if (!requestAudioFocus()) {
+                updateSessionAndNotification()
+                ServiceCompat.stopForeground(this@ReadingService, ServiceCompat.STOP_FOREGROUND_DETACH)
+                return@launch
+            }
+            // Opening another book paused (and detached) the previous one; playing is foreground.
+            ensureForeground(playing = true)
             acquireWakeLock()
-            engine.playFrom(position ?: engine.currentRef?.position ?: restored)
-            _state.value = _state.value.copy(isSpeaking = true, error = null)
+            val start = PlaybackPolicy.startPosition(
+                position, _state.value.finished, engine.currentRef?.position, restored,
+            )
+            // A "stop at the chapter's end" timer follows the chapter playing starts in: a jump on
+            // purpose, or a finished book starting over, both leave the chapter it was set in.
+            sleepChapter = PlaybackPolicy.sleepChapterAtStart(sleepChapter, start)
+            engine.playFrom(start)
+            _state.value = _state.value.copy(isSpeaking = true, error = null, finished = false)
             updateMetadata()
             updateSessionAndNotification()
         }
@@ -221,7 +263,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         sleepJob = null
         sleepChapter = if (atChapterEnd) _state.value.position.chapterIndex else null
         val stopAt = minutes?.let { android.os.SystemClock.elapsedRealtime() + it * 60_000L }
-        _state.value = _state.value.copy(sleepAtElapsedMs = stopAt, sleepAtChapterEnd = atChapterEnd)
+        _state.value = _state.value.copy(sleepAtElapsedMs = stopAt, sleepAtChapterEnd = atChapterEnd, sleepMinutes = minutes)
         if (stopAt == null) return
         sleepJob = lifecycleScope.launch {
             delay(stopAt - android.os.SystemClock.elapsedRealtime())
@@ -234,25 +276,49 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         sleepJob?.cancel()
         sleepJob = null
         sleepChapter = null
-        _state.value = _state.value.copy(sleepAtElapsedMs = null, sleepAtChapterEnd = false)
+        _state.value = _state.value.copy(sleepAtElapsedMs = null, sleepAtChapterEnd = false, sleepMinutes = null)
     }
 
-    fun pause() {
+    fun pause() = pause(detach = true)
+
+    /**
+     * [detach] false keeps the service in the foreground, for a pause the system will end by
+     * itself (a call, a notification sound): coming back from the background to start the
+     * foreground service again is what Android 12+ refuses.
+     */
+    private fun pause(detach: Boolean) {
         continueJob?.cancel()
+        restartJob?.cancel() // a speed change just made must not start the reading again
         engine.pause()
         previousSentenceStartedAt = null // a paused gap is not reading time
         persistSpeed()
         resumeOnFocusGain = false
         _state.value = _state.value.copy(isSpeaking = false, wordRange = null)
         updateSessionAndNotification()
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
+        if (detach) ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
         releaseWakeLock()
         persistPosition()
     }
 
     fun resume() {
-        val bookId = _state.value.bookId ?: return
-        play(bookId, engine.currentRef?.position)
+        val loaded = _state.value.bookId
+        if (loaded != null) {
+            // No position: where the narrator is, or the start again once the book has finished.
+            play(loaded)
+            return
+        }
+        // Nothing loaded: a Play from a headset or the notification on a service the system
+        // started fresh. Plays what was read last.
+        ensureForeground(playing = true)
+        resumeJob?.cancel()
+        resumeJob = lifecycleScope.launch {
+            val recent = app.books.observeBooks().first().firstOrNull { it.lastOpenedAt > 0 }
+            when (val target = PlaybackPolicy.resumeTarget(_state.value.bookId, recent?.id)) {
+                is PlaybackPolicy.ResumeTarget.Recent -> play(target.bookId)
+                is PlaybackPolicy.ResumeTarget.Loaded -> _state.value.bookId?.let { play(it) }
+                PlaybackPolicy.ResumeTarget.NothingToPlay -> stopSelfIfIdle()
+            }
+        }
     }
 
     fun skipSentence(forward: Boolean) {
@@ -299,11 +365,25 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             val locale = Locale.forLanguageTag(languageTag).takeIf { it.language.isNotEmpty() }
                 ?: return@launch
             activeLocale = locale
-            val available = engine.configureLanguage(locale, chosenVoiceFor(locale))
+            val available = reconfigure(locale, chosenVoiceFor(locale))
             _state.value = _state.value.copy(languageAvailable = available, error = null)
-            loadSpeedForCurrentVoice()
-            if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
         }
+    }
+
+    /**
+     * Applies a language and voice to the engine. A reading in progress is stopped first and
+     * started again from the same sentence afterwards: the voice is swapped while a sentence
+     * ahead may still be mid-synthesis, and the model cannot be changed under it.
+     */
+    private suspend fun reconfigure(locale: Locale, voiceName: String?): Boolean {
+        val resumeAt = if (engine.isSpeaking) engine.currentRef?.position else null
+        if (resumeAt != null) engine.halt()
+        val available = engine.configureLanguage(locale, voiceName)
+        loadSpeedForCurrentVoice()
+        _state.value = _state.value.copy(voiceName = engine.currentVoiceName())
+        // Not if a Pause arrived meanwhile.
+        if (resumeAt != null && _state.value.isSpeaking) engine.playFrom(resumeAt)
+        return available
     }
 
     fun setSpeechRate(rate: Float) {
@@ -316,7 +396,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         restartJob?.cancel()
         restartJob = lifecycleScope.launch {
             delay(RESTART_AFTER_SETTLING_MS)
-            engine.currentRef?.let { engine.playFrom(it.position) }
+            if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
         }
     }
 
@@ -342,24 +422,49 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
     /** Selects a voice by name, or null to fall back to the engine default. */
     fun selectVoice(voiceName: String?) {
-        lifecycleScope.launch {
-            engine.configureLanguage(activeLocale(), voiceName)
-            loadSpeedForCurrentVoice()
-            if (engine.isSpeaking) engine.currentRef?.let { engine.playFrom(it.position) }
-        }
+        lifecycleScope.launch { reconfigure(activeLocale(), voiceName) }
     }
 
     fun stopPlayback() {
         pause()
         stopForeground(STOP_FOREGROUND_REMOVE)
+        // pause() detached the notification, which stopForeground can no longer take down.
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIFICATION_ID)
+        mediaSession?.isActive = false
         stopSelf()
     }
 
-    private suspend fun openBookIfNeeded(bookId: String): ReadingPosition? = openMutex.withLock {
-        if (_state.value.bookId == bookId && content != null) {
+    /**
+     * Opens [bookId] unless it is the one already loaded. Never starts audio.
+     *
+     * Switching books stops the reading of the old one *first* and waits for it: its read loop
+     * may be a sentence or two ahead, still working on a document about to be closed, and its
+     * late callbacks would write the old book's place into the new one's state. A sleep timer
+     * belongs to the old book's session and goes with it, except when the service plays on by
+     * itself from one story to the next ([carryOn]) or opens the same book again ([reload]).
+     */
+    private suspend fun openBookIfNeeded(
+        bookId: String,
+        carryOn: Boolean = false,
+        reload: Boolean = false,
+    ): ReadingPosition? = openMutex.withLock {
+        if (!reload && _state.value.bookId == bookId && content != null) {
             return engine.currentRef?.position ?: _state.value.position
         }
-        persistPosition()
+        val previous = _state.value
+        val wasPlaying = content != null && !carryOn && (engine.isSpeaking || _state.value.isSpeaking)
+        if (content != null) {
+            if (!carryOn) {
+                if (!reload) clearSleepTimer()
+                continueJob?.cancel()
+                restartJob?.cancel()
+                if (wasPlaying) pause() // stops audio, drops the wake lock, shows a Play notification
+            }
+            engine.halt()
+        }
+        // The old book's place is saved before its document goes. Not again when playing on from
+        // a finished story: that was saved at its start, and its last sentence would replace it.
+        (if (carryOn) saveJob else persistPosition())?.join()
         document?.close()
         document = null
         savedListenMs = 0
@@ -380,6 +485,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         val languageOk = engine.configureLanguage(locale, chosenVoiceFor(locale))
         loadSpeedForCurrentVoice()
 
+        // Only a book can be parked on its last sentence; a story is saved back at its start.
+        val parkedAtEnd = !NewsRepository.isArticle(bookId) && PlaybackPolicy.isParkedAtEnd(source, restored)
         _state.value = PlaybackState(
             bookId = bookId,
             bookTitle = source.title,
@@ -388,12 +495,15 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             isSpeaking = false,
             position = restored,
             languageAvailable = languageOk,
+            voiceName = engine.currentVoiceName(),
             charsPerSecond = speed.charsPerSecond,
             bookListenedMs = savedListenMs,
             bookListenedChars = savedListenChars,
-        )
+            finished = parkedAtEnd,
+        ).let { if (carryOn || reload) it.carryingSleepTimerOf(previous) else it }
         engine.moveTo(restored)
         updateMetadata()
+        if (wasPlaying) updateSessionAndNotification() // the notification names the new book, paused
         return restored
     }
 
@@ -452,11 +562,14 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     // ---- Narrator.Listener ----
 
     override fun onSentenceStart(ref: SentenceRef) {
-        _state.value = _state.value.copy(
+        val before = _state.value
+        _state.value = before.copy(
             position = ref.position,
             sentenceRange = ref.startInBlock until (ref.startInBlock + ref.text.length),
             wordRange = null,
             isSpeaking = engine.isSpeaking,
+            // Reading again, or moved off the end; not the narrator settling on the parked sentence.
+            finished = PlaybackPolicy.keepsFinished(before.finished, engine.isSpeaking, before.position, ref.position),
         )
         sleepChapter?.let { chapter ->
             if (ref.position.chapterIndex != chapter) {
@@ -530,7 +643,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         val key = speedVoiceKey ?: return
         val encoded = speed.encode()
         val cps = speed.charsPerSecond
-        lifecycleScope.launch { app.settings.setSpeed(key, encoded, cps) }
+        saveScope.launch { app.settings.setSpeed(key, encoded, cps) }
     }
 
     override fun onWordRange(ref: SentenceRef, rangeInBlock: IntRange) {
@@ -556,7 +669,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         // Played on into the next story like a book into its next chapter, so the foreground
         // service, wake lock and audio focus are all kept rather than dropped in between.
         _state.value = _state.value.copy(wordRange = null)
-        persistPosition() // also what marks the finished story as heard
+        // Saved at its start, not its last line, and marked heard.
+        persistPosition(ReadingPosition.START, finished = true)
         continueJob?.cancel()
         continueJob = lifecycleScope.launch {
             if (!playNextStory(finished)) finishReading()
@@ -564,11 +678,18 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     }
 
     private fun finishReading() {
-        _state.value = _state.value.copy(isSpeaking = false, wordRange = null)
+        // Nothing is left to time; a chapter-end timer would stop the next Play after one line.
+        clearSleepTimer()
+        val bookId = _state.value.bookId
+        val isArticle = bookId != null && NewsRepository.isArticle(bookId)
+        // A book stays parked at its last sentence, marked finished so Play starts it over. A
+        // story is put back at its start instead, so reopening it reads it from the top.
+        _state.value = _state.value.copy(isSpeaking = false, wordRange = null, finished = bookId != null && !isArticle)
         updateSessionAndNotification()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
         releaseWakeLock()
-        persistPosition()
+        persistPosition(PlaybackPolicy.positionToSave(isArticle, finishing = true, _state.value.position), finished = true)
+        if (isArticle) engine.moveTo(ReadingPosition.START)
     }
 
     /**
@@ -588,7 +709,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
                 after = next
                 return@repeat
             }
-            val restored = openBookIfNeeded(next) ?: return false
+            val restored = openBookIfNeeded(next, carryOn = true) ?: return false
             _state.value = _state.value.copy(continuedFrom = finished)
             engine.playFrom(restored)
             _state.value = _state.value.copy(isSpeaking = true, error = null)
@@ -600,7 +721,10 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     }
 
     override fun onEngineError(message: String) {
-        _state.value = _state.value.copy(error = message, isSpeaking = false)
+        // The normal stop path, not just a flag: it also drops the wake lock, shows Play in the
+        // notification and the media session, and saves the place. The error survives it.
+        _state.value = _state.value.copy(error = message)
+        pause()
     }
 
     // ---- Audio focus ----
@@ -621,7 +745,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
                     AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
                     -> {
                         val wasSpeaking = _state.value.isSpeaking
-                        pause()
+                        // Stays in the foreground: the focus comes back with no one to start
+                        // the service again from the background, and only a user's pause lets go.
+                        pause(detach = false)
                         resumeOnFocusGain = wasSpeaking
                     }
                     AudioManager.AUDIOFOCUS_GAIN -> if (resumeOnFocusGain) {
@@ -637,15 +763,26 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
     // ---- Notification ----
 
-    /** Promotes the service to the foreground, satisfying the startForeground deadline. Idempotent. */
-    private fun ensureForeground() {
-        val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+    /**
+     * Promotes the service to the foreground, satisfying the startForeground deadline. Idempotent.
+     * [playing] builds the notification as playing while playback is still starting.
+     */
+    private fun ensureForeground(playing: Boolean = false) {
+        val notification = buildNotification(
+            PlaybackPolicy.notificationShowsPlaying(_state.value.isSpeaking, starting = playing),
+        )
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            isForeground = true
+        } catch (_: RuntimeException) {
+            // Android 12+ refuses this from the background (a resume after a focus loss, say).
+            // The reading carries on without; being killed is the worst that can follow.
+            isForeground = false
         }
-        isForeground = true
     }
 
     private fun updateMetadata() {
@@ -697,12 +834,12 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(playing: Boolean = _state.value.isSpeaking): Notification {
         val s = _state.value
         val openIntent = openBookPendingIntent(s.bookId)
         val playPauseAction = NotificationCompat.Action(
-            if (s.isSpeaking) R.drawable.ic_pause else R.drawable.ic_play,
-            if (s.isSpeaking) "Pause" else "Play",
+            if (playing) R.drawable.ic_pause else R.drawable.ic_play,
+            if (playing) "Pause" else "Play",
             servicePendingIntent(ACTION_PLAY_PAUSE),
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -710,7 +847,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             .setContentTitle(s.bookTitle.ifEmpty { getString(R.string.app_name) })
             .setContentText(s.author ?: "")
             .setContentIntent(openIntent)
-            .setOngoing(s.isSpeaking)
+            .setOngoing(playing)
             .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .addAction(R.drawable.ic_skip_previous, "Previous sentence", servicePendingIntent(ACTION_PREV))
@@ -744,26 +881,35 @@ class ReadingService : LifecycleService(), Narrator.Listener {
 
     // ---- Persistence / wake lock ----
 
-    private fun persistPosition() {
-        val s = _state.value
-        val bookId = s.bookId ?: return
+    /**
+     * Saves [position] (the current one by default). Returns the save, or null when there is
+     * nothing loaded to save. It runs in [saveScope] and cannot be cancelled once started, so
+     * stopping the service does not lose it; saves go one after another, the last one winning.
+     * While playing this also renews the wake lock, whose timeout is otherwise from the start.
+     */
+    private fun persistPosition(position: ReadingPosition = _state.value.position, finished: Boolean = false): Job? {
+        val bookId = _state.value.bookId ?: return null
         sentencesSinceSave = 0
         flushListening(bookId)
-        val source = content ?: return
-        saveJob?.cancel()
-        saveJob = lifecycleScope.launch {
-            if (NewsRepository.isArticle(bookId)) {
-                app.news.savePosition(bookId, s.position.blockIndex, s.position.sentenceIndex)
-                return@launch
+        if (_state.value.isSpeaking) acquireWakeLock()
+        val source = content ?: return null
+        val previous = saveJob
+        return saveScope.launch {
+            previous?.join()
+            withContext(NonCancellable) {
+                if (NewsRepository.isArticle(bookId)) {
+                    app.news.savePosition(bookId, position.blockIndex, position.sentenceIndex, finished)
+                    return@withContext
+                }
+                val progress = charProgress(bookId, source, position) ?: run {
+                    // Before the book's character counts exist: the old section-based guess.
+                    val blocks = source.blockCount(position.chapterIndex).coerceAtLeast(1)
+                    val sectionCount = source.sectionCount.coerceAtLeast(1)
+                    (position.chapterIndex + position.blockIndex.toFloat() / blocks) / sectionCount
+                }
+                app.books.savePosition(bookId, position, progress)
             }
-            val progress = charProgress(bookId, source, s.position) ?: run {
-                // Before the book's character counts exist: the old section-based guess.
-                val blocks = source.blockCount(s.position.chapterIndex).coerceAtLeast(1)
-                val sectionCount = source.sectionCount.coerceAtLeast(1)
-                (s.position.chapterIndex + s.position.blockIndex.toFloat() / blocks) / sectionCount
-            }
-            app.books.savePosition(bookId, s.position, progress)
-        }
+        }.also { saveJob = it }
     }
 
     /**
@@ -778,7 +924,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         unsavedListenChars = 0
         savedListenMs += ms
         savedListenChars += chars
-        lifecycleScope.launch { app.books.addListening(bookId, ms, chars) }
+        saveScope.launch { app.books.addListening(bookId, ms, chars) }
     }
 
     /**
@@ -795,13 +941,13 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         return before.toFloat() / total
     }
 
+    /** Takes the wake lock, or renews one already held: acquiring again restarts its timeout. */
     private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TTSing:reading").apply {
-            setReferenceCounted(false)
-            acquire(WAKE_LOCK_TIMEOUT_MS)
-        }
+        val lock = wakeLock ?: (getSystemService(Context.POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TTSing:reading")
+            .apply { setReferenceCounted(false) }
+            .also { wakeLock = it }
+        lock.acquire(WAKE_LOCK_TIMEOUT_MS)
     }
 
     private fun releaseWakeLock() {
@@ -809,9 +955,11 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     }
 
     override fun onDestroy() {
-        persistPosition()
+        val lastSave = persistPosition()
         engine.shutdown()
-        document?.close()
+        // Closed once the last save is done with it (it may still be counting characters).
+        document?.let { doc -> saveScope.launch { lastSave?.join(); doc.close() } }
+        document = null
         mediaSession?.release()
         focusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
         runCatching { unregisterReceiver(becomingNoisyReceiver) }
@@ -852,5 +1000,15 @@ class ReadingService : LifecycleService(), Narrator.Listener {
                     putExtra(EXTRA_SENTENCE, position.sentenceIndex)
                 }
             }
+    }
+
+    /** The playing book's file was moved, which re-keyed it: carry on under its new id. */
+    fun bookMoved(oldId: String, newId: String) {
+        if (_state.value.bookId != oldId) return
+        _state.value = _state.value.copy(bookId = newId)
+        // Saves made under the old id around the move may have been lost; this one goes last.
+        persistPosition()
+        updateMetadata()
+        if (isForeground) updateSessionAndNotification()
     }
 }

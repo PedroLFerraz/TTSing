@@ -36,9 +36,25 @@ data class PlaybackState(
      */
     val sleepAtElapsedMs: Long? = null,
     val sleepAtChapterEnd: Boolean = false,
+    /** The length the running sleep timer was set to, so its chip stays lit as it counts down. */
+    val sleepMinutes: Int? = null,
+    /** The voice the engine is configured with, kept current for the settings sheet. */
+    val voiceName: String? = null,
     /**
      * Set when the service played on from one news story into the next by itself: the id of
      * the story that finished. Lets a reader screen still showing that story follow along.
      */
     val continuedFrom: String? = null,
+    /**
+     * True once a book (not an article queue) has been read to its end, until playback starts
+     * again or the position moves. Play then starts the book over.
+     */
+    val finished: Boolean = false,
+)
+
+/** This state with the sleep timer of [previous], for a state rebuilt while the timer keeps running. */
+internal fun PlaybackState.carryingSleepTimerOf(previous: PlaybackState): PlaybackState = copy(
+    sleepAtElapsedMs = previous.sleepAtElapsedMs,
+    sleepAtChapterEnd = previous.sleepAtChapterEnd,
+    sleepMinutes = previous.sleepMinutes,
 )

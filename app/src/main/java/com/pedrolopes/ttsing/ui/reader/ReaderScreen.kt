@@ -1,6 +1,13 @@
 package com.pedrolopes.ttsing.ui.reader
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
@@ -21,6 +28,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -29,6 +38,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -37,6 +47,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowLeft
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowRight
 import androidx.compose.material.icons.filled.Pause
@@ -45,6 +59,8 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalDrawerSheet
@@ -54,18 +70,27 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -79,6 +104,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pedrolopes.ttsing.TTSingApp
@@ -91,13 +121,13 @@ import com.pedrolopes.ttsing.data.settings.ReaderTheme
 import com.pedrolopes.ttsing.tts.ReadingController
 import com.pedrolopes.ttsing.tts.SpeedSteps
 import com.pedrolopes.ttsing.tts.piper.PiperCatalog
-import com.pedrolopes.ttsing.tts.piper.PiperDownloads
-import com.pedrolopes.ttsing.tts.piper.PiperVoices
 import com.pedrolopes.ttsing.ui.common.Hairline
 import com.pedrolopes.ttsing.ui.common.LocalImage
+import com.pedrolopes.ttsing.ui.common.MinTouchTarget
 import com.pedrolopes.ttsing.ui.common.MonoText
 import com.pedrolopes.ttsing.ui.common.ScreenPadding
 import com.pedrolopes.ttsing.ui.common.ThinProgress
+import com.pedrolopes.ttsing.ui.common.bookImageKey
 import com.pedrolopes.ttsing.ui.common.simpleFactory
 import com.pedrolopes.ttsing.ui.theme.AppFonts
 import com.pedrolopes.ttsing.ui.theme.Ink
@@ -106,6 +136,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
 private val DefaultSettings = AppSettings(
@@ -114,6 +145,32 @@ private val DefaultSettings = AppSettings(
     fontScale = 1f,
     readerTheme = ReaderTheme.DARK,
 )
+
+/** How long a page must stay put before it counts as where the reader is. */
+private const val BROWSE_SAVE_MS = 1_000L
+
+/**
+ * Bookkeeping for the browsing save: plain fields rather than state, since none of it is drawn.
+ * [layoutEpoch] counts layout changes; a page reported after one moved because the text was
+ * re-laid out, not because the reader turned to it.
+ */
+private class BrowseState {
+    var reported: VisiblePage? = null
+    var navigated = false
+    var layoutEpoch = 0
+    var seenEpoch = 0
+    var layoutChanged = false
+    /** Where the voice was last parked by the reader. */
+    var parked: ReadingPosition? = null
+    /** The save waiting out its delay, for when the screen is left before it fires. */
+    var pending: (() -> Unit)? = null
+
+    fun noteReport(page: VisiblePage) {
+        // A report identical to the last changes nothing, so a layout change it follows moved no page.
+        layoutChanged = (layoutChanged || layoutEpoch != seenEpoch) && page != reported
+        seenEpoch = layoutEpoch
+    }
+}
 
 /** The page on screen, as the pager reports it: where it is in its chapter, and where it starts. */
 internal data class VisiblePage(
@@ -142,6 +199,23 @@ fun ReaderScreen(
     val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = DefaultSettings)
     val palette = readerPalette(settings.readerTheme)
 
+    // The activity draws the status and navigation bars' icons light, for the app's black. Over
+    // a light or sepia page they would vanish, so they follow the page while it is open.
+    val activity = LocalActivity.current
+    val pageIsLight = palette.isLight
+    DisposableEffect(activity, pageIsLight) {
+        val window = activity?.window
+        val bars = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        val wasStatus = bars?.isAppearanceLightStatusBars
+        val wasNavigation = bars?.isAppearanceLightNavigationBars
+        bars?.isAppearanceLightStatusBars = pageIsLight
+        bars?.isAppearanceLightNavigationBars = pageIsLight
+        onDispose {
+            if (bars != null && wasStatus != null) bars.isAppearanceLightStatusBars = wasStatus
+            if (bars != null && wasNavigation != null) bars.isAppearanceLightNavigationBars = wasNavigation
+        }
+    }
+
     // Minutes left on the sleep timer, ticking down for the footer and the settings sheet.
     // CHAPTER_END stands for a timer that runs to the end of the chapter instead of a clock.
     var sleepMinutesLeft by remember { mutableStateOf<Int?>(null) }
@@ -166,8 +240,39 @@ fun ReaderScreen(
     var visible by remember { mutableStateOf<VisiblePage?>(null) }
     /** The page the voice is on, when it is in the chapters the pager holds. */
     var voicePage by remember { mutableStateOf<VisiblePage?>(null) }
-    var cardDraft by remember { mutableStateOf<CardDraft?>(null) }
+    val cardDraft by viewModel.cardDraft.collectAsStateWithLifecycle()
+    var narratorWasPlaying by remember { mutableStateOf(false) }
     val snackbarHost = remember { SnackbarHostState() }
+
+    // ---- chrome: the header and footer can be put away to leave the page the whole screen ----
+    // A phone on its side starts with a slimmer header and a one-row footer; hiding both is one
+    // tap on the page's margin (anywhere that isn't text) or the header's fullscreen button.
+    val compactChrome = isCompactHeight(LocalConfiguration.current.screenHeightDp)
+    var chromeShown by rememberSaveable { mutableStateOf(true) }
+    var chromeHintShown by rememberSaveable { mutableStateOf(false) }
+    val setChromeShown: (Boolean) -> Unit = { show ->
+        chromeShown = show
+        if (!show && !chromeHintShown) {
+            chromeHintShown = true
+            scope.launch { snackbarHost.showSnackbar("Tap outside the text to bring the controls back") }
+        }
+    }
+    val toggleChrome: () -> Unit = { setChromeShown(!chromeShown) }
+
+    // ---- notifications: asked for the first time Play is pressed, never in the way of playing ----
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val askForNotifications: () -> Unit = {
+        val granted = Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (notificationAsk.shouldAskNow(Build.VERSION.SDK_INT, granted)) {
+            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    /** Starts the voice (at [position], or where it left off), then asks about notifications. */
+    val startReading: (ReadingPosition?) -> Unit = { position ->
+        controller.play(bookId, position)
+        askForNotifications()
+    }
     val drawerState = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
 
     // Counting pages happens off the main thread, so it gets its own measurer: the one the
@@ -183,6 +288,17 @@ fun ReaderScreen(
     LaunchedEffect(connected) { if (connected) controller.prepare(bookId) }
 
     val isThisBook = playback.isActive && playback.bookId == bookId
+
+    // Pause narration when the card sheet opens; resume on close if it was playing.
+    LaunchedEffect(cardDraft != null) {
+        if (cardDraft != null && isThisBook && playback.isSpeaking) {
+            narratorWasPlaying = true
+            controller.pause()
+        } else if (cardDraft == null && narratorWasPlaying) {
+            controller.togglePlayPause(bookId)
+            narratorWasPlaying = false
+        }
+    }
 
     // Stories play on into the next one by themselves; a screen left showing the finished
     // one would sit there with no highlight while the voice reads something else. Only a
@@ -200,6 +316,86 @@ fun ReaderScreen(
     LaunchedEffect(playback.position.chapterIndex, isThisBook) {
         if (isThisBook) viewModel.syncToChapter(playback.position.chapterIndex)
     }
+
+    // ---- browsing: remembering the place, and parking the voice there ----
+    // Where the reader settles is where they are in the book. It is saved a moment after the
+    // page stops changing; if the voice is paused in this book it is parked there too, so Play
+    // reads what is on screen. While the voice speaks, the service owns the position.
+    val browse = remember { BrowseState() }
+    val latestPlayback by rememberUpdatedState(playback)
+    // Back from installing voice data in the system's settings: the engine has to be asked again
+    // whether the language is there now, or the "no voice" banner stays until the book is reopened.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        val now = latestPlayback
+        if (now.isActive && now.bookId == bookId && !now.languageAvailable) {
+            controller.activeLocale()?.let { controller.selectLanguage(it.toLanguageTag()) }
+        }
+    }
+    val latestWindow by rememberUpdatedState(ui.window)
+    val latestVoicePage by rememberUpdatedState(voicePage)
+    val latestCardOpen by rememberUpdatedState(cardDraft != null)
+    val voiceIsOn: (VisiblePage) -> Boolean = { page ->
+        latestVoicePage?.let { it.chapterIndex == page.chapterIndex && it.pageInChapter == page.pageInChapter } == true
+    }
+    val speakingHere = isThisBook && playback.isSpeaking
+    LaunchedEffect(visible, speakingHere) {
+        browse.pending = null
+        val page = visible ?: return@LaunchedEffect
+        // Pausing restarts this for the same page: that is not a new report.
+        if (browse.reported != page) {
+            browse.navigated = isNavigation(browse.reported, page, browse.layoutChanged, browse.navigated)
+            browse.layoutChanged = false
+            browse.reported = page
+        }
+        if (!browse.navigated) return@LaunchedEffect
+        val commit = {
+            val now = latestPlayback
+            val serviceHasBook = now.isActive && now.bookId == bookId
+            val action = browseAction(
+                true, serviceHasBook && now.isSpeaking, serviceHasBook, voiceIsOn(page), latestCardOpen,
+            )
+            if (action != BrowseAction.NONE) {
+                val blocks = latestWindow.firstOrNull { it.index == page.chapterIndex }?.blocks
+                val position = browsePosition(page.chapterIndex, blocks, page.firstBlockIndex, page.firstOffset)
+                viewModel.saveBrowsedPosition(position)
+                if (action == BrowseAction.SAVE_AND_PARK) {
+                    browse.parked = position
+                    controller.seekTo(position, alsoPlay = false, bookId = bookId)
+                }
+            }
+        }
+        browse.pending = commit
+        delay(BROWSE_SAVE_MS)
+        browse.pending = null
+        commit()
+    }
+    // Leaving within the delay must not lose the last swipe.
+    DisposableEffect(Unit) {
+        onDispose {
+            browse.pending?.invoke()
+            browse.pending = null
+        }
+    }
+    /** The voice goes where the reader went: along with it when speaking, parked there when not. */
+    val seekVoiceToChapter: (Int) -> Unit = { chapter ->
+        val now = latestPlayback
+        if (now.isActive && now.bookId == bookId) {
+            val position = ReadingPosition(chapter, 0, 0)
+            browse.parked = position
+            // A speaking voice saves its own place as it goes; a parked one is the reader's to save.
+            if (!now.isSpeaking) viewModel.saveBrowsedPosition(position)
+            controller.seekTo(position, alsoPlay = now.isSpeaking, bookId = bookId)
+        }
+    }
+    // What the page follows: the spoken word, kept through a pause (which clears it) so that
+    // pausing in a sentence that began on the previous page does not turn the page back.
+    val lastWord = remember { arrayOfNulls<WordAt>(1) }
+    val followAt = followOffset(playback.wordRange, playback.position, playback.sentenceRange, lastWord[0])
+    SideEffect {
+        playback.wordRange?.let { lastWord[0] = WordAt(playback.position, playback.sentenceRange, it.first) }
+    }
+    // Not turned to while it sits exactly where the reader parked it.
+    val followVoice = !(isThisBook && playback.position == browse.parked)
 
     // A PDF shows its own pages unless this book was switched to reflowed text.
     val pdf = viewModel.pdf
@@ -301,14 +497,22 @@ fun ReaderScreen(
                     modifier = Modifier.padding(start = 24.dp, top = 28.dp, bottom = 8.dp),
                 )
                 Hairline(modifier = Modifier.padding(vertical = 10.dp), inset = 24.dp)
-                LazyColumn {
-                    itemsIndexed(ui.toc) { _, entry ->
-                        val current = entry.spineIndex == visibleChapter
+                val tocState = rememberLazyListState()
+                val currentEntry = currentTocIndex(ui.toc.map { it.spineIndex }, visibleChapter)
+                // Opening the contents shows where the reader is in them, not the top.
+                LaunchedEffect(drawerState.targetValue) {
+                    if (drawerState.targetValue == androidx.compose.material3.DrawerValue.Open && currentEntry >= 0) {
+                        tocState.scrollToItem((currentEntry - 2).coerceAtLeast(0))
+                    }
+                }
+                LazyColumn(state = tocState) {
+                    itemsIndexed(ui.toc) { index, entry ->
+                        val current = index == currentEntry
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    viewModel.showChapter(entry.spineIndex)
+                                    viewModel.showChapter(entry.spineIndex, onLanded = seekVoiceToChapter)
                                     scope.launch { drawerState.close() }
                                 }
                                 .padding(horizontal = 24.dp, vertical = 12.dp),
@@ -339,19 +543,23 @@ fun ReaderScreen(
             containerColor = palette.background,
             snackbarHost = { SnackbarHost(snackbarHost) },
             topBar = {
-                ReaderTopBar(
+                if (chromeShown) ReaderTopBar(
                     title = ui.title,
                     chapterLabel = chapterLabel(visibleChapter, ui.chapterCount, visibleTitle),
                     palette = palette,
                     articleLink = ui.articleLink,
+                    compact = compactChrome,
                     onBack = onBack,
                     onOpenLink = { link -> openInBrowser(context, link) },
                     onOpenContents = { scope.launch { drawerState.open() } },
                     onOpenSettings = { showSettings = true },
+                    // Room for one more glyph: always for a book, and on its side for an article.
+                    onHideChrome = { setChromeShown(false) }.takeIf { compactChrome || ui.articleLink == null },
                 )
             },
             bottomBar = {
-                ReaderFooter(
+                if (chromeShown) ReaderFooter(
+                    compact = compactChrome,
                     // A book that could not be opened has no pages to count or time to run.
                     showPosition = ui.error == null && ui.window.isNotEmpty(),
                     pageLabel = pageLabel,
@@ -366,14 +574,42 @@ fun ReaderScreen(
                     speechRate = settings.speechRate,
                     sleepMinutesLeft = sleepMinutesLeft,
                     palette = palette,
-                    onCycleSpeed = {
-                        val next = SpeedSteps.next(settings.speechRate)
+                    onSelectSpeed = { next ->
                         scope.launch { app.settings.setSpeechRate(next) }
                         controller.setSpeechRate(next)
                     },
-                    onPrevChapter = { viewModel.stepChapter(visibleChapter, forward = false) },
-                    onNextChapter = { viewModel.stepChapter(visibleChapter, forward = true) },
-                    onPlayPause = { controller.togglePlayPause(bookId) },
+                    onPrevChapter = { viewModel.stepChapter(visibleChapter, forward = false, onLanded = seekVoiceToChapter) },
+                    onNextChapter = { viewModel.stepChapter(visibleChapter, forward = true, onLanded = seekVoiceToChapter) },
+                    onPlayPause = {
+                        val wasSpeaking = isThisBook && playback.isSpeaking
+                        // A swipe within the last second has not moved the voice yet: start
+                        // where the reader is now, not where the voice was parked before it.
+                        val page = visible
+                        val start = if (!wasSpeaking && page != null) {
+                            playStartAfterBrowse(
+                                browsePending = browse.pending != null,
+                                serviceHasBook = isThisBook,
+                                voiceOnPage = voiceIsOn(page),
+                                browsed = browsePosition(
+                                    page.chapterIndex,
+                                    ui.window.firstOrNull { it.index == page.chapterIndex }?.blocks,
+                                    page.firstBlockIndex,
+                                    page.firstOffset,
+                                ),
+                            )
+                        } else {
+                            null
+                        }
+                        if (start != null) {
+                            browse.pending = null
+                            browse.parked = start
+                            viewModel.saveBrowsedPosition(start)
+                            controller.play(bookId, start)
+                        } else {
+                            controller.togglePlayPause(bookId)
+                        }
+                        if (!wasSpeaking) askForNotifications()
+                    },
                     onNextSentence = { controller.next() },
                     onPrevSentence = { controller.previous() },
                 )
@@ -401,23 +637,27 @@ fun ReaderScreen(
                         activeBlockIndex = playback.position.blockIndex.takeIf { isThisBook },
                         sentenceRange = playback.sentenceRange.takeIf { isThisBook },
                         wordRange = playback.wordRange.takeIf { isThisBook },
+                        followVoice = followVoice,
                         onTap = { page, x, y ->
                             scope.launch {
-                                viewModel.pdfPositionAt(page, x, y)?.let { (position, _) -> controller.play(bookId, position) }
+                                // A tap that is on no text is a tap on the margin: it toggles the chrome.
+                                val hit = viewModel.pdfPositionAt(page, x, y)
+                                if (hit != null) startReading(hit.first) else toggleChrome()
                             }
                         },
                         onLongPress = { page, x, y ->
                             scope.launch {
                                 viewModel.pdfPositionAt(page, x, y)?.let { (position, offset) ->
-                                    cardDraft = viewModel.draftFor(position.chapterIndex, position.blockIndex, offset)
+                                    viewModel.updateCardDraft(viewModel.draftFor(position.chapterIndex, position.blockIndex, offset))
                                 }
                             }
                         },
-                        onVisiblePage = { page -> visible = page },
+                        onVisiblePage = { page -> browse.noteReport(page); visible = page },
                         onVoicePage = { page -> voicePage = page },
                         onSettledChapter = viewModel::onVisibleChapter,
                     )
                     else -> PagedBook(
+                        bookId = bookId,
                         window = ui.window,
                         jump = ui.jump,
                         fontScale = settings.fontScale,
@@ -426,50 +666,100 @@ fun ReaderScreen(
                         activeBlockIndex = playback.position.blockIndex.takeIf { isThisBook },
                         // Follow the spoken WORD, so a sentence spanning a page boundary
                         // flips the page exactly when the highlight crosses it.
-                        activeOffset = playback.wordRange?.first ?: playback.sentenceRange?.first,
+                        activeOffset = followAt,
                         sentenceRange = playback.sentenceRange,
                         wordRange = playback.wordRange,
-                        onTapStart = { position -> controller.play(bookId, position) },
+                        followVoice = followVoice,
+                        onTapStart = { position -> startReading(position) },
+                        onToggleChrome = toggleChrome,
                         onMakeCard = { chapter, blockIndex, offset ->
-                            cardDraft = viewModel.draftFor(chapter, blockIndex, offset)
+                            viewModel.updateCardDraft(viewModel.draftFor(chapter, blockIndex, offset))
                         },
                         loadImage = viewModel::imageBytes,
-                        onGeometry = { geometry -> viewModel.ensurePageCounts(geometry, countingMeasurer, density) },
-                        onVisiblePage = { page -> visible = page },
+                        onGeometry = { geometry ->
+                            browse.layoutEpoch++
+                            viewModel.ensurePageCounts(geometry, countingMeasurer, density)
+                        },
+                        onVisiblePage = { page -> browse.noteReport(page); visible = page },
                         onVoicePage = { page -> voicePage = page },
                         onSettledChapter = viewModel::onVisibleChapter,
                     )
                 }
 
                 val playbackError = playback.error.takeIf { isThisBook }
+                val finishedHere = playback.finished && playback.bookId == bookId
+                // Each banner can be sent away; it comes back if what it says happens again.
+                var errorDismissed by rememberSaveable(playbackError) { mutableStateOf(false) }
+                var voiceDismissed by rememberSaveable(playback.languageAvailable) { mutableStateOf(false) }
+                var finishedDismissed by rememberSaveable(finishedHere) { mutableStateOf(false) }
+                var summaryDismissed by rememberSaveable { mutableStateOf(false) }
+                var retrying by remember { mutableStateOf(false) }
                 when {
                     // An engine failure is the most urgent thing to say: without it, a voice
                     // that cannot speak just looks like a reader that stopped working.
-                    playbackError != null && ui.error == null -> EngineErrorBanner(
+                    playbackError != null && ui.error == null && !errorDismissed -> EngineErrorBanner(
                         message = playbackError,
                         onOpenSettings = { showSettings = true },
+                        onDismiss = { errorDismissed = true },
                         modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
                     )
-                    isThisBook && !playback.languageAvailable ->
-                        MissingVoiceBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
-                    ui.isTruncated ->
-                        TruncatedArticleBanner(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp))
+                    isThisBook && !playback.languageAvailable && !voiceDismissed ->
+                        MissingVoiceBanner(
+                            onDismiss = { voiceDismissed = true },
+                            modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                        )
+                    finishedHere && !finishedDismissed -> FinishedBanner(
+                        onStartOver = { startReading(null) },
+                        onDismiss = { finishedDismissed = true },
+                        modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                    )
+                    ui.isTruncated && !summaryDismissed -> TruncatedArticleBanner(
+                        message = summaryBannerMessage(ui.articleIssue),
+                        retrying = retrying,
+                        onRetry = {
+                            retrying = true
+                            viewModel.retryFullText { ok ->
+                                retrying = false
+                                if (ok) {
+                                    // The voice holds the old, short text: it has to read the new.
+                                    if (latestPlayback.isActive && latestPlayback.bookId == bookId) controller.reloadBook(bookId)
+                                } else {
+                                    scope.launch { snackbarHost.showSnackbar("Still couldn't get the full article") }
+                                }
+                            }
+                        },
+                        onDismiss = { summaryDismissed = true },
+                        modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                    )
                 }
             }
         }
     }
 
     cardDraft?.let { draft ->
+        // Use effective locale (with user's language override applied) for consistency with card audio.
+        val declaredLocale = ui.languageTag
+            ?.let { Locale.forLanguageTag(it) }
+            ?.takeIf { it.language.isNotEmpty() }
+        val effectiveLocale = settings.localeFor(bookId, declaredLocale ?: viewModel.bookLocale())
+
+        val cardStatus by viewModel.cardStatus.collectAsStateWithLifecycle()
         CardSheet(
             draft = draft,
-            locale = viewModel.bookLocale(),
+            locale = effectiveLocale,
             isSubmitting = ui.isSavingCard,
-            onDraftChange = { cardDraft = it },
+            error = cardStatus.error,
+            offerWithoutAudio = cardStatus.offerWithoutAudio,
+            isAnkiInstalled = viewModel::isAnkiInstalled,
+            onDraftChange = { viewModel.updateCardDraft(it) },
             onPreviewAudio = { viewModel.previewCardAudio(it) },
-            onDismiss = { cardDraft = null },
+            // The sheet has already asked before discarding typed work.
+            onDismiss = { viewModel.updateCardDraft(null) },
             onSubmit = { toAdd ->
-                viewModel.submitCard(toAdd) { message ->
-                    cardDraft = null
+                viewModel.submitCard(toAdd) { message -> scope.launch { snackbarHost.showSnackbar(message) } }
+            },
+            onSubmitWithoutAudio = { toAdd ->
+                viewModel.submitCard(toAdd, withAudio = false) { message ->
                     scope.launch { snackbarHost.showSnackbar(message) }
                 }
             },
@@ -487,23 +777,41 @@ fun ReaderScreen(
             ?.takeIf { it.language.isNotEmpty() }
         val activeLocale = settings.localeFor(bookId, declaredLocale ?: Locale.getDefault())
         val languageCode = activeLocale.language
-        val downloads = remember(context) { PiperDownloads(context) }
+        // Downloads belong to the app, not to this sheet, so closing it neither loses one nor
+        // lets a second start into the same folder.
+        val downloads = app.piperDownloads
         val downloadProgress by downloads.progress.collectAsStateWithLifecycle()
-        var installedNeural by remember { mutableStateOf(emptySet<String>()) }
-        LaunchedEffect(showSettings, downloadProgress) {
-            installedNeural = withContext(Dispatchers.IO) {
-                PiperVoices.available(context).map { it.id }.toSet()
+        val installedNeural by downloads.installed.collectAsStateWithLifecycle()
+        // Coming back from Android's "Install voice data" screen: look at the engine again.
+        var resumes by remember { mutableIntStateOf(0) }
+        LifecycleResumeEffect(Unit) {
+            resumes++
+            downloads.refresh()
+            onPauseOrDispose { }
+        }
+        // The voice lists are read from the engine and the disk, off the main thread, and
+        // again whenever something they depend on changes: the voice in use, a download or
+        // delete finishing, the language, or the app coming back to the front.
+        var voiceLists by remember { mutableStateOf(VoiceLists()) }
+        LaunchedEffect(activeLocale, connected, playback.voiceName, installedNeural, resumes) {
+            voiceLists = withContext(Dispatchers.IO) {
+                VoiceLists(
+                    voices = controller.voicesFor(activeLocale),
+                    defaultVoiceName = controller.defaultVoiceNameFor(activeLocale),
+                    languages = controller.availableLanguages(),
+                )
             }
         }
         ReaderSettingsSheet(
             settings = settings,
-            voices = remember(languageCode, connected) { controller.voicesFor(activeLocale) },
-            currentVoiceName = remember(languageCode, connected) { controller.currentVoiceName() },
-            defaultVoiceName = remember(languageCode, connected) { controller.defaultVoiceNameFor(activeLocale) },
+            voices = voiceLists.voices,
+            currentVoiceName = playback.voiceName,
+            speaking = isThisBook && playback.isSpeaking,
+            defaultVoiceName = voiceLists.defaultVoiceName,
             activeLocale = activeLocale,
             declaredLanguageTag = ui.languageTag,
             languageOverridden = bookId in settings.bookLanguages,
-            availableLanguages = remember(connected) { controller.availableLanguages() },
+            availableLanguages = voiceLists.languages,
             onSelectLanguage = { locale ->
                 val tag = locale.toLanguageTag()
                 // Persist first: settings drive the UI, so the picker updates even if the
@@ -553,24 +861,21 @@ fun ReaderScreen(
             installedNeuralIds = installedNeural,
             downloading = downloadProgress,
             sleepMinutesLeft = sleepMinutesLeft,
+            sleepStartedMinutes = playback.sleepMinutes,
             onSleepTimer = { minutes, atChapterEnd -> controller.setSleepTimer(minutes, atChapterEnd) },
             onDeleteVoice = { voice ->
                 scope.launch {
-                    withContext(Dispatchers.IO) { PiperVoices.delete(context, voice.id) }
-                    if (settings.voiceFor(languageCode) == voice.id) {
-                        app.settings.setVoice(languageCode, null)
-                        controller.selectVoice(null)
-                    }
-                    installedNeural = PiperVoices.available(context).map { it.id }.toSet()
+                    downloads.delete(voice.id)
+                    // Every language that had picked it, not just this book's: a stored choice
+                    // pointing at a deleted voice would fall back silently the next time.
+                    val used = VoiceRules.languagesToClear(settings.voices, voice.id)
+                    used.forEach { app.settings.setVoice(it, null) }
+                    if (languageCode in used || playback.voiceName == voice.id) controller.selectVoice(null)
                 }
             },
-            onDownloadVoice = { voice ->
-                scope.launch {
-                    if (downloads.download(voice)) {
-                        installedNeural = PiperVoices.available(context).map { it.id }.toSet()
-                    }
-                }
-            },
+            onDownloadVoice = { voice -> downloads.start(voice) },
+            onCancelDownload = downloads::cancel,
+            isMetered = { isMeteredConnection(context) },
         )
     }
 }
@@ -587,15 +892,27 @@ private data class BookPage(
     val key: String get() = "${chapter.index}:$pageInChapter"
 }
 
+/** The page area and the font pages are laid out for; a change in any of them lays every page out again. */
+private data class PageLayout(val widthPx: Int, val heightPx: Int, val fontScale: Float)
+
+/** The chapters of [window] laid out at [layout], their pages numbered on from one another. */
+private class PagedWindow(val window: List<LoadedChapter>, val layout: PageLayout, val pages: List<BookPage>)
+
 /**
  * The book as one run of pages. The pager spans the chapters in [window] back to back, so
  * swiping off a chapter's last page lands on the next chapter's first; when the settled page
  * is in a neighbour, [onSettledChapter] lets the window recentre on it. Pages are keyed by
  * chapter and page number, so the pager keeps the same page on screen while the list shifts
- * around it.
+ * around it. When the layout itself changes (font size, rotation) the numbers no longer mean
+ * the same text, so the page is found again by the text it started with.
+ *
+ * Laying pages out takes a while for a long chapter, so it happens off the main thread: the
+ * pages on screen stay as they are until the new ones are ready.
  */
 @Composable
 private fun PagedBook(
+    /** Whose images these are: the same path in two books is two pictures. */
+    bookId: String,
     window: List<LoadedChapter>,
     jump: JumpRequest?,
     fontScale: Float,
@@ -605,7 +922,11 @@ private fun PagedBook(
     activeOffset: Int?,
     sentenceRange: IntRange?,
     wordRange: IntRange?,
+    /** False while the voice sits where the reader parked it: turning to it would undo their browsing. */
+    followVoice: Boolean,
     onTapStart: (ReadingPosition) -> Unit,
+    /** A tap on the page that is not on any text: show or hide the header and footer. */
+    onToggleChrome: () -> Unit,
     onMakeCard: (chapterIndex: Int, blockIndex: Int, offsetInBlock: Int) -> Unit,
     loadImage: suspend (String) -> ByteArray?,
     onGeometry: (PageGeometry) -> Unit,
@@ -615,29 +936,74 @@ private fun PagedBook(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val measurer = rememberTextMeasurer()
-        val widthPx = (constraints.maxWidth - with(density) { PageHorizontalPadding.toPx() * 2 }).toInt().coerceAtLeast(1)
+        val widthPx = pageWidthPx(
+            constraints.maxWidth.toFloat(),
+            with(density) { ReaderColumnMaxWidth.toPx() },
+            with(density) { PageHorizontalPadding.toPx() },
+        )
         val heightPx = (constraints.maxHeight - with(density) { (PageVerticalPadding * 2 + PageBottomSlack).toPx() })
             .toInt().coerceAtLeast(1)
+        // A line of text across a tablet, or a phone on its side, is too long to follow: the
+        // column stops at a readable width and sits in the middle, the rest being margin.
+        val sideInset = with(density) { columnInsetPx(constraints.maxWidth.toFloat(), ReaderColumnMaxWidth.toPx()).toDp() }
         val geometry = PageGeometry(widthPx, heightPx, fontScale, density.density)
         LaunchedEffect(geometry) { onGeometry(geometry) }
 
-        // Each chapter is paginated once per layout and reused as the window slides along.
-        val paginated = remember(widthPx, heightPx, fontScale) { HashMap<Int, List<ReaderPage>>() }
-        val pages = remember(window, widthPx, heightPx, fontScale) {
-            window.flatMap { chapter ->
-                val chapterPages = paginated.getOrPut(chapter.index) {
-                    paginateChapter(chapter.blocks, widthPx, heightPx, measurer, density, fontScale)
-                }
-                chapterPages.mapIndexed { i, content -> BookPage(chapter, i, chapterPages.size, content) }
+        // A measurer of its own: the composition's keeps a cache that is not safe to share
+        // with a background thread. Each chapter is laid out once per layout and reused as the
+        // window slides along.
+        val fontResolver = LocalFontFamilyResolver.current
+        val layoutDirection = LocalLayoutDirection.current
+        val measurer = remember(fontResolver, density, layoutDirection) {
+            TextMeasurer(fontResolver, density, layoutDirection, cacheSize = 0)
+        }
+        val layout = PageLayout(widthPx, heightPx, fontScale)
+        val paginated = remember(layout) { ConcurrentHashMap<Int, CachedPages>() }
+        val paged by produceState<PagedWindow?>(null, window, layout) {
+            value = withContext(Dispatchers.Default) {
+                PagedWindow(
+                    window,
+                    layout,
+                    window.flatMap { chapter ->
+                        // Keyed by index, but a chapter can be replaced under its index (an
+                        // article's full text arriving): pages cut from the old text don't fit.
+                        val chapterPages = (
+                            paginated[chapter.index]?.takeIf { it.isFor(chapter.blocks) }
+                                ?: CachedPages(
+                                    chapter.blocks,
+                                    paginateChapter(chapter.blocks, widthPx, heightPx, measurer, density, fontScale),
+                                ).also { paginated[chapter.index] = it }
+                            ).pages
+                        chapterPages.mapIndexed { i, content -> BookPage(chapter, i, chapterPages.size, content) }
+                    },
+                )
             }
         }
+        val current = paged
+        if (current == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = palette.accent)
+            }
+            return@BoxWithConstraints
+        }
+        val pages = current.pages
 
         // A jump (opening the book, the contents, « ») builds a fresh pager already on the
         // right page, rather than scrolling an old one there and flashing what was in between.
-        key(jump?.id) {
-            val startPage = remember(jump?.id) {
-                jump?.let { target -> indexOfBlock(pages, target.chapterIndex, target.blockIndex, 0) } ?: 0
+        // It waits for the pages it lands on: a jump that arrives with a new window would
+        // otherwise be placed on the old one.
+        val gate = remember { JumpGate() }
+        if (jump != null && jump.id != gate.applied?.id && current.layout == layout &&
+            current.window.any { it.index == jump.chapterIndex }
+        ) {
+            gate.applied = jump
+        }
+        val appliedJump = gate.applied
+        key(appliedJump?.id) {
+            val startPage = remember(appliedJump?.id) {
+                appliedJump?.let { target ->
+                    indexOfBlock(pages, target.chapterIndex, target.blockIndex, target.offsetInBlock)
+                } ?: 0
             }
             val pagerState = rememberPagerState(initialPage = startPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))) {
                 pages.size
@@ -646,19 +1012,29 @@ private fun PagedBook(
             // The pager positions by index, and recentring the window renumbers every page. So
             // when the list changes, put back whichever page was on screen, by its key, in the
             // same frame — otherwise moving into the next chapter jumps to whatever page now
-            // sits at the old index.
-            val shown = remember { PagesOnScreen() }
+            // sits at the old index. After a re-layout the keys mean different text, so the
+            // page is found by the text it began with instead.
+            val shown = remember { PagesOnScreen(current.layout) }
             if (shown.pages !== pages) {
-                val keyOnScreen = shown.pages?.getOrNull(pagerState.currentPage)?.key
+                val onScreen = shown.pages?.getOrNull(pagerState.currentPage)
+                val relaid = shown.layout != current.layout
                 shown.pages = pages
-                val index = keyOnScreen?.let { key -> pages.indexOfFirst { it.key == key } } ?: -1
+                shown.layout = current.layout
+                val index = when {
+                    onScreen == null -> -1
+                    !relaid -> pages.indexOfFirst { it.key == onScreen.key }
+                    else -> onScreen.anchor()
+                        ?.let { (block, offset) -> indexOfBlock(pages, onScreen.chapter.index, block, offset) } ?: -1
+                }
                 if (index >= 0 && index != pagerState.currentPage) pagerState.requestScrollToPage(index)
             }
             val currentPages by rememberUpdatedState(pages)
+            val currentLayout by rememberUpdatedState(current.layout)
+            val following by rememberUpdatedState(followVoice)
 
             // The voice's page, by key. Reading along turns to it when the voice *moves* — not
-            // when its page merely reappears in a recentred window, which would drag a reader
-            // who had swiped ahead back to where the voice was parked.
+            // when its page merely reappears in a recentred window or under a new layout, which
+            // would drag a reader who had swiped ahead back to where the voice was parked.
             val voicePageKey = if (voiceChapter != null && activeBlockIndex != null) {
                 indexOfBlock(pages, voiceChapter, activeBlockIndex, activeOffset ?: 0)?.let { pages[it].key }
             } else {
@@ -675,9 +1051,13 @@ private fun PagedBook(
             LaunchedEffect(voicePageKey) {
                 if (voicePageKey == null || voicePageKey == shown.lastVoiceKey) return@LaunchedEffect
                 val firstSighting = shown.lastVoiceKey == null
+                val relaid = shown.voiceLayout != currentLayout
                 shown.lastVoiceKey = voicePageKey
-                // On opening, the jump already put the reader where the voice is parked.
-                if (firstSighting) return@LaunchedEffect
+                shown.voiceLayout = currentLayout
+                // On opening, the jump already put the reader where the voice is parked; after
+                // a re-layout the same voice sits under a new page number, not somewhere new;
+                // and a voice the reader parked themselves is already where they are looking.
+                if (firstSighting || relaid || !following) return@LaunchedEffect
                 val target = currentPages.indexOfFirst { it.key == voicePageKey }.takeIf { it >= 0 } ?: return@LaunchedEffect
                 if (target != pagerState.currentPage) pagerState.animateScrollToPage(target)
             }
@@ -701,18 +1081,26 @@ private fun PagedBook(
                 currentPages.getOrNull(pagerState.settledPage)?.let { onSettledChapter(it.chapter.index) }
             }
 
+            val toggleChrome by rememberUpdatedState(onToggleChrome)
             HorizontalPager(
                 state = pagerState,
                 key = { index -> pages.getOrNull(index)?.key ?: "gap:$index" },
-                modifier = Modifier.fillMaxSize(),
+                // Text takes its own taps (read from here, make a card); what is left over —
+                // the margins, the gaps between paragraphs, the space around a narrow column —
+                // comes up to here.
+                modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { toggleChrome() }) },
             ) { index ->
                 val page = pages.getOrNull(index) ?: return@HorizontalPager
                 val isVoiceChapter = page.chapter.index == voiceChapter
                 PageView(
                     page = page.content,
                     blocks = page.chapter.blocks,
+                    bookId = bookId,
+                    sideInset = sideInset,
                     chapterIndex = page.chapter.index,
-                    fontScale = fontScale,
+                    // The font the pages were laid out in, not the one just chosen: the two only
+                    // differ for the moment before the new pages arrive.
+                    fontScale = current.layout.fontScale,
                     palette = palette,
                     activeBlockIndex = activeBlockIndex.takeIf { isVoiceChapter },
                     sentenceRange = sentenceRange.takeIf { isVoiceChapter },
@@ -730,19 +1118,37 @@ private fun PagedBook(
  * What the pager last had on screen. A plain holder rather than state: it is bookkeeping for
  * keeping the page steady across window changes, and must not itself cause recomposition.
  */
-private class PagesOnScreen {
+private class PagesOnScreen(layout: PageLayout) {
     var pages: List<BookPage>? = null
+    var layout: PageLayout = layout
+    var voiceLayout: PageLayout = layout
     var lastVoiceKey: String? = null
+}
+
+/** The jump the pager was last built for (see [PagedBook]). */
+private class JumpGate {
+    var applied: JumpRequest? = null
+}
+
+/** Block and offset of the first thing on the page: what to look for in a new layout. */
+private fun BookPage.anchor(): Pair<Int, Int>? = content.firstOrNull()?.let { element ->
+    when (element) {
+        is PageElement.TextEl -> element.slice.blockIndex to element.slice.start
+        is PageElement.ImageEl -> element.blockIndex to 0
+    }
 }
 
 /** Index in [pages] of the page showing [offset] of block [blockIndex] in [chapterIndex]. */
 private fun indexOfBlock(pages: List<BookPage>, chapterIndex: Int, blockIndex: Int, offset: Int): Int? {
     val start = pages.indexOfFirst { it.chapter.index == chapterIndex }.takeIf { it >= 0 } ?: return null
     val chapterPages = pages.filter { it.chapter.index == chapterIndex }.map { it.content }
-    return start + (pageIndexForOffset(chapterPages, blockIndex, offset) ?: 0)
+    return start + pageForAnchor(chapterPages, blockIndex, offset)
 }
 
 private val PageHorizontalPadding = 24.dp
+
+/** The widest the column of text gets; past it the page has margins of its own. */
+private val ReaderColumnMaxWidth = 640.dp
 private val PageVerticalPadding = 16.dp
 
 /** A little room under the last line, so descenders never meet the footer. */
@@ -752,6 +1158,9 @@ private val PageBottomSlack = 8.dp
 private fun PageView(
     page: ReaderPage,
     blocks: List<Block>,
+    bookId: String,
+    /** Margin on both sides beyond [PageHorizontalPadding], for a page wider than the text column. */
+    sideInset: Dp,
     chapterIndex: Int,
     fontScale: Float,
     palette: ReaderPalette,
@@ -763,13 +1172,13 @@ private fun PageView(
     loadImage: suspend (String) -> ByteArray?,
 ) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = PageHorizontalPadding, vertical = PageVerticalPadding),
+        modifier = Modifier.fillMaxSize().padding(horizontal = PageHorizontalPadding + sideInset, vertical = PageVerticalPadding),
     ) {
         page.forEach { element ->
             when (element) {
                 is PageElement.TextEl -> {
                     val slice = element.slice
-                    val full = blocks[slice.blockIndex] as Block.Text
+                    val full = sliceText(blocks, slice) ?: return@forEach
                     val text = full.text.substring(slice.start, slice.end)
                     val isActive = slice.blockIndex == activeBlockIndex
                     val sLocal = if (isActive) sentenceRange?.toSliceLocal(slice.start, slice.end) else null
@@ -826,7 +1235,7 @@ private fun PageView(
                         contentAlignment = Alignment.Center,
                     ) {
                         LocalImage(
-                            key = element.zipPath,
+                            key = bookImageKey(bookId, element.zipPath),
                             contentDescription = element.alt,
                             modifier = Modifier.fillMaxWidth().height(ImageDisplayHeight),
                             contentScale = androidx.compose.ui.layout.ContentScale.Fit,
@@ -854,6 +1263,11 @@ private fun openInBrowser(context: android.content.Context, url: String) {
  * Opens the TTS engine's own voice-data download screen, falling back to Android's
  * Text-to-speech settings if the engine doesn't offer one.
  */
+/** Whether the active network is one a data plan is charged for. */
+private fun isMeteredConnection(context: android.content.Context): Boolean =
+    (context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager)
+        ?.isActiveNetworkMetered == true
+
 private fun openTtsDataInstaller(context: android.content.Context) {
     val install = android.content.Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -884,10 +1298,14 @@ private fun ReaderTopBar(
     chapterLabel: String?,
     palette: ReaderPalette,
     articleLink: String?,
+    /** On its side the header gives up its padding: every dp of height is a line of text. */
+    compact: Boolean,
     onBack: () -> Unit,
     onOpenLink: (String) -> Unit,
     onOpenContents: () -> Unit,
     onOpenSettings: () -> Unit,
+    /** Puts the header and footer away; null when there is no room for the button. */
+    onHideChrome: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -896,11 +1314,11 @@ private fun ReaderTopBar(
             // Scaffold insets its content but not a custom top bar, so the header has to
             // keep clear of the status bar itself.
             .statusBarsPadding()
-            .padding(start = 18.dp, end = 10.dp, top = 8.dp, bottom = 6.dp),
+            .padding(start = 18.dp, end = 10.dp, top = if (compact) 0.dp else 8.dp, bottom = if (compact) 0.dp else 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            modifier = Modifier.size(40.dp).clickable(onClick = onBack),
+            modifier = Modifier.size(MinTouchTarget).clickable(role = Role.Button, onClick = onBack),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -935,6 +1353,7 @@ private fun ReaderTopBar(
         }
         ReaderAction(Icons.AutoMirrored.Filled.List, "Table of contents", palette, onClick = onOpenContents)
         ReaderAction(Icons.Filled.Tune, "Reading settings", palette, onClick = onOpenSettings)
+        onHideChrome?.let { ReaderAction(Icons.Filled.Fullscreen, "Hide controls", palette, onClick = it) }
     }
 }
 
@@ -946,7 +1365,7 @@ private fun ReaderAction(
     onClick: () -> Unit,
 ) {
     Box(
-        modifier = Modifier.size(42.dp).clickable(onClick = onClick),
+        modifier = Modifier.size(MinTouchTarget).clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = contentDescription, tint = palette.secondaryText, modifier = Modifier.size(20.dp))
@@ -955,7 +1374,8 @@ private fun ReaderAction(
 
 /**
  * Every message that overlays the page looks the same: a black block with a live-coloured
- * spine. Black regardless of the reader's theme, because it is chrome, not page.
+ * spine. Black regardless of the reader's theme, because it is chrome, not page. It can be
+ * sent away with the cross ([onDismiss]); [actionLabel] adds a button under the message.
  */
 @Composable
 private fun ReaderBanner(
@@ -963,16 +1383,23 @@ private fun ReaderBanner(
     message: String,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .background(Ink.Raised)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier),
     ) {
         Box(modifier = Modifier.width(3.dp).fillMaxHeight().background(Ink.Live))
-        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 14.dp, top = 12.dp, bottom = if (actionLabel != null && onAction != null) 0.dp else 12.dp),
+        ) {
             MonoText(label, size = 10f, tracking = 0.18f, color = Ink.Live, weight = FontWeight.Bold)
             Text(
                 message,
@@ -982,6 +1409,26 @@ private fun ReaderBanner(
                 color = Ink.Muted,
                 modifier = Modifier.padding(top = 5.dp),
             )
+            if (actionLabel != null && onAction != null) {
+                Box(
+                    modifier = Modifier
+                        .heightIn(min = MinTouchTarget)
+                        .clickable(role = Role.Button, onClick = onAction),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    MonoText(actionLabel, size = 11f, tracking = 0.16f, color = Ink.Live, weight = FontWeight.Bold)
+                }
+            }
+        }
+        if (onDismiss != null) {
+            Box(
+                modifier = Modifier.size(MinTouchTarget).clickable(role = Role.Button, onClick = onDismiss),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = "Dismiss", tint = Ink.Muted, modifier = Modifier.size(18.dp))
+            }
+        } else {
+            Spacer(Modifier.width(14.dp))
         }
     }
 }
@@ -994,6 +1441,7 @@ private fun ReaderBanner(
 private fun EngineErrorBanner(
     message: String,
     onOpenSettings: () -> Unit,
+    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     ReaderBanner(
@@ -1001,21 +1449,47 @@ private fun EngineErrorBanner(
         message = "$message\nTap to open reading settings.",
         modifier = modifier,
         onClick = onOpenSettings,
+        onDismiss = onDismiss,
     )
 }
 
-/** Shown when the article's page couldn't be reached, so only the feed's teaser is available. */
+/**
+ * Shown when only the feed's teaser could be had for an article: [message] says why, and
+ * Retry goes for the page again.
+ */
 @Composable
-private fun TruncatedArticleBanner(modifier: Modifier = Modifier) {
+private fun TruncatedArticleBanner(
+    message: String,
+    retrying: Boolean,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     ReaderBanner(
         label = "Summary only",
-        message = "The full article couldn't be downloaded — this is the feed's own summary.",
+        message = message,
         modifier = modifier,
+        actionLabel = if (retrying) "Retrying…" else "Retry",
+        onAction = if (retrying) ({}) else onRetry,
+        onDismiss = onDismiss,
+    )
+}
+
+/** Shown when the book has been read to its end: Play would start it over anyway. */
+@Composable
+private fun FinishedBanner(onStartOver: () -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    ReaderBanner(
+        label = "Finished",
+        message = "You've reached the end of this book. Start over from the beginning?",
+        modifier = modifier,
+        actionLabel = "Start over",
+        onAction = onStartOver,
+        onDismiss = onDismiss,
     )
 }
 
 @Composable
-private fun MissingVoiceBanner(modifier: Modifier = Modifier) {
+private fun MissingVoiceBanner(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
     ReaderBanner(
         label = "No voice installed",
@@ -1029,6 +1503,7 @@ private fun MissingVoiceBanner(modifier: Modifier = Modifier) {
                 )
             }
         },
+        onDismiss = onDismiss,
     )
 }
 
@@ -1039,6 +1514,8 @@ private fun MissingVoiceBanner(modifier: Modifier = Modifier) {
  */
 @Composable
 private fun ReaderFooter(
+    /** One row of controls instead of three rows of figures and a big button: for a phone on its side. */
+    compact: Boolean,
     showPosition: Boolean,
     pageLabel: String,
     percent: Int,
@@ -1052,7 +1529,7 @@ private fun ReaderFooter(
     speechRate: Float,
     sleepMinutesLeft: Int?,
     palette: ReaderPalette,
-    onCycleSpeed: () -> Unit,
+    onSelectSpeed: (Float) -> Unit,
     onPrevChapter: () -> Unit,
     onNextChapter: () -> Unit,
     onPlayPause: () -> Unit,
@@ -1065,42 +1542,75 @@ private fun ReaderFooter(
             .fillMaxWidth()
             .navigationBarsPadding()
             .padding(horizontal = ScreenPadding)
-            .padding(top = 8.dp, bottom = 10.dp),
+            .padding(top = if (compact) 2.dp else 8.dp, bottom = if (compact) 2.dp else 10.dp),
     ) {
+        if (compact) {
+            if (showPosition) {
+                BookProgressBar(
+                    progress = progress,
+                    ticks = ticks,
+                    color = palette.accent,
+                    track = palette.hairline,
+                    tickColor = palette.secondaryText,
+                )
+            }
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (showPosition) {
+                    MonoText(
+                        text = "$pageLabel · $percent%",
+                        size = 10f,
+                        tracking = 0.16f,
+                        color = palette.secondaryText,
+                        maxLines = 2,
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                TransportControls(
+                    palette = palette,
+                    playSize = 52.dp,
+                    canGoBack = canGoBack,
+                    canGoForward = canGoForward,
+                    isSpeaking = isSpeaking,
+                    onPrevChapter = onPrevChapter,
+                    onNextChapter = onNextChapter,
+                    onPlayPause = onPlayPause,
+                    onNextSentence = onNextSentence,
+                    onPrevSentence = onPrevSentence,
+                    modifier = Modifier.widthIn(max = 360.dp),
+                )
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (sleepMinutesLeft != null) SleepLabel(sleepMinutesLeft, palette)
+                    SpeedControl(speechRate, palette, onSelectSpeed)
+                }
+            }
+            return@Column
+        }
         if (showPosition) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 7.dp),
-                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                // Takes what the figures on the right leave and wraps inside it, so a large font
+                // size makes two short lines rather than a cut-off one.
                 MonoText(
                     text = "$pageLabel · $percent%",
                     size = 10f,
                     tracking = 0.16f,
                     color = palette.secondaryText,
+                    maxLines = 2,
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
                 )
-                Spacer(Modifier.weight(1f).widthIn(min = 14.dp))
                 // Reading speed is the setting that gets changed most, and it used to be three
-                // taps deep in the settings sheet. Here it cycles through the usual steps.
-                MonoText(
-                    text = SpeedSteps.format(speechRate),
-                    size = 10f,
-                    tracking = 0.16f,
-                    color = if (speechRate == 1f) palette.secondaryText else palette.accent,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(2.dp))
-                        .clickable(onClick = onCycleSpeed)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                )
-                if (sleepMinutesLeft != null) {
-                    MonoText(
-                        text = if (sleepMinutesLeft == CHAPTER_END) "SLEEP CH" else "SLEEP $sleepMinutesLeft",
-                        size = 10f,
-                        tracking = 0.16f,
-                        color = palette.accent,
-                        modifier = Modifier.padding(end = 10.dp),
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
+                // taps deep in the settings sheet. Here it opens the list of steps.
+                SpeedControl(speechRate, palette, onSelectSpeed)
+                if (sleepMinutesLeft != null) SleepLabel(sleepMinutesLeft, palette)
+                Spacer(Modifier.width(8.dp))
                 MonoText(text = rememberClock(), size = 10f, tracking = 0.16f, color = palette.secondaryText)
             }
             BookProgressBar(
@@ -1112,11 +1622,12 @@ private fun ReaderFooter(
                 modifier = Modifier.padding(bottom = 7.dp),
             )
             Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
             ) {
                 // The chapter's time left is the one figure worth colouring: it is what moves
-                // while the voice is speaking.
+                // while the voice is speaking. Each side wraps within its own half.
                 MonoText(
                     text = buildAnnotatedString {
                         withStyle(SpanStyle(color = palette.accent)) { append(chapterTimeText.uppercase()) }
@@ -1125,67 +1636,169 @@ private fun ReaderFooter(
                     size = 10f,
                     tracking = 0.16f,
                     color = palette.secondaryText,
+                    maxLines = 2,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
-                Spacer(Modifier.weight(1f).widthIn(min = 14.dp))
                 if (bookTimeText != null) {
+                    Spacer(Modifier.width(12.dp))
                     MonoText(
                         text = "$bookTimeText in book",
                         size = 10f,
                         tracking = 0.16f,
                         color = palette.secondaryText,
+                        maxLines = 2,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                 }
             }
         }
-        Row(
+        TransportControls(
+            palette = palette,
+            playSize = 68.dp,
+            canGoBack = canGoBack,
+            canGoForward = canGoForward,
+            isSpeaking = isSpeaking,
+            onPrevChapter = onPrevChapter,
+            onNextChapter = onNextChapter,
+            onPlayPause = onPlayPause,
+            onNextSentence = onNextSentence,
+            onPrevSentence = onPrevSentence,
             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        )
+    }
+}
+
+@Composable
+private fun SleepLabel(minutesLeft: Int, palette: ReaderPalette) {
+    MonoText(
+        text = if (minutesLeft == CHAPTER_END) "SLEEP CH" else "SLEEP $minutesLeft",
+        size = 10f,
+        tracking = 0.16f,
+        color = palette.accent,
+        modifier = Modifier.padding(start = 6.dp),
+    )
+}
+
+/**
+ * The reading speed: a bordered chip with a caret, in a 48dp touch target, that opens the list
+ * of speeds ([SpeedSteps.ALL]) with the current one marked.
+ */
+@Composable
+private fun SpeedControl(speechRate: Float, palette: ReaderPalette, onSelect: (Float) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val tint = if (speechRate == 1f) palette.secondaryText else palette.accent
+    val current = SpeedSteps.selected(speechRate)
+    Box {
+        Box(
+            modifier = Modifier
+                .defaultMinSize(minWidth = MinTouchTarget, minHeight = MinTouchTarget)
+                .semantics { contentDescription = "Reading speed ${SpeedSteps.format(speechRate)}" }
+                .clickable(role = Role.Button, onClickLabel = "Choose reading speed") { open = true },
+            contentAlignment = Alignment.Center,
         ) {
-            TransportIcon(
-                icon = Icons.Filled.KeyboardDoubleArrowLeft,
-                contentDescription = "Previous chapter",
-                tint = palette.secondaryText,
-                enabled = canGoBack,
-                onClick = onPrevChapter,
-            )
-            TransportIcon(
-                icon = Icons.Filled.SkipPrevious,
-                contentDescription = "Previous sentence",
-                tint = palette.text,
-                size = 26.dp,
-                onClick = onPrevSentence,
-            )
-            Box(
+            Row(
                 modifier = Modifier
-                    .size(68.dp)
-                    .clip(CircleShape)
-                    .background(palette.accent)
-                    .clickable(onClick = onPlayPause),
-                contentAlignment = Alignment.Center,
+                    .border(1.dp, tint.copy(alpha = 0.55f), RoundedCornerShape(3.dp))
+                    .padding(start = 9.dp, end = 3.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    if (isSpeaking) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (isSpeaking) "Pause" else "Play",
-                    tint = palette.background,
-                    modifier = Modifier.size(32.dp),
+                MonoText(text = SpeedSteps.format(speechRate), size = 12f, tracking = 0.08f, color = tint, weight = FontWeight.Bold)
+                Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = Ink.Raised) {
+            SpeedSteps.ALL.forEach { step ->
+                val isCurrent = step == current
+                DropdownMenuItem(
+                    text = {
+                        MonoText(
+                            text = SpeedSteps.format(step),
+                            size = 13f,
+                            tracking = 0.1f,
+                            color = if (isCurrent) Ink.Live else Ink.Text,
+                            weight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    },
+                    trailingIcon = if (isCurrent) {
+                        { Icon(Icons.Filled.Check, contentDescription = null, tint = Ink.Live, modifier = Modifier.size(18.dp)) }
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        open = false
+                        onSelect(step)
+                    },
+                    modifier = Modifier.semantics { selected = isCurrent },
                 )
             }
-            TransportIcon(
-                icon = Icons.Filled.SkipNext,
-                contentDescription = "Next sentence",
-                tint = palette.text,
-                size = 26.dp,
-                onClick = onNextSentence,
-            )
-            TransportIcon(
-                icon = Icons.Filled.KeyboardDoubleArrowRight,
-                contentDescription = "Next chapter",
-                tint = palette.secondaryText,
-                enabled = canGoForward,
-                onClick = onNextChapter,
+        }
+    }
+}
+
+/** « ‹ play › »: the five transport buttons, [playSize] being the round one in the middle. */
+@Composable
+private fun TransportControls(
+    palette: ReaderPalette,
+    playSize: Dp,
+    canGoBack: Boolean,
+    canGoForward: Boolean,
+    isSpeaking: Boolean,
+    onPrevChapter: () -> Unit,
+    onNextChapter: () -> Unit,
+    onPlayPause: () -> Unit,
+    onNextSentence: () -> Unit,
+    onPrevSentence: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TransportIcon(
+            icon = Icons.Filled.KeyboardDoubleArrowLeft,
+            contentDescription = "Previous chapter",
+            tint = palette.secondaryText,
+            enabled = canGoBack,
+            onClick = onPrevChapter,
+        )
+        TransportIcon(
+            icon = Icons.Filled.SkipPrevious,
+            contentDescription = "Previous sentence",
+            tint = palette.text,
+            size = 26.dp,
+            onClick = onPrevSentence,
+        )
+        Box(
+            modifier = Modifier
+                .size(playSize)
+                .clip(CircleShape)
+                .background(palette.accent)
+                .clickable(role = Role.Button, onClick = onPlayPause),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (isSpeaking) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (isSpeaking) "Pause" else "Play",
+                tint = palette.background,
+                modifier = Modifier.size(playSize / 2),
             )
         }
+        TransportIcon(
+            icon = Icons.Filled.SkipNext,
+            contentDescription = "Next sentence",
+            tint = palette.text,
+            size = 26.dp,
+            onClick = onNextSentence,
+        )
+        TransportIcon(
+            icon = Icons.Filled.KeyboardDoubleArrowRight,
+            contentDescription = "Next chapter",
+            tint = palette.secondaryText,
+            enabled = canGoForward,
+            onClick = onNextChapter,
+        )
     }
 }
 
@@ -1241,7 +1854,7 @@ private fun TransportIcon(
     size: Dp = 24.dp,
 ) {
     Box(
-        modifier = Modifier.size(48.dp).clickable(enabled = enabled, onClick = onClick),
+        modifier = Modifier.size(MinTouchTarget).clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(

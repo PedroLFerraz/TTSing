@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -78,6 +79,8 @@ import java.io.File
 fun LibraryScreen(
     onOpenBook: (String) -> Unit,
     onOpenNews: () -> Unit,
+    /** A book's file was moved, which gave it a new id; the player has to follow. */
+    onBookMoved: (oldId: String, newId: String) -> Unit = { _, _ -> },
     viewModel: LibraryViewModel = viewModel(factory = simpleFactory { LibraryViewModel.create() }),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -106,7 +109,22 @@ fun LibraryScreen(
     }
     var pressed by remember { mutableStateOf<Pair<BookEntity, BookAction>?>(null) }
 
-    Scaffold(containerColor = Ink.Surface, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
+    val noBooks = state.hasFolder && state.totalBooks == 0 && !state.isScanning
+    // The button is the Scaffold's bottom bar so messages sit above it instead of covering it.
+    Scaffold(
+        containerColor = Ink.Surface,
+        snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = {
+            Column(modifier = Modifier.navigationBarsPadding()) {
+                if (state.hasFolder && !noBooks) Hairline()
+                PillButton(
+                    text = if (noBooks && !state.unreadable) "Choose a different folder" else "Choose folder",
+                    onClick = { folderPicker.launch(null) },
+                    modifier = Modifier.padding(horizontal = ScreenPadding, vertical = 14.dp),
+                )
+            }
+        },
+    ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             ScreenHeader(
                 title = "TTSING",
@@ -122,16 +140,18 @@ fun LibraryScreen(
                     headline = "No library yet",
                     message = "Point TTSing at the folder that holds your EPUB and PDF files. It reads them " +
                         "where they are — nothing is copied or uploaded.",
-                    buttonText = "Choose folder",
-                    onClick = { folderPicker.launch(null) },
                 )
-                state.totalBooks == 0 && !state.isScanning -> EmptyLibrary(
+                noBooks && state.unreadable -> EmptyLibrary(
+                    modifier = Modifier.weight(1f),
+                    headline = "Can't read the library folder",
+                    message = "TTSing can no longer open your books folder: it may have moved, its storage " +
+                        "may be disconnected, or access was revoked. Choose it again to carry on.",
+                )
+                noBooks -> EmptyLibrary(
                     modifier = Modifier.weight(1f),
                     headline = "Nothing to read here",
                     message = "No EPUB or PDF files were found in the folder you chose. Pick another one and " +
                         "TTSing will scan it again.",
-                    buttonText = "Choose a different folder",
-                    onClick = { folderPicker.launch(null) },
                 )
                 else -> {
                     BackHandler(enabled = state.folder.isNotEmpty()) { viewModel.upFolder() }
@@ -145,6 +165,15 @@ fun LibraryScreen(
                         "$inProgress in progress".takeIf { inProgress > 0 },
                     )
                     StatusStrip(parts = parts, highlightIndex = if (state.isScanning) 0 else 1)
+                    if (state.unreadable) {
+                        MonoText(
+                            "Can't read the library folder - choose it again",
+                            size = 10f,
+                            tracking = 0.12f,
+                            color = Ink.Live,
+                            modifier = Modifier.padding(horizontal = ScreenPadding, vertical = 6.dp),
+                        )
+                    }
                     Hairline()
                     BookGrid(
                         books = state.books,
@@ -157,12 +186,6 @@ fun LibraryScreen(
                         onLongPressBook = { pressed = it to BookAction.Menu },
                         modifier = Modifier.weight(1f),
                     )
-                    Hairline()
-                    PillButton(
-                        text = "Choose folder",
-                        onClick = { folderPicker.launch(null) },
-                        modifier = Modifier.padding(horizontal = ScreenPadding, vertical = 14.dp),
-                    )
                 }
             }
         }
@@ -174,7 +197,7 @@ fun LibraryScreen(
             action = action,
             loadFolders = viewModel::folders,
             onAction = { pressed = book to it },
-            onMove = { viewModel.moveBook(book.id, it); pressed = null },
+            onMove = { viewModel.moveBook(book.id, it, onBookMoved); pressed = null },
             onDelete = { viewModel.deleteBook(book.id); pressed = null },
             onDismiss = { pressed = null },
         )
@@ -188,7 +211,7 @@ private enum class BookAction { Menu, Move, Delete }
 private fun BookActionDialog(
     book: BookEntity,
     action: BookAction,
-    loadFolders: suspend () -> List<String>,
+    loadFolders: suspend () -> Result<List<String>>,
     onAction: (BookAction) -> Unit,
     onMove: (String) -> Unit,
     onDelete: () -> Unit,
@@ -213,15 +236,19 @@ private fun BookActionDialog(
                     FolderRow(Icons.Outlined.Delete, "Delete", null) { onAction(BookAction.Delete) }
                 }
                 BookAction.Move -> {
-                    val folders by produceState<List<String>?>(null) { value = loadFolders() - book.folder }
+                    val loaded by produceState<Result<List<String>>?>(null) {
+                        value = loadFolders().map { it - book.folder }
+                    }
+                    val folders = loaded?.getOrNull()
                     when {
-                        folders == null -> MonoText("Looking for folders", size = 11f, tracking = 0.16f)
-                        folders!!.isEmpty() -> MonoText("No other folders", size = 11f, tracking = 0.16f)
+                        loaded == null -> MonoText("Looking for folders", size = 11f, tracking = 0.16f)
+                        folders == null -> MonoText("Couldn't read the folders", size = 11f, tracking = 0.16f)
+                        folders.isEmpty() -> MonoText("No other folders", size = 11f, tracking = 0.16f)
                         else -> LazyColumn(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.heightIn(max = 360.dp),
                         ) {
-                            listItems(folders!!) { path ->
+                            listItems(folders) { path ->
                                 FolderRow(Icons.Outlined.Folder, path.ifEmpty { "Library" }, null) { onMove(path) }
                             }
                         }
@@ -433,8 +460,6 @@ private fun surname(author: String): String {
 private fun EmptyLibrary(
     headline: String,
     message: String,
-    buttonText: String,
-    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -461,10 +486,5 @@ private fun EmptyLibrary(
                 textAlign = TextAlign.Center,
             )
         }
-        PillButton(
-            text = buttonText,
-            onClick = onClick,
-            modifier = Modifier.padding(horizontal = ScreenPadding, vertical = 14.dp),
-        )
     }
 }

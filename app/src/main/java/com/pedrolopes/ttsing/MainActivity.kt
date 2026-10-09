@@ -1,24 +1,15 @@
 package com.pedrolopes.ttsing
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.core.content.ContextCompat
 import com.pedrolopes.ttsing.tts.ReadingController
 import com.pedrolopes.ttsing.ui.TTSingNavHost
 import com.pedrolopes.ttsing.ui.theme.TTSingTheme
@@ -42,27 +33,16 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
 
-        val initialBookId = intent?.getStringExtra(EXTRA_BOOK_ID)
         takeOpenedFile(intent)
+        takeBookId(intent)
 
         setContent {
             TTSingTheme {
-                val startBookId by remember { mutableStateOf(initialBookId) }
-
-                val notifPermission = rememberLauncherForActivityResult(
-                    ActivityResultContracts.RequestPermission(),
-                ) { /* playback works regardless; the notification just won't show if denied */ }
-
-                LaunchedEffect(Unit) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                        ContextCompat.checkSelfPermission(
-                            this@MainActivity,
-                            Manifest.permission.POST_NOTIFICATIONS,
-                        ) != PackageManager.PERMISSION_GRANTED
-                    ) {
-                        notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                }
+                val startBookId by bookToOpen.collectAsState()
+                // The nav host acts on a book id once, when it changes. Cleared after it has
+                // seen it (this effect starts first, but the host's closure already holds the
+                // id), so tapping the notification for the same book again opens it again.
+                LaunchedEffect(startBookId) { if (startBookId != null) bookToOpen.value = null }
 
                 val file by openedFile.collectAsState()
                 TTSingNavHost(
@@ -89,10 +69,24 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         takeOpenedFile(intent)
+        takeBookId(intent)
     }
 
     /** An EPUB or PDF another app asked us to open, waiting for the UI to add and open it. */
     private val openedFile = MutableStateFlow<Intent?>(null)
+
+    /** The book the notification asked for, waiting for the UI to open its reader. */
+    private val bookToOpen = MutableStateFlow<String?>(null)
+
+    /**
+     * The notification's tap, at launch or (singleTop) on the running app. The extra is taken
+     * off the intent so an activity recreation, which replays it, doesn't open the book again.
+     */
+    private fun takeBookId(intent: Intent?) {
+        val bookId = intent?.getStringExtra(EXTRA_BOOK_ID) ?: return
+        intent.removeExtra(EXTRA_BOOK_ID)
+        bookToOpen.value = bookId
+    }
 
     private fun takeOpenedFile(intent: Intent?) {
         if (intent?.action == Intent.ACTION_VIEW && intent.data != null) openedFile.value = intent

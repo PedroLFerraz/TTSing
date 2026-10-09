@@ -1,6 +1,7 @@
 package com.pedrolopes.ttsing.tts
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SpeedStepsTest {
@@ -17,6 +18,15 @@ class SpeedStepsTest {
         assertEquals(2.75f, SpeedSteps.next(2.5f))
         assertEquals(3f, SpeedSteps.next(2.75f))
         assertEquals(0.5f, SpeedSteps.next(3f))
+    }
+
+    @Test
+    fun `the current speed is the step it equals, if any`() {
+        assertEquals(1f, SpeedSteps.selected(1f))
+        assertEquals(1.25f, SpeedSteps.selected(1.2500001f))
+        assertEquals(3f, SpeedSteps.selected(3f))
+        assertNull(SpeedSteps.selected(1.1f))
+        SpeedSteps.ALL.forEach { assertEquals(it, SpeedSteps.selected(it)) }
     }
 
     @Test
@@ -41,5 +51,14 @@ class SpeedStepsTest {
             assertEquals(rate, split.model * split.playback, 0.001f)
             assert(split.model <= SpeedSteps.MAX_MODEL_SPEED)
         }
+    }
+
+    @Test
+    fun `a stored speed between steps shows the nearest one`() {
+        assertEquals(1.25f, SpeedSteps.nearest(1.3f))
+        assertEquals(1.5f, SpeedSteps.nearest(1.45f))
+        assertEquals(0.5f, SpeedSteps.nearest(0.1f))
+        assertEquals(3f, SpeedSteps.nearest(4f))
+        SpeedSteps.ALL.forEach { assertEquals(it, SpeedSteps.nearest(it)) }
     }
 }

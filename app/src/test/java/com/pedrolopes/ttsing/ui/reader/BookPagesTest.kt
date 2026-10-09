@@ -21,11 +21,19 @@ class BookPagesTest {
     }
 
     @Test
-    fun `progress is the page over the total, full on the last page`() {
-        assertEquals(0.025f, BookPages.fraction(counts, 1, 0), 0.0001f)
-        assertEquals(0.5f, BookPages.fraction(counts, 3, 4), 0.0001f)
-        assertEquals(1f, BookPages.fraction(counts, 3, 24), 0.0001f)
+    fun `progress is the pages before this one over the total`() {
+        assertEquals(0f, BookPages.fraction(counts, 1, 0), 0f)
+        assertEquals(0.225f, BookPages.fraction(counts, 1, 9), 0.0001f)
+        assertEquals(0.25f, BookPages.fraction(counts, 2, 0), 0.0001f)
+        assertEquals(0.5f, BookPages.fraction(counts, 3, 5), 0.0001f)
+        assertEquals(0.975f, BookPages.fraction(counts, 3, 24), 0.0001f)
         assertEquals(0f, BookPages.fraction(emptyList(), 0, 0), 0f)
+    }
+
+    @Test
+    fun `a fresh two page book reads 0 percent, not 50`() {
+        assertEquals(0f, BookPages.fraction(listOf(2), 0, 0), 0f)
+        assertEquals(0.5f, BookPages.fraction(listOf(2), 0, 1), 0.0001f)
     }
 
     @Test
@@ -59,5 +67,29 @@ class BookPagesTest {
         assertFalse(base.key == base.copy(widthPx = 1800, heightPx = 1000).key)
         // Float noise from a slider does not make a new layout.
         assertEquals(base.key, base.copy(fontScale = 1.0000001f).key)
+    }
+
+    private fun text(s: String) = Block.Text(s, Block.Text.Kind.PARAGRAPH, emptyList())
+
+    @Test
+    fun `cached pages are only valid for the text they were cut from`() {
+        val summary = listOf<Block>(text("A short summary."))
+        val cached = CachedPages(summary, listOf(emptyList()))
+        assertTrue(cached.isFor(summary))
+        // Same content reloaded into a new list is still the same text.
+        assertTrue(cached.isFor(listOf(text("A short summary."))))
+        // The article's full text replacing the summary under the same chapter index is not.
+        assertFalse(cached.isFor(listOf(text("A short summary."), text("The full article."))))
+        assertFalse(cached.isFor(listOf(text("Something else entirely."))))
+    }
+
+    @Test
+    fun `a slice that does not fit the text yields nothing instead of crashing`() {
+        val blocks = listOf<Block>(text("Hello world"), Block.Image("a.png", null))
+        val kind = Block.Text.Kind.PARAGRAPH
+        assertEquals(blocks[0], sliceText(blocks, TextSlice(0, 0, 11, kind)))
+        assertEquals(null, sliceText(blocks, TextSlice(0, 5, 40, kind))) // past the end
+        assertEquals(null, sliceText(blocks, TextSlice(1, 0, 1, kind))) // an image
+        assertEquals(null, sliceText(blocks, TextSlice(7, 0, 1, kind))) // no such block
     }
 }

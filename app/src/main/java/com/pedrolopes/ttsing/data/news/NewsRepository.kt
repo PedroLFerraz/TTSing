@@ -18,6 +18,35 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
+ * What a refresh found: [newStories] stored, and how many feeds couldn't be read at all
+ * ([failedFeeds], with the first [firstError]), so "nothing new" and "couldn't connect" don't
+ * look the same.
+ */
+data class RefreshResult(
+    val newStories: Int = 0,
+    val failedFeeds: Int = 0,
+    val firstError: String? = null,
+) {
+    operator fun plus(other: RefreshResult) = RefreshResult(
+        newStories + other.newStories,
+        failedFeeds + other.failedFeeds,
+        firstError ?: other.firstError,
+    )
+
+    /** One line for a snackbar. */
+    fun describe(): String {
+        val stories = when (newStories) {
+            0 -> "No new stories"
+            1 -> "1 new story"
+            else -> "$newStories new stories"
+        }
+        if (failedFeeds == 0) return stories
+        val failed = "ouldn't reach $failedFeeds ${if (failedFeeds == 1) "feed" else "feeds"}"
+        return if (newStories == 0) "C$failed" else "$stories · c$failed"
+    }
+}
+
+/**
  * [scope] is used only for the background prefetch in [refresh]/[addFeed]: firing full-text
  * and thumbnail fetches that outlive whichever screen triggered them, so the article list
  * keeps filling in even after the user has moved on. Every other method here is a plain
@@ -26,6 +55,8 @@ import java.util.concurrent.TimeUnit
 class NewsRepository(
     private val dao: NewsDao,
     private val scope: CoroutineScope,
+    /** Where thumbnails are cached, so those of pruned stories can be dropped. */
+    private val images: ArticleImageStore? = null,
 ) {
 
     /** The list the current story was opened from, for playing on into the next one. */
@@ -35,19 +66,41 @@ class NewsRepository(
 
     fun observeArticles(feedUrl: String): Flow<List<ArticleEntity>> = dao.observeArticles(feedUrl)
 
-    fun observeLatest(limit: Int = 100): Flow<List<ArticleEntity>> = dao.observeLatest(limit)
+    /** Every feed's [LATEST_PER_FEED] newest stories, newest first: the All list and its play-on queue. */
+    fun observeLatest(): Flow<List<ArticleEntity>> = dao.observeLatest(LATEST_PER_FEED, LATEST_LIMIT)
 
-    fun observeLatestInGroup(group: String, limit: Int = 100): Flow<List<ArticleEntity>> =
-        dao.observeLatestInFolder(group, limit)
+    fun observeLatestInGroup(group: String): Flow<List<ArticleEntity>> =
+        dao.observeLatestInFolder(group, LATEST_PER_FEED, LATEST_LIMIT)
+
+    private suspend fun existingGroups(): List<String> = dao.feeds().mapNotNull { it.folder }
 
     /** Files [feedUrl] under [group]; blank takes it out of any group. */
-    suspend fun setGroup(feedUrl: String, group: String?) =
-        dao.setFolder(feedUrl, group?.trim()?.takeIf { it.isNotEmpty() })
-
-    /** Files every feed in [feedUrls] under [group]: how a new group is made. */
-    suspend fun createGroup(group: String, feedUrls: Collection<String>) {
-        for (url in feedUrls) setGroup(url, group)
+    suspend fun setGroup(feedUrl: String, group: String?) {
+        val name = group?.trim()?.takeIf { it.isNotEmpty() }?.let { canonicalGroup(it, existingGroups()) }
+        dao.setFolder(feedUrl, name)
     }
+
+    /**
+     * Files every feed in [feedUrls] under [group]: how a new group is made. Returns the name
+     * it was filed under, which keeps the spelling of a group that already exists ("science"
+     * joins "Science"), or null for a blank name.
+     */
+    suspend fun createGroup(group: String, feedUrls: Collection<String>): String? {
+        if (group.isBlank()) return null
+        val name = canonicalGroup(group, existingGroups())
+        for (url in feedUrls) dao.setFolder(url, name)
+        return name
+    }
+
+    /** Renames a group, merging it into another if [to] is already one. Blank names are ignored. */
+    suspend fun renameGroup(from: String, to: String) {
+        if (to.isBlank()) return
+        val others = existingGroups().filterNot { it.equals(from, ignoreCase = true) }
+        dao.renameFolder(from, canonicalGroup(to, others))
+    }
+
+    /** Deletes a group; its feeds stay subscribed, ungrouped. */
+    suspend fun deleteGroup(group: String) = dao.clearFolder(group)
 
     suspend fun article(id: String): ArticleEntity? = dao.article(id)
 
@@ -66,7 +119,15 @@ class NewsRepository(
 
     sealed interface AddResult {
         data class Added(val feed: FeedEntity, val articleCount: Int) : AddResult
+        /** The same feed (by [feedKey]) was already subscribed; nothing was changed. */
+        data class AlreadySubscribed(val feed: FeedEntity) : AddResult
         data class Failed(val message: String) : AddResult
+    }
+
+    /** The subscribed feed with the same identity as [url], whatever its spelling. */
+    private suspend fun subscribedAs(url: String): FeedEntity? {
+        val key = feedKey(url)
+        return dao.feeds().firstOrNull { feedKey(it.url) == key }
     }
 
     /**
@@ -81,6 +142,7 @@ class NewsRepository(
      */
     suspend fun addFeed(rawUrl: String, topic: Topic? = null): AddResult {
         val url = normalizeUrl(rawUrl) ?: return AddResult.Failed("That doesn't look like a web address")
+        subscribedAs(url)?.let { return AddResult.AlreadySubscribed(it) }
 
         val response = HttpFetcher.get(url)
         if (response is HttpFetcher.Result.Failure) return AddResult.Failed("Couldn't load the feed: ${response.message}")
@@ -89,6 +151,9 @@ class NewsRepository(
         val (feedUrl, parsed) = RssParser.parse(page.body)?.let { url to it }
             ?: discoverFeed(page)
             ?: return AddResult.Failed("That address isn't a feed, and the page doesn't point to one")
+
+        // A site's address can lead to a feed that is already followed.
+        subscribedAs(feedUrl)?.let { return AddResult.AlreadySubscribed(it) }
 
         val catalogued = FeedCatalog.find(feedUrl)
         val now = System.currentTimeMillis()
@@ -102,10 +167,10 @@ class NewsRepository(
             lastRefreshedAt = now,
             addedAt = now,
             topic = (topic ?: catalogued?.topic)?.id,
-            // Re-adding a feed keeps the group the user gave it.
-            folder = dao.feed(feedUrl)?.folder ?: (topic ?: catalogued?.topic)?.label,
+            folder = (topic ?: catalogued?.topic)?.label?.let { canonicalGroup(it, existingGroups()) },
         )
-        dao.upsertFeed(feed)
+        // Never overwrites: a second add of the same feed (a double tap) keeps the first one's addedAt.
+        if (dao.insertFeedIfAbsent(feed) == -1L) return AddResult.AlreadySubscribed(dao.feed(feedUrl) ?: feed)
         val fresh = storeItems(feedUrl, parsed.items)
         prefetchBodies(feedUrl)
         return AddResult.Added(feed, fresh)
@@ -127,48 +192,51 @@ class NewsRepository(
         return null
     }
 
-    suspend fun removeFeed(url: String) {
-        dao.deleteArticlesOfFeed(url)
-        dao.deleteFeed(url)
-    }
+    suspend fun removeFeed(url: String) = dao.removeFeed(url)
 
-    /** Re-reads every subscribed feed. Returns how many new stories arrived. */
-    suspend fun refreshAll(): Int {
+    /** Re-reads every subscribed feed: how many stories are new, and how many feeds couldn't be read. */
+    suspend fun refreshAll(): RefreshResult {
         // News goes stale; without this the database only ever grows, a full article body
         // per story. Stories already heard or half-heard go too — a month on, they're history.
         dao.deleteArticlesPublishedBefore(retentionCutoff())
-        var added = 0
+        images?.evict(dao.imageUrls().toSet())
+        var total = RefreshResult()
         for (feed in dao.feeds()) {
-            added += refresh(feed.url)
+            total += refresh(feed.url)
         }
-        return added
+        return total
     }
 
-    suspend fun refresh(feedUrl: String): Int {
-        val fresh = when (val response = HttpFetcher.get(feedUrl)) {
-            is HttpFetcher.Result.Success -> RssParser.parse(response.body)?.let { parsed ->
-                dao.feed(feedUrl)?.let { existing ->
+    suspend fun refresh(feedUrl: String): RefreshResult {
+        if (dao.feed(feedUrl) == null) return RefreshResult()
+        val result = when (val response = HttpFetcher.get(feedUrl)) {
+            is HttpFetcher.Result.Success -> {
+                val parsed = RssParser.parse(response.body)
+                if (parsed == null) {
+                    RefreshResult(failedFeeds = 1, firstError = "Not a readable feed")
+                } else {
                     val catalogued = FeedCatalog.find(feedUrl)
-                    dao.upsertFeed(
-                        existing.copy(
-                            title = catalogued?.title ?: parsed.title.ifEmpty { existing.title },
-                            siteLink = parsed.siteLink ?: existing.siteLink,
-                            // The catalogue knows better than feeds that all claim "en".
-                            language = catalogued?.language ?: parsed.language ?: existing.language,
-                            lastRefreshedAt = System.currentTimeMillis(),
-                            // Feeds subscribed before topics existed pick theirs up here.
-                            topic = existing.topic ?: catalogued?.topic?.id,
-                        ),
+                    // An UPDATE, not an upsert of a copy read before the download: a feed
+                    // removed meanwhile stays removed, and a group set meanwhile stays set.
+                    dao.updateFeedInfo(
+                        url = feedUrl,
+                        title = catalogued?.title ?: parsed.title,
+                        siteLink = parsed.siteLink,
+                        // The catalogue knows better than feeds that all claim "en".
+                        language = catalogued?.language ?: parsed.language,
+                        refreshedAt = System.currentTimeMillis(),
+                        // Feeds subscribed before topics existed pick theirs up here.
+                        topic = catalogued?.topic?.id,
                     )
+                    RefreshResult(newStories = storeItems(feedUrl, parsed.items))
                 }
-                storeItems(feedUrl, parsed.items)
-            } ?: 0
-            is HttpFetcher.Result.Failure -> 0
+            }
+            is HttpFetcher.Result.Failure -> RefreshResult(failedFeeds = 1, firstError = response.message)
         }
         // Fire regardless of the feed fetch: this also backfills stories stored earlier that
         // still have no thumbnail, which don't depend on the latest feed content.
         prefetchBodies(feedUrl)
-        return fresh
+        return result
     }
 
     /** Inserts stories not seen before, returning how many; existing ones keep their text and position. */
@@ -185,7 +253,9 @@ class NewsRepository(
 
         if (fresh.isEmpty()) return 0
 
-        dao.upsertArticles(
+        val seenAt = System.currentTimeMillis()
+        val stored = dao.upsertArticlesIfSubscribed(
+            feedUrl,
             fresh.map { (item, id) ->
                 // Some feeds ship the whole body inline, which saves fetching the page at all.
                 // Others ship a few paragraphs of teaser in the same element, so a short inline
@@ -205,7 +275,9 @@ class NewsRepository(
                     summary = if (isVideo) item.summary else item.summary?.let { stripHtml(it) },
                     contentHtml = extracted?.contentHtml?.takeIf { readable },
                     imageUrl = leadImageOf(item.imageUrl, extracted),
-                    publishedAt = item.publishedAt,
+                    // No usable date: dated by when it was first seen, so it sorts among its
+                    // contemporaries and ages out with them instead of lingering undated.
+                    publishedAt = if (item.publishedAt > 0) item.publishedAt else seenAt,
                     // A video's watch page has no story in it; marking it fetched keeps the
                     // prefetch from scraping YouTube for nothing.
                     fetchedAt = if (trusted || isVideo) System.currentTimeMillis() else 0,
@@ -213,7 +285,7 @@ class NewsRepository(
                 )
             },
         )
-        return fresh.size
+        return if (stored) fresh.size else 0
     }
 
     /**
@@ -241,19 +313,56 @@ class NewsRepository(
     private suspend fun prefetchOne(articleId: String) {
         val article = dao.article(articleId) ?: return
         if (article.fetchedAt > 0L) return // already attempted
+        fetchPage(article)
+    }
 
-        when (val response = HttpFetcher.get(article.link)) {
-            // Leave fetchedAt at 0 on a transient failure so it is retried next refresh; a
-            // site that refuses outright (some block every app) is marked tried, or its
-            // stories would be re-requested on every single refresh forever.
-            is HttpFetcher.Result.Failure ->
-                if (response.isPermanent) dao.upsertArticle(article.copy(fetchedAt = System.currentTimeMillis()))
-
+    /**
+     * Downloads [article]'s page and stores what came of it, returning the article as stored.
+     *
+     * Leaves fetchedAt at 0 on a transient failure so it is retried next refresh; a site that
+     * refuses outright (some block every app) is marked tried, or its stories would be
+     * re-requested on every single refresh forever. Either way the failure is recorded as the
+     * reason there is no full text.
+     *
+     * Written back with [NewsDao.updateFetched], not by upserting the copy: the download takes
+     * seconds, and in that time the story may have been read to a new position or deleted with
+     * its feed.
+     */
+    private suspend fun fetchPage(article: ArticleEntity): ArticleEntity {
+        val updated = when (val response = HttpFetcher.get(article.link)) {
+            is HttpFetcher.Result.Failure -> article.copy(
+                fetchedAt = if (response.isPermanent) System.currentTimeMillis() else article.fetchedAt,
+                fullTextIssue = fullTextIssue(article.textLength, downloadFailed = true),
+            )
             // Locale doesn't matter here: only contentHtml and the lead image are kept. body()
             // turns this cached HTML into blocks in the real reading locale when the article
             // is actually opened, which is cheap since it no longer needs the network.
             is HttpFetcher.Result.Success ->
-                dao.upsertArticle(withFetchedPage(article, ArticleExtractor.extract(response.body, article.link)))
+                withFetchedPage(article, ArticleExtractor.extract(response.body, article.link))
+        }
+        dao.updateFetched(
+            id = updated.id,
+            contentHtml = updated.contentHtml,
+            fetchedAt = updated.fetchedAt,
+            textLength = updated.textLength,
+            title = updated.title,
+            imageUrl = updated.imageUrl,
+            issue = updated.fullTextIssue,
+        )
+        return updated
+    }
+
+    /**
+     * Tries again for a story's full text after a failure: forgets that the page was tried,
+     * fetches it, and says whether the full text is there now. [ArticleEntity.fullTextIssue]
+     * tells the reader why it wasn't, and is updated by this. The caller reloads the body
+     * ([body]) afterwards if this returns true.
+     */
+    suspend fun retryFullText(articleId: String): Boolean = withContext(Dispatchers.Default) {
+        bodyLocks.getOrPut(articleId) { Mutex() }.withLock {
+            val article = dao.article(articleId) ?: return@withLock false
+            val updated = fetchPage(article.copy(fetchedAt = 0, fullTextIssue = null))
+            updated.fullTextIssue == null
         }
     }
 
@@ -267,10 +376,12 @@ class NewsRepository(
         val better = extracted.textLength >= MIN_FULL_TEXT &&
             extracted.blocks.isNotEmpty() &&
             extracted.textLength > article.textLength
+        val textLength = if (better) extracted.textLength else article.textLength
         return article.copy(
             contentHtml = if (better) extracted.contentHtml else article.contentHtml,
             fetchedAt = System.currentTimeMillis(),
-            textLength = if (better) extracted.textLength else article.textLength,
+            textLength = textLength,
+            fullTextIssue = fullTextIssue(textLength, downloadFailed = false),
             // Publishers often give the headline better here than in the feed.
             title = if (better) extracted.title?.takeIf { it.isNotBlank() } ?: article.title else article.title,
             imageUrl = leadImageOf(article.imageUrl, extracted),
@@ -317,26 +428,24 @@ class NewsRepository(
 
         // Not tried yet means the stored body, if any, may only be the feed's teaser: give
         // the page its chance first. The background prefetch usually got here already.
-        if (article.fetchedAt == 0L) {
-            when (val response = HttpFetcher.get(article.link)) {
-                is HttpFetcher.Result.Success -> {
-                    article = withFetchedPage(article, ArticleExtractor.extract(response.body, article.link))
-                    dao.upsertArticle(article)
-                }
-                is HttpFetcher.Result.Failure -> if (response.isPermanent) {
-                    article = article.copy(fetchedAt = System.currentTimeMillis())
-                    dao.upsertArticle(article)
-                }
-            }
-        }
+        if (article.fetchedAt == 0L) article = fetchPage(article)
 
         article.contentHtml?.takeIf { it.isNotBlank() }?.let { stored ->
             val blocks = ArticleExtractor.blocksOf(stored, article.link, locale)
             if (blocks.isNotEmpty()) {
-                return ArticleBody.Ready(withHeadline(blocks, article.title, locale), truncated = false)
+                val all = withHeadline(blocks, article.title, locale)
+                recordBlockCount(article, all.size)
+                return ArticleBody.Ready(all, truncated = false)
             }
         }
-        return summaryBody(article, locale)
+        return summaryBody(article, locale).also { body ->
+            if (body is ArticleBody.Ready) recordBlockCount(article, body.blocks.size)
+        }
+    }
+
+    /** Remembers how long the body is, so a saved position can be read as how far through it is. */
+    private suspend fun recordBlockCount(article: ArticleEntity, count: Int) {
+        if (article.blockCount != count) dao.setBlockCount(article.id, count)
     }
 
     private fun summaryBody(article: ArticleEntity, locale: Locale): ArticleBody {
@@ -351,8 +460,20 @@ class NewsRepository(
         return ArticleBody.Ready(blocks, truncated = true)
     }
 
-    suspend fun savePosition(articleId: String, blockIndex: Int, sentenceIndex: Int) {
-        dao.updatePosition(articleId, blockIndex, sentenceIndex, System.currentTimeMillis())
+    /**
+     * Remembers where the listener is. The story counts as heard only once [isReadAt] says so;
+     * position (0, 0) is how a finished story (and a watched video) is reported.
+     */
+    suspend fun savePosition(articleId: String, blockIndex: Int, sentenceIndex: Int, finished: Boolean = false) {
+        val article = dao.article(articleId) ?: return
+        val read = finished || isReadAt(article.isRead, blockIndex, article.blockCount)
+        dao.updatePosition(articleId, blockIndex, sentenceIndex, System.currentTimeMillis(), read)
+    }
+
+    /** Marks stories heard or unheard by hand: a long-press, or "mark all read" on a list. */
+    suspend fun setRead(ids: Collection<String>, read: Boolean) {
+        // SQLite caps how many values one statement can bind.
+        for (chunk in ids.chunked(READ_CHUNK)) dao.setRead(chunk, read)
     }
 
     companion object {
@@ -372,6 +493,67 @@ class NewsRepository(
          * dozens of immediate page fetches; the rest still get fetched normally on open.
          */
         const val MAX_PREFETCH_PER_REFRESH = 20
+
+        /** Newest stories kept in view per feed on the All list, so a busy feed can't crowd out a quiet one. */
+        const val LATEST_PER_FEED = 40
+
+        /** Ceiling on the All list as a whole. */
+        const val LATEST_LIMIT = 2_000
+
+        private const val READ_CHUNK = 500
+
+        /** A story counts as heard once the listener is this far through it. */
+        const val READ_FRACTION = 0.8f
+
+        /**
+         * Whether a story is heard after its position is saved at [blockIndex]. Stays heard once
+         * heard; otherwise it takes being [READ_FRACTION] of the way through the body, so pausing
+         * at the third sentence doesn't grey the story out. The fraction is by blocks, counting
+         * the one being read. Finishing a story marks it heard separately, since its position is
+         * then reset to the start.
+         */
+        fun isReadAt(wasRead: Boolean, blockIndex: Int, blockCount: Int): Boolean {
+            if (wasRead) return true
+            if (blockCount <= 0) return false
+            return (blockIndex + 1).toFloat() / blockCount >= READ_FRACTION
+        }
+
+        /**
+         * Why a story with [textLength] characters of stored full text has none worth reading,
+         * or null if it has. [downloadFailed] separates a page that couldn't be loaded from one
+         * that loaded but held only a stub (a paywall, a nav page).
+         */
+        fun fullTextIssue(textLength: Int, downloadFailed: Boolean): String? = when {
+            textLength >= MIN_FULL_TEXT -> null
+            downloadFailed -> ArticleEntity.ISSUE_DOWNLOAD_FAILED
+            else -> ArticleEntity.ISSUE_TOO_SHORT
+        }
+
+        /**
+         * [name] with the spelling of the group it matches among [existing], ignoring case, so
+         * "science" files under "Science" instead of making a second chip. A new name is kept
+         * as typed, trimmed.
+         */
+        fun canonicalGroup(name: String, existing: Collection<String>): String {
+            val trimmed = name.trim()
+            return existing.firstOrNull { it == trimmed }
+                ?: existing.firstOrNull { it.equals(trimmed, ignoreCase = true) }
+                ?: trimmed
+        }
+
+        /**
+         * What makes two addresses the same feed: scheme, `www.`, the host's case, a trailing
+         * slash and a fragment don't count. One definition for subscribing, for the Discover
+         * screen's "already subscribed" and for the catalogue, so they can't disagree. (The
+         * path's case does count; servers may care.)
+         */
+        fun feedKey(url: String): String {
+            val rest = url.trim().replaceFirst(SCHEME, "").substringBefore('#')
+            val host = rest.substringBefore('/')
+            return (host.lowercase().removePrefix("www.") + rest.removePrefix(host)).trimEnd('/')
+        }
+
+        private val SCHEME = Regex("^(?:https?|feed)://", RegexOption.IGNORE_CASE)
 
         /** How long stories are kept, counted from when they were published. */
         val RETENTION_MS = TimeUnit.DAYS.toMillis(30)

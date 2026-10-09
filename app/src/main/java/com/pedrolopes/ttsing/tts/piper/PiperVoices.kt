@@ -106,19 +106,40 @@ object PiperVoices {
         if (!directory.isReadyFor(voice.id)) {
             directory.deleteRecursively()
             val shared = sharedDataDir(context)
-            val wantsShared = !shared.isDirectory
-            copyAsset(context, "$ASSET_DIR/${voice.id}", directory) { name ->
-                // The phoneme data goes to the shared folder, and only the first voice needs
-                // to write it; everything else belongs to the voice.
-                when {
-                    !name.startsWith("${PiperVoice.DATA_DIR_NAME}/") -> File(directory, name)
-                    wantsShared -> File(shared, name.removePrefix("${PiperVoice.DATA_DIR_NAME}/"))
-                    else -> null
+            val sharedTemp = if (!shared.isDirectory) newSharedTemp(context) else null
+            try {
+                copyAsset(context, "$ASSET_DIR/${voice.id}", directory) { name ->
+                    // The phoneme data goes to the shared folder, and only the first voice needs
+                    // to write it; everything else belongs to the voice.
+                    when {
+                        !name.startsWith("${PiperVoice.DATA_DIR_NAME}/") -> File(directory, name)
+                        sharedTemp != null -> File(sharedTemp, name.removePrefix("${PiperVoice.DATA_DIR_NAME}/"))
+                        else -> null
+                    }
                 }
+                sharedTemp?.let { publishShared(it, shared) }
+            } finally {
+                sharedTemp?.deleteRecursively()
             }
             File(directory, MARKER).writeText(voice.id)
         }
         return voice.copy(directory = directory)
+    }
+
+    /** A scratch folder for the shared phoneme data, unique so two writers never share one. */
+    fun newSharedTemp(context: Context): File =
+        File(File(context.filesDir, ASSET_DIR), "${PiperVoice.DATA_DIR_NAME}.partial-${System.nanoTime()}")
+
+    /**
+     * Moves a fully written [temp] copy of the phoneme data into place as [shared]. The rename
+     * is what makes the data appear all at once: an extraction that dies halfway leaves only
+     * a scratch folder, never a [shared] that looks complete and is not. If another writer got
+     * there first, theirs stands and [temp] is dropped. True when [shared] is there afterwards.
+     */
+    fun publishShared(temp: File, shared: File): Boolean {
+        if (!shared.isDirectory && temp.renameTo(shared)) return true
+        temp.deleteRecursively()
+        return shared.isDirectory
     }
 
     /** Written once a voice's files are all in place, so a half-copy is never used. */
