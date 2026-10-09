@@ -110,16 +110,26 @@ private const val STRIPE_COS = 0.906f
 private const val STRIPE_SIN = 0.423f
 
 /**
- * The gradient period that makes the stripes repeat a whole number of times across
- * [widthPx], as close to [period] as that allows. [period] is measured along the gradient's
- * axis; across the bar one repeat is wider by 1/cos of the lean. Without this the right edge
- * cut the pattern wherever it happened to fall and ended in a sliver of yellow.
+ * The gradient period that ends the bar cleanly at its right edge, as close to [period] as
+ * that allows. [period] is measured along the gradient's axis; [bandShare] is the yellow part
+ * of each repeat (the gap is the rest). Because the stripes lean, the right edge sees a span of
+ * phases (one repeat = 1) as wide as the bar's [heightPx] projected on the axis; the period is
+ * chosen so that span sits in the middle of the gap. A whole number of repeats across the width
+ * would instead put a band start at the top-right corner, and the next band would enter as a
+ * sliver of yellow.
  */
-internal fun fittedStripePeriod(widthPx: Float, period: Float): Float {
+internal fun fittedStripePeriod(widthPx: Float, heightPx: Float, period: Float, bandShare: Float): Float {
     if (widthPx <= 0f || period <= 0f) return period
-    val acrossBar = period / STRIPE_COS
-    val repeats = kotlin.math.round(widthPx / acrossBar).coerceAtLeast(1f)
-    return widthPx / repeats * STRIPE_COS
+    val along = widthPx * STRIPE_COS
+    var p = period
+    repeat(3) {
+        // Phase at the right edge's top that centres the (possibly overfull) span in the gap.
+        val slant = heightPx * STRIPE_SIN / p
+        val edge = bandShare + (1f - bandShare - slant) / 2f
+        val repeats = kotlin.math.round(along / period - edge).coerceAtLeast(1f)
+        p = along / (repeats + edge)
+    }
+    return p
 }
 
 /**
@@ -132,7 +142,9 @@ fun HazardStripe(modifier: Modifier = Modifier, height: Dp = 10.dp, band: Dp = 1
     val wanted = with(density) { (band + gap).toPx() }
     val bandShare = band / (band + gap)
     BoxWithConstraints(modifier = modifier.fillMaxWidth().height(height)) {
-        val period = fittedStripePeriod(constraints.maxWidth.toFloat(), wanted)
+        val period = fittedStripePeriod(
+            constraints.maxWidth.toFloat(), with(density) { height.toPx() }, wanted, bandShare,
+        )
         val bandPx = period * bandShare
         // The gradient's axis has to be exactly one period long for the stops to land where the
         // band and gap widths say they should — hence a unit vector scaled by the period, rather

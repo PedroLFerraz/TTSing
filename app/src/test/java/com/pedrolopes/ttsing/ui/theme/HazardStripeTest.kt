@@ -6,32 +6,45 @@ import org.junit.Test
 
 class HazardStripeTest {
 
-    // Across the bar, one repeat is the axis period divided by the lean's cosine.
-    private fun repeatsAcross(width: Float, axisPeriod: Float) = width / (axisPeriod / 0.906f)
+    private val wanted = 24f * 2.625f
+    private val height = 10f * 2.625f
+    private val bandShare = 14f / 24f
+    private val widths = listOf(300f, 817f, 1000f, 1080f, 1234.5f, 1440f, 2400f)
+
+    /** Phase (0..1 within a repeat; yellow is [0, bandShare)) of the point (x, y), as the gradient sees it. */
+    private fun phase(x: Float, y: Float, period: Float): Double {
+        val p = (x * 0.906 + y * 0.423) / period
+        return p - Math.floor(p)
+    }
 
     @Test
-    fun `the stripes repeat a whole number of times across the bar`() {
-        for (width in listOf(300f, 817f, 1080f, 1234.5f, 2400f)) {
-            val repeats = repeatsAcross(width, fittedStripePeriod(width, 24f * 2.625f)).toDouble()
-            assertEquals("width $width", Math.rint(repeats), repeats, 0.001)
+    fun `the right edge shows only the gap, top to bottom`() {
+        for (width in widths) {
+            val period = fittedStripePeriod(width, height, wanted, bandShare)
+            for (i in 0..10) {
+                val ph = phase(width, height * i / 10f, period)
+                assertTrue("width $width y step $i phase $ph", ph > bandShare + 0.001 && ph < 1.0 - 0.001)
+            }
         }
     }
 
     @Test
     fun `fitting barely changes the period it was asked for`() {
-        val wanted = 24f * 2.625f
-        val fitted = fittedStripePeriod(1080f, wanted)
-        assertTrue("$fitted vs $wanted", Math.abs(fitted - wanted) / wanted < 0.1f)
+        for (width in widths.drop(1)) {
+            val fitted = fittedStripePeriod(width, height, wanted, bandShare)
+            assertTrue("width $width: $fitted vs $wanted", Math.abs(fitted - wanted) / wanted < 0.1f)
+        }
     }
 
     @Test
-    fun `a bar narrower than one repeat still holds one`() {
-        val repeats = repeatsAcross(20f, fittedStripePeriod(20f, 63f)).toDouble()
-        assertEquals(1.0, repeats, 0.001)
+    fun `a bar narrower than one repeat still gets a usable period`() {
+        // Too narrow for the slant to fit in a gap at all; just stay positive and finite.
+        val period = fittedStripePeriod(20f, height, wanted, bandShare)
+        assertTrue(period > 0f && period.isFinite())
     }
 
     @Test
     fun `no width is left as asked`() {
-        assertEquals(63f, fittedStripePeriod(0f, 63f), 0f)
+        assertEquals(63f, fittedStripePeriod(0f, height, 63f, bandShare), 0f)
     }
 }
