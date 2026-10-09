@@ -68,4 +68,28 @@ class BookPagesTest {
         // Float noise from a slider does not make a new layout.
         assertEquals(base.key, base.copy(fontScale = 1.0000001f).key)
     }
+
+    private fun text(s: String) = Block.Text(s, Block.Text.Kind.PARAGRAPH, emptyList())
+
+    @Test
+    fun `cached pages are only valid for the text they were cut from`() {
+        val summary = listOf<Block>(text("A short summary."))
+        val cached = CachedPages(summary, listOf(emptyList()))
+        assertTrue(cached.isFor(summary))
+        // Same content reloaded into a new list is still the same text.
+        assertTrue(cached.isFor(listOf(text("A short summary."))))
+        // The article's full text replacing the summary under the same chapter index is not.
+        assertFalse(cached.isFor(listOf(text("A short summary."), text("The full article."))))
+        assertFalse(cached.isFor(listOf(text("Something else entirely."))))
+    }
+
+    @Test
+    fun `a slice that does not fit the text yields nothing instead of crashing`() {
+        val blocks = listOf<Block>(text("Hello world"), Block.Image("a.png", null))
+        val kind = Block.Text.Kind.PARAGRAPH
+        assertEquals(blocks[0], sliceText(blocks, TextSlice(0, 0, 11, kind)))
+        assertEquals(null, sliceText(blocks, TextSlice(0, 5, 40, kind))) // past the end
+        assertEquals(null, sliceText(blocks, TextSlice(1, 0, 1, kind))) // an image
+        assertEquals(null, sliceText(blocks, TextSlice(7, 0, 1, kind))) // no such block
+    }
 }

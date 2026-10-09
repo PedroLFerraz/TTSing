@@ -35,7 +35,9 @@ internal fun pageForAnchor(pages: List<ReaderPage>, blockIndex: Int, offset: Int
  * on the page. The page's first text may be the tail of a sentence begun on the page before;
  * reading from that sentence's start would repeat what the reader has already turned past.
  * When no sentence in the block starts at or after [firstOffset], reading starts at the next
- * block.
+ * block that has one — the position the voice itself resolves to, so a page that opens on an
+ * image is parked on the text after it rather than somewhere the voice would then move from.
+ * Past the last block it is the end of the chapter.
  */
 internal fun browsePosition(
     chapterIndex: Int,
@@ -43,13 +45,16 @@ internal fun browsePosition(
     firstBlockIndex: Int,
     firstOffset: Int,
 ): ReadingPosition {
-    val text = blocks?.getOrNull(firstBlockIndex) as? Block.Text ?: return ReadingPosition(chapterIndex, firstBlockIndex, 0)
-    val sentence = text.sentences.indexOfFirst { it.start >= firstOffset }
-    return if (sentence >= 0) {
-        ReadingPosition(chapterIndex, firstBlockIndex, sentence)
-    } else {
-        ReadingPosition(chapterIndex, firstBlockIndex + 1, 0)
+    if (blocks == null) return ReadingPosition(chapterIndex, firstBlockIndex, 0)
+    var block = firstBlockIndex
+    var from = firstOffset
+    while (block < blocks.size) {
+        val sentence = (blocks[block] as? Block.Text)?.sentences?.indexOfFirst { it.start >= from } ?: -1
+        if (sentence >= 0) return ReadingPosition(chapterIndex, block, sentence)
+        block++
+        from = 0
     }
+    return ReadingPosition(chapterIndex, block, 0)
 }
 
 /** Character offset in its block at which [position]'s sentence begins; 0 when unknown. */
@@ -87,19 +92,37 @@ internal enum class BrowseAction { NONE, SAVE, SAVE_AND_PARK }
  * is already on that page. A reader not looking at the book the service holds just saves.
  *
  * [navigated] is false for the page a book opens on and for pages that only moved because the
- * layout changed: neither is the reader going anywhere.
+ * layout changed: neither is the reader going anywhere. [cardSheetOpen] means a pause here was
+ * the sheet's, not the reader's: the voice resumes where it stopped, so nothing is parked.
  */
 internal fun browseAction(
     navigated: Boolean,
     speakingHere: Boolean,
     serviceHasBook: Boolean,
     voiceOnPage: Boolean,
+    cardSheetOpen: Boolean = false,
 ): BrowseAction = when {
-    !navigated || speakingHere -> BrowseAction.NONE
+    !navigated || speakingHere || cardSheetOpen -> BrowseAction.NONE
     !serviceHasBook -> BrowseAction.SAVE
     voiceOnPage -> BrowseAction.NONE
     else -> BrowseAction.SAVE_AND_PARK
 }
+
+/**
+ * Where Play should start when it is pressed before a swipe has been committed (see
+ * [browseAction]): at the page the reader browsed to, since the voice's own position is still
+ * the one before the swipe. Null — play from wherever the voice is parked — when nothing was
+ * browsed, or the browse would not have moved the voice.
+ */
+internal fun playStartAfterBrowse(
+    browsePending: Boolean,
+    serviceHasBook: Boolean,
+    voiceOnPage: Boolean,
+    browsed: ReadingPosition,
+): ReadingPosition? =
+    browsed.takeIf {
+        browsePending && browseAction(true, false, serviceHasBook, voiceOnPage) != BrowseAction.NONE
+    }
 
 /**
  * Whether a newly reported page is the reader moving. The same page reported again (the window

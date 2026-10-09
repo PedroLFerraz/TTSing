@@ -333,6 +333,10 @@ fun ReaderScreen(
     }
     val latestWindow by rememberUpdatedState(ui.window)
     val latestVoicePage by rememberUpdatedState(voicePage)
+    val latestCardOpen by rememberUpdatedState(cardDraft != null)
+    val voiceIsOn: (VisiblePage) -> Boolean = { page ->
+        latestVoicePage?.let { it.chapterIndex == page.chapterIndex && it.pageInChapter == page.pageInChapter } == true
+    }
     val speakingHere = isThisBook && playback.isSpeaking
     LaunchedEffect(visible, speakingHere) {
         browse.pending = null
@@ -347,10 +351,9 @@ fun ReaderScreen(
         val commit = {
             val now = latestPlayback
             val serviceHasBook = now.isActive && now.bookId == bookId
-            val voiceOnPage = latestVoicePage?.let {
-                it.chapterIndex == page.chapterIndex && it.pageInChapter == page.pageInChapter
-            } == true
-            val action = browseAction(true, serviceHasBook && now.isSpeaking, serviceHasBook, voiceOnPage)
+            val action = browseAction(
+                true, serviceHasBook && now.isSpeaking, serviceHasBook, voiceIsOn(page), latestCardOpen,
+            )
             if (action != BrowseAction.NONE) {
                 val blocks = latestWindow.firstOrNull { it.index == page.chapterIndex }?.blocks
                 val position = browsePosition(page.chapterIndex, blocks, page.firstBlockIndex, page.firstOffset)
@@ -579,7 +582,32 @@ fun ReaderScreen(
                     onNextChapter = { viewModel.stepChapter(visibleChapter, forward = true, onLanded = seekVoiceToChapter) },
                     onPlayPause = {
                         val wasSpeaking = isThisBook && playback.isSpeaking
-                        controller.togglePlayPause(bookId)
+                        // A swipe within the last second has not moved the voice yet: start
+                        // where the reader is now, not where the voice was parked before it.
+                        val page = visible
+                        val start = if (!wasSpeaking && page != null) {
+                            playStartAfterBrowse(
+                                browsePending = browse.pending != null,
+                                serviceHasBook = isThisBook,
+                                voiceOnPage = voiceIsOn(page),
+                                browsed = browsePosition(
+                                    page.chapterIndex,
+                                    ui.window.firstOrNull { it.index == page.chapterIndex }?.blocks,
+                                    page.firstBlockIndex,
+                                    page.firstOffset,
+                                ),
+                            )
+                        } else {
+                            null
+                        }
+                        if (start != null) {
+                            browse.pending = null
+                            browse.parked = start
+                            viewModel.saveBrowsedPosition(start)
+                            controller.play(bookId, start)
+                        } else {
+                            controller.togglePlayPause(bookId)
+                        }
                         if (!wasSpeaking) askForNotifications()
                     },
                     onNextSentence = { controller.next() },
@@ -930,16 +958,22 @@ private fun PagedBook(
             TextMeasurer(fontResolver, density, layoutDirection, cacheSize = 0)
         }
         val layout = PageLayout(widthPx, heightPx, fontScale)
-        val paginated = remember(layout) { ConcurrentHashMap<Int, List<ReaderPage>>() }
+        val paginated = remember(layout) { ConcurrentHashMap<Int, CachedPages>() }
         val paged by produceState<PagedWindow?>(null, window, layout) {
             value = withContext(Dispatchers.Default) {
                 PagedWindow(
                     window,
                     layout,
                     window.flatMap { chapter ->
-                        val chapterPages = paginated.getOrPut(chapter.index) {
-                            paginateChapter(chapter.blocks, widthPx, heightPx, measurer, density, fontScale)
-                        }
+                        // Keyed by index, but a chapter can be replaced under its index (an
+                        // article's full text arriving): pages cut from the old text don't fit.
+                        val chapterPages = (
+                            paginated[chapter.index]?.takeIf { it.isFor(chapter.blocks) }
+                                ?: CachedPages(
+                                    chapter.blocks,
+                                    paginateChapter(chapter.blocks, widthPx, heightPx, measurer, density, fontScale),
+                                ).also { paginated[chapter.index] = it }
+                            ).pages
                         chapterPages.mapIndexed { i, content -> BookPage(chapter, i, chapterPages.size, content) }
                     },
                 )
@@ -1144,7 +1178,7 @@ private fun PageView(
             when (element) {
                 is PageElement.TextEl -> {
                     val slice = element.slice
-                    val full = blocks[slice.blockIndex] as Block.Text
+                    val full = sliceText(blocks, slice) ?: return@forEach
                     val text = full.text.substring(slice.start, slice.end)
                     val isActive = slice.blockIndex == activeBlockIndex
                     val sLocal = if (isActive) sentenceRange?.toSliceLocal(slice.start, slice.end) else null
