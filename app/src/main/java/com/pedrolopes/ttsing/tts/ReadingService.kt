@@ -214,9 +214,7 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     fun reloadBook(bookId: String) {
         lifecycleScope.launch {
             if (_state.value.bookId != bookId) return@launch
-            if (_state.value.isSpeaking) pause()
-            openMutex.withLock { content = null }
-            openBookIfNeeded(bookId)
+            openBookIfNeeded(bookId, reload = true)
         }
     }
 
@@ -225,9 +223,6 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         // Built as "playing" already: the book may take a while to open, and a Play button
         // showing meanwhile is wrong. The failure paths below put it right.
         ensureForeground(playing = true)
-        // Jumping somewhere on purpose keeps a "stop at the chapter's end" timer, moved to
-        // whichever chapter you jumped into.
-        if (sleepChapter != null && position != null) sleepChapter = position.chapterIndex
         lifecycleScope.launch {
             val restored = openBookIfNeeded(bookId) ?: run { stopSelfIfIdle(); return@launch }
             if (!requestAudioFocus()) {
@@ -241,6 +236,9 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             val start = PlaybackPolicy.startPosition(
                 position, _state.value.finished, engine.currentRef?.position, restored,
             )
+            // A "stop at the chapter's end" timer follows the chapter playing starts in: a jump on
+            // purpose, or a finished book starting over, both leave the chapter it was set in.
+            sleepChapter = PlaybackPolicy.sleepChapterAtStart(sleepChapter, start)
             engine.playFrom(start)
             _state.value = _state.value.copy(isSpeaking = true, error = null, finished = false)
             updateMetadata()
@@ -443,16 +441,21 @@ class ReadingService : LifecycleService(), Narrator.Listener {
      * may be a sentence or two ahead, still working on a document about to be closed, and its
      * late callbacks would write the old book's place into the new one's state. A sleep timer
      * belongs to the old book's session and goes with it, except when the service plays on by
-     * itself from one story to the next ([carryOn]).
+     * itself from one story to the next ([carryOn]) or opens the same book again ([reload]).
      */
-    private suspend fun openBookIfNeeded(bookId: String, carryOn: Boolean = false): ReadingPosition? = openMutex.withLock {
-        if (_state.value.bookId == bookId && content != null) {
+    private suspend fun openBookIfNeeded(
+        bookId: String,
+        carryOn: Boolean = false,
+        reload: Boolean = false,
+    ): ReadingPosition? = openMutex.withLock {
+        if (!reload && _state.value.bookId == bookId && content != null) {
             return engine.currentRef?.position ?: _state.value.position
         }
+        val previous = _state.value
         val wasPlaying = content != null && !carryOn && (engine.isSpeaking || _state.value.isSpeaking)
         if (content != null) {
             if (!carryOn) {
-                clearSleepTimer()
+                if (!reload) clearSleepTimer()
                 continueJob?.cancel()
                 restartJob?.cancel()
                 if (wasPlaying) pause() // stops audio, drops the wake lock, shows a Play notification
@@ -482,6 +485,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
         val languageOk = engine.configureLanguage(locale, chosenVoiceFor(locale))
         loadSpeedForCurrentVoice()
 
+        // Only a book can be parked on its last sentence; a story is saved back at its start.
+        val parkedAtEnd = !NewsRepository.isArticle(bookId) && PlaybackPolicy.isParkedAtEnd(source, restored)
         _state.value = PlaybackState(
             bookId = bookId,
             bookTitle = source.title,
@@ -494,7 +499,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
             charsPerSecond = speed.charsPerSecond,
             bookListenedMs = savedListenMs,
             bookListenedChars = savedListenChars,
-        )
+            finished = parkedAtEnd,
+        ).let { if (carryOn || reload) it.carryingSleepTimerOf(previous) else it }
         engine.moveTo(restored)
         updateMetadata()
         if (wasPlaying) updateSessionAndNotification() // the notification names the new book, paused
@@ -556,12 +562,14 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     // ---- Narrator.Listener ----
 
     override fun onSentenceStart(ref: SentenceRef) {
-        _state.value = _state.value.copy(
+        val before = _state.value
+        _state.value = before.copy(
             position = ref.position,
             sentenceRange = ref.startInBlock until (ref.startInBlock + ref.text.length),
             wordRange = null,
             isSpeaking = engine.isSpeaking,
-            finished = false, // reading again, or moved off the end
+            // Reading again, or moved off the end; not the narrator settling on the parked sentence.
+            finished = PlaybackPolicy.keepsFinished(before.finished, engine.isSpeaking, before.position, ref.position),
         )
         sleepChapter?.let { chapter ->
             if (ref.position.chapterIndex != chapter) {
@@ -670,6 +678,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     }
 
     private fun finishReading() {
+        // Nothing is left to time; a chapter-end timer would stop the next Play after one line.
+        clearSleepTimer()
         val bookId = _state.value.bookId
         val isArticle = bookId != null && NewsRepository.isArticle(bookId)
         // A book stays parked at its last sentence, marked finished so Play starts it over. A
@@ -996,6 +1006,8 @@ class ReadingService : LifecycleService(), Narrator.Listener {
     fun bookMoved(oldId: String, newId: String) {
         if (_state.value.bookId != oldId) return
         _state.value = _state.value.copy(bookId = newId)
+        // Saves made under the old id around the move may have been lost; this one goes last.
+        persistPosition()
         updateMetadata()
         if (isForeground) updateSessionAndNotification()
     }

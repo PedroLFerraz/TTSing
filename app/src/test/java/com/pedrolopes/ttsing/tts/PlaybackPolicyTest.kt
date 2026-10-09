@@ -67,6 +67,48 @@ class PlaybackPolicyTest {
         assertEquals(place, PlaybackPolicy.positionToSave(isArticle = true, finishing = false, position = place))
     }
 
+    // ---- the chapter-end sleep timer ----
+
+    @Test
+    fun aChapterTimerFollowsPlayToTheChapterItStartsIn() {
+        // Set while parked finished at chapter 9, then the book starts over at chapter 0.
+        assertEquals(0, PlaybackPolicy.sleepChapterAtStart(9, ReadingPosition.START))
+        assertEquals(3, PlaybackPolicy.sleepChapterAtStart(3, middle))
+    }
+
+    @Test
+    fun noChapterTimerStaysNone() {
+        assertNull(PlaybackPolicy.sleepChapterAtStart(null, middle))
+    }
+
+    @Test
+    fun theSleepTimerSurvivesARebuiltState() {
+        val running = PlaybackState(bookId = "a", sleepAtElapsedMs = 5_000L, sleepAtChapterEnd = false, sleepMinutes = 15)
+        val next = PlaybackState(bookId = "b").carryingSleepTimerOf(running)
+        assertEquals("b", next.bookId)
+        assertEquals(5_000L, next.sleepAtElapsedMs)
+        assertEquals(15, next.sleepMinutes)
+        assertFalse(next.sleepAtChapterEnd)
+    }
+
+    // ---- a book saved on its last sentence ----
+
+    @Test
+    fun aBookSavedOnItsLastSentenceIsParkedAtTheEnd() = runBlocking {
+        val book = Numbered(3)
+        assertTrue(PlaybackPolicy.isParkedAtEnd(book, book.at(2).position))
+        assertFalse(PlaybackPolicy.isParkedAtEnd(book, book.at(1).position))
+        assertFalse(PlaybackPolicy.isParkedAtEnd(book, ReadingPosition.START))
+    }
+
+    @Test
+    fun finishedSurvivesOnlyTheNarratorSettlingOnTheParkedSentence() {
+        assertTrue(PlaybackPolicy.keepsFinished(true, speaking = false, parked = last, reported = last))
+        assertFalse(PlaybackPolicy.keepsFinished(true, speaking = false, parked = last, reported = middle))
+        assertFalse(PlaybackPolicy.keepsFinished(true, speaking = true, parked = last, reported = last))
+        assertFalse(PlaybackPolicy.keepsFinished(false, speaking = false, parked = last, reported = last))
+    }
+
     // ---- the notification ----
 
     @Test
