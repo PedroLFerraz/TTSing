@@ -167,4 +167,37 @@ class ReaderPlaceTest {
         assertEquals(5, sentenceStart(listOf(block), ReadingPosition(0, 0, 1)))
         assertEquals(0, sentenceStart(listOf(block), ReadingPosition(0, 3, 0)))
     }
+
+    @Test
+    fun `a page opening on an image parks on the text the voice would resolve to`() {
+        val para = Block.Text("One. Two.", Block.Text.Kind.PARAGRAPH, listOf(SentenceSpan(0, 4), SentenceSpan(5, 9)))
+        val blocks = listOf(Block.Image("a.png", null), Block.Image("b.png", null), para)
+        assertEquals(ReadingPosition(3, 2, 0), browsePosition(3, blocks, 0, 0))
+        // Nothing left to read in the chapter: its end, which the voice carries on from.
+        assertEquals(ReadingPosition(3, 2, 0), browsePosition(3, blocks, 2, 0))
+        assertEquals(ReadingPosition(3, 3, 0), browsePosition(3, blocks, 2, 7))
+    }
+
+    @Test
+    fun `the card sheet's pause never parks the voice`() {
+        assertEquals(
+            BrowseAction.NONE,
+            browseAction(true, false, serviceHasBook = true, voiceOnPage = false, cardSheetOpen = true),
+        )
+        assertEquals(
+            BrowseAction.SAVE_AND_PARK,
+            browseAction(true, false, serviceHasBook = true, voiceOnPage = false, cardSheetOpen = false),
+        )
+    }
+
+    @Test
+    fun `play right after a swipe starts at the browsed page`() {
+        val browsed = ReadingPosition(1, 7, 0)
+        assertEquals(browsed, playStartAfterBrowse(true, serviceHasBook = true, voiceOnPage = false, browsed = browsed))
+        // The service holds another book: the browse is only saved, so play from it all the same.
+        assertEquals(browsed, playStartAfterBrowse(true, serviceHasBook = false, voiceOnPage = false, browsed = browsed))
+        // Nothing browsed, or the voice is already on the page: play from where the voice is parked.
+        assertEquals(null, playStartAfterBrowse(false, serviceHasBook = true, voiceOnPage = false, browsed = browsed))
+        assertEquals(null, playStartAfterBrowse(true, serviceHasBook = true, voiceOnPage = true, browsed = browsed))
+    }
 }
