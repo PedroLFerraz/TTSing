@@ -148,16 +148,24 @@ private fun YouTubePlayer(videoId: String, title: String, modifier: Modifier) {
 
                     override fun onShowCustomView(view: View, callback: CustomViewCallback) {
                         val window = activity?.window ?: return callback.onCustomViewHidden()
-                        fullscreen = view
+                        // The fullscreen view is told its window was hidden on its own, not through
+                        // the WebView above, so it gets the same swallowing or leaving the app pauses.
+                        val holder = object : FrameLayout(context) {
+                            override fun dispatchWindowVisibilityChanged(visibility: Int) {
+                                if (visibility == View.VISIBLE || !VideoPlaybackService.isPlaying) super.dispatchWindowVisibilityChanged(visibility)
+                            }
+                        }
+                        holder.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                        fullscreen = holder
                         exitFullscreen = {
                             callback.onCustomViewHidden()
                             onHideCustomView()
                         }
                         (window.decorView as FrameLayout).addView(
-                            view,
+                            holder,
                             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
                         )
-                        WindowCompat.getInsetsController(window, view).apply {
+                        WindowCompat.getInsetsController(window, holder).apply {
                             hide(WindowInsetsCompat.Type.systemBars())
                             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                         }
