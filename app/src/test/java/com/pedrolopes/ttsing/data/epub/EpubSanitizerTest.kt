@@ -34,11 +34,21 @@ class EpubSanitizerTest {
     }
 
     @Test
-    fun `removes noteref and footnote bodies`() {
+    fun `takes footnote bodies out of the flow, leaving a marker`() {
         val html = """
             <html xmlns:epub="http://www.idpf.org/2007/ops"><body>
               <p>Texto principal<a epub:type="noteref" href="#n1">[1]</a> continua.</p>
               <aside epub:type="footnote" id="n1"><p>1. Esta e a nota de rodape.</p></aside>
+            </body></html>
+        """.trimIndent()
+        assertEquals(listOf("Texto principal¹ continua."), textOf(html))
+    }
+
+    @Test
+    fun `removes a noteref whose note cannot be found`() {
+        val html = """
+            <html xmlns:epub="http://www.idpf.org/2007/ops"><body>
+              <p>Texto principal<a epub:type="noteref" href="notas.xhtml#n1">[1]</a> continua.</p>
             </body></html>
         """.trimIndent()
         assertEquals(listOf("Texto principal continua."), textOf(html))

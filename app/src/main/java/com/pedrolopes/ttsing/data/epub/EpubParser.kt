@@ -97,7 +97,7 @@ class EpubParser(file: File) : Closeable {
             ?: throw EpubFormatException("Spine index $spineIndex out of bounds")
         val entry = findEntry(spineItem.zipPath)
             ?: throw EpubFormatException("Missing chapter entry: ${spineItem.zipPath}")
-        val loader = ChapterLoader(locale, ::entryExists)
+        val loader = ChapterLoader(locale, ::entryExists, ::noteDocument)
         val blocks = zip.getInputStream(entry).use { loader.parse(it, spineItem.zipPath) }
         val title = book.toc.firstOrNull { it.spineIndex == spineIndex }?.title
             ?: (blocks.firstOrNull { it is Block.Text && it.kind != Block.Text.Kind.PARAGRAPH } as? Block.Text)?.text
@@ -192,6 +192,16 @@ class EpubParser(file: File) : Closeable {
         return entries.filter { seen.add(it.spineIndex) }
     }
 
+    /** Recently opened note files: every chapter of a book with endnotes calls into the same one. */
+    private val noteDocuments = LinkedHashMap<String, Document>()
+
+    private fun noteDocument(path: String): Document? = synchronized(noteDocuments) {
+        noteDocuments[path] ?: readEntry(path)?.let { ChapterLoader.parseDocument(it) }?.also {
+            noteDocuments[path] = it
+            while (noteDocuments.size > MAX_NOTE_DOCUMENTS) noteDocuments.remove(noteDocuments.keys.first())
+        }
+    }
+
     private fun findEntry(path: String): ZipEntry? {
         val clean = path.removePrefix("/")
         return entriesByPath[clean] ?: entriesLowercase[clean.lowercase()]
@@ -209,6 +219,10 @@ class EpubParser(file: File) : Closeable {
 
     override fun close() {
         zip.close()
+    }
+
+    private companion object {
+        const val MAX_NOTE_DOCUMENTS = 2
     }
 
     private data class ManifestItem(
