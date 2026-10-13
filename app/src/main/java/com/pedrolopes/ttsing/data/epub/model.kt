@@ -32,11 +32,20 @@ data class TocEntry(
 /** Half-open range [start, end) into the owning block's text. */
 data class SentenceSpan(val start: Int, val end: Int)
 
+/**
+ * A footnote called out from a text block. [start, end) is its marker in the block's text — a
+ * superscript number or an asterisk, shown on the page but never spoken — and [text] is the
+ * note itself, shown in a popup when the marker is tapped.
+ */
+data class Note(val start: Int, val end: Int, val text: String)
+
 sealed interface Block {
     data class Text(
         val text: String,
         val kind: Kind,
         val sentences: List<SentenceSpan>,
+        /** In text order; their markers never overlap. */
+        val notes: List<Note> = emptyList(),
     ) : Block {
         /** [CODE] is shown but not read: a listing has no sentences for the voice. */
         enum class Kind { PARAGRAPH, HEADING_1, HEADING_2, HEADING_3, QUOTE, CODE }
@@ -50,6 +59,33 @@ sealed interface Block {
             if (sentences.isEmpty()) return 0
             val index = sentences.indexOfLast { it.start <= offset }
             return if (index < 0) 0 else index
+        }
+
+        /**
+         * The text in [start, end) as it is meant to be heard: each note marker becomes a space,
+         * so the voice skips "¹" without anything after it moving — word timings and the
+         * highlight count characters in the page's text.
+         */
+        fun spokenText(start: Int, end: Int): String {
+            if (notes.none { it.start < end && it.end > start }) return text.substring(start, end)
+            val chars = text.substring(start, end).toCharArray()
+            for (note in notes) {
+                for (i in maxOf(note.start, start) until minOf(note.end, end)) chars[i - start] = ' '
+            }
+            return String(chars)
+        }
+
+        /** The text in [start, end) with its note markers taken out: for copying it elsewhere. */
+        fun plainText(start: Int, end: Int): String {
+            if (notes.none { it.start < end && it.end > start }) return text.substring(start, end)
+            val out = StringBuilder(end - start)
+            var at = start
+            for (note in notes) {
+                if (note.end <= at || note.start >= end) continue
+                out.append(text, at, note.start.coerceAtLeast(at))
+                at = note.end.coerceAtMost(end)
+            }
+            return out.append(text, at, end).toString()
         }
     }
 

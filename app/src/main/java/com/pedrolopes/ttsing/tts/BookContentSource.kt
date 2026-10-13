@@ -50,7 +50,7 @@ class BookContentSource(
                     val span = block.sentences[sentenceIndex]
                     return SentenceRef(
                         position = ReadingPosition(chapterIndex, blockIndex, sentenceIndex),
-                        text = block.text.substring(span.start, span.end),
+                        text = block.spokenText(span.start, span.end),
                         startInBlock = span.start,
                     )
                 }
@@ -97,7 +97,7 @@ class BookContentSource(
         val chapter = chapter(position.chapterIndex) ?: return null
         val block = chapter.blocks.getOrNull(position.blockIndex) as? Block.Text ?: return null
         val span = block.sentences.getOrNull(position.sentenceIndex) ?: return null
-        return SentenceRef(position, block.text.substring(span.start, span.end), span.start)
+        return SentenceRef(position, block.spokenText(span.start, span.end), span.start)
     }
 
     private companion object {

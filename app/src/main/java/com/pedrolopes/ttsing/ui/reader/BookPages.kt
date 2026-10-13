@@ -23,8 +23,9 @@ data class PageGeometry(
          * 2: PDF chapters gained figures, so their stored counts were too low.
          * 3: PDF pages turned by /Rotate read as whole lines instead of single letters.
          * 4: quotes are measured at the narrower width they are drawn at.
+         * 5: footnotes left the text for popups, so books with notes have fewer pages.
          */
-        const val LAYOUT_VERSION = 4
+        const val LAYOUT_VERSION = 5
     }
 }
 

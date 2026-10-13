@@ -99,7 +99,15 @@ app running, not mockups.
   to go on. It's to the minute, and the book's total is the chapter's time plus a fixed figure
   for the chapters after it, so each minute off the chapter is exactly one minute off the book.
   The pace is taken afresh at each chapter, never mid-chapter, so the figures don't wander.
-- **Messy-EPUB clean-up** — footnote call-outs, note bodies and page-break markers are
+- **Footnotes in a popup** — a note leaves the flow of the text; its call-out stays on the
+  page as a small `¹` or `*`, and tapping it opens the note in a panel along the foot of the
+  page, the way KOReader does. The voice reads past both. Linked notes (`epub:type="noteref"`,
+  or a bare number linking to the note, in the chapter or in a separate notes file) are
+  followed to their text. A converted print book's unlinked notes — an asterisk after a word,
+  and a paragraph starting `* ` wherever the printed page ended — are matched to their
+  asterisks, and the sentence the page break cut in two is joined back together; a note that
+  can't be matched stays where it was.
+- **Messy-EPUB clean-up** — footnote call-outs that lead nowhere and page-break markers are
   stripped before rendering, so the voice doesn't read "palavra um" for a footnote number.
   Conservative by design: a well-formed book is left untouched.
   Two more real-world defects are worked around: chapters whose bytes are UTF-8 but whose

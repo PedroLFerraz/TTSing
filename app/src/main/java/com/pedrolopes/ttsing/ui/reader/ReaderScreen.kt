@@ -114,6 +114,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pedrolopes.ttsing.TTSingApp
 import com.pedrolopes.ttsing.anki.CardDraft
 import com.pedrolopes.ttsing.data.epub.Block
+import com.pedrolopes.ttsing.data.epub.Note
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.settings.AppSettings
 import com.pedrolopes.ttsing.data.settings.PdfView
@@ -237,6 +238,8 @@ fun ReaderScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showSettings by remember { mutableStateOf(false) }
+    /** The footnote whose marker was tapped, shown over the foot of the page. */
+    var openNote by remember { mutableStateOf<Note?>(null) }
     var visible by remember { mutableStateOf<VisiblePage?>(null) }
     /** The page the voice is on, when it is in the chapters the pager holds. */
     var voicePage by remember { mutableStateOf<VisiblePage?>(null) }
@@ -675,6 +678,7 @@ fun ReaderScreen(
                         onMakeCard = { chapter, blockIndex, offset ->
                             viewModel.updateCardDraft(viewModel.draftFor(chapter, blockIndex, offset))
                         },
+                        onOpenNote = { openNote = it },
                         loadImage = viewModel::imageBytes,
                         onGeometry = { geometry ->
                             browse.layoutEpoch++
@@ -731,6 +735,10 @@ fun ReaderScreen(
                         onDismiss = { summaryDismissed = true },
                         modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
                     )
+                }
+
+                openNote?.let { note ->
+                    NotePopup(note = note, fontScale = settings.fontScale, palette = palette, onDismiss = { openNote = null })
                 }
             }
         }
@@ -928,6 +936,7 @@ private fun PagedBook(
     /** A tap on the page that is not on any text: show or hide the header and footer. */
     onToggleChrome: () -> Unit,
     onMakeCard: (chapterIndex: Int, blockIndex: Int, offsetInBlock: Int) -> Unit,
+    onOpenNote: (Note) -> Unit,
     loadImage: suspend (String) -> ByteArray?,
     onGeometry: (PageGeometry) -> Unit,
     onVisiblePage: (VisiblePage) -> Unit,
@@ -1107,6 +1116,7 @@ private fun PagedBook(
                     wordRange = wordRange.takeIf { isVoiceChapter },
                     onTapStart = onTapStart,
                     onMakeCard = { blockIndex, offset -> onMakeCard(page.chapter.index, blockIndex, offset) },
+                    onOpenNote = onOpenNote,
                     loadImage = loadImage,
                 )
             }
@@ -1154,6 +1164,9 @@ private val PageVerticalPadding = 16.dp
 /** A little room under the last line, so descenders never meet the footer. */
 private val PageBottomSlack = 8.dp
 
+/** How far from a footnote marker a tap still opens it: the marker itself is a sliver. */
+private val NoteTapReach = 14.dp
+
 @Composable
 private fun PageView(
     page: ReaderPage,
@@ -1169,6 +1182,7 @@ private fun PageView(
     wordRange: IntRange?,
     onTapStart: (ReadingPosition) -> Unit,
     onMakeCard: (blockIndex: Int, offsetInBlock: Int) -> Unit,
+    onOpenNote: (Note) -> Unit,
     loadImage: suspend (String) -> ByteArray?,
 ) {
     Column(
@@ -1191,6 +1205,8 @@ private fun PageView(
                         sentenceTextColor = palette.sentenceText,
                         wordColor = palette.wordHighlight,
                         wordTextColor = palette.wordText,
+                        markers = full.notes.mapNotNull { (it.start until it.end).toSliceLocal(slice.start, slice.end) },
+                        markerColor = palette.secondaryText,
                     )
                     // Captured so a touch can be resolved to the exact character under the
                     // finger, rather than to the start of the page slice.
@@ -1211,14 +1227,20 @@ private fun PageView(
 
                                 detectTapGestures(
                                     onTap = { point ->
-                                        val offset = offsetInBlock(point) ?: slice.start
-                                        onTapStart(
-                                            ReadingPosition(
-                                                chapterIndex,
-                                                slice.blockIndex,
-                                                full.sentenceIndexAt(offset),
-                                            ),
-                                        )
+                                        // A footnote's marker opens the note instead of reading from here.
+                                        val note = layout?.let { noteAt(full.notes, slice.start, slice.end, it, point, NoteTapReach.toPx()) }
+                                        if (note != null) {
+                                            onOpenNote(note)
+                                        } else {
+                                            val offset = offsetInBlock(point) ?: slice.start
+                                            onTapStart(
+                                                ReadingPosition(
+                                                    chapterIndex,
+                                                    slice.blockIndex,
+                                                    full.sentenceIndexAt(offset),
+                                                ),
+                                            )
+                                        }
                                     },
                                     onLongPress = { point ->
                                         val offset = offsetInBlock(point) ?: slice.start

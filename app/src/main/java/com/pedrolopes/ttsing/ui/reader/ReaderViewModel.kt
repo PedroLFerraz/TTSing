@@ -450,7 +450,7 @@ class ReaderViewModel(
         val block = blocks.getOrNull(blockIndex) as? Block.Text ?: return null
         val span = block.sentences.getOrNull(block.sentenceIndexAt(offsetInBlock)) ?: return null
         return CardDraft(
-            sentence = block.text.substring(span.start, span.end),
+            sentence = block.plainText(span.start, span.end),
             bookTitle = _ui.value.title,
             languageTag = _ui.value.languageTag,
         )

@@ -7,7 +7,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 
 /**
  * Builds the chapter text with the current sentence marked — tinted, washed, or both — and
- * the word being spoken inverted on top of it. Both ranges are char offsets into [text].
+ * the word being spoken inverted on top of it. Footnote [markers] take [markerColor] beneath
+ * both. All ranges are char offsets into [text].
  *
  * [sentenceColor] may be [Color.Transparent], in which case only [sentenceTextColor] shows;
  * that is how the black theme marks a sentence without flooding the page with yellow.
@@ -20,8 +21,16 @@ fun highlightedText(
     sentenceTextColor: Color?,
     wordColor: Color,
     wordTextColor: Color,
+    markers: List<IntRange> = emptyList(),
+    markerColor: Color = Color.Unspecified,
 ): AnnotatedString = buildAnnotatedString {
     append(text)
+    for (range in markers) {
+        val start = range.first.coerceIn(0, text.length)
+        val end = (range.last + 1).coerceIn(start, text.length)
+        // Colour only, like the word: the page was measured with these glyphs as they are.
+        if (end > start) addStyle(SpanStyle(color = markerColor), start, end)
+    }
     sentenceRange?.let { range ->
         val start = range.first.coerceIn(0, text.length)
         val end = (range.last + 1).coerceIn(start, text.length)
