@@ -1627,7 +1627,9 @@ private fun ReaderFooter(
                 verticalAlignment = Alignment.Top,
             ) {
                 // The chapter's time left is the one figure worth colouring: it is what moves
-                // while the voice is speaking. Each side wraps within its own half.
+                // while the voice is speaking. Each side wraps within its own half. Two lines are
+                // always reserved: the text changes as the voice reads, and a footer that grew and
+                // shrank with it changed the page height, recounting the whole book in a loop.
                 MonoText(
                     text = buildAnnotatedString {
                         withStyle(SpanStyle(color = palette.accent)) { append(chapterTimeText.uppercase()) }
@@ -1637,6 +1639,7 @@ private fun ReaderFooter(
                     tracking = 0.16f,
                     color = palette.secondaryText,
                     maxLines = 2,
+                    minLines = 2,
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 if (bookTimeText != null) {

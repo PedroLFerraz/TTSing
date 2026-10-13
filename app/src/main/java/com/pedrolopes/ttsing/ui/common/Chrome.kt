@@ -208,11 +208,13 @@ fun MonoText(
     tracking: Float = 0.14f,
     color: Color = Ink.Muted,
     maxLines: Int = 1,
+    minLines: Int = 1,
 ) {
     Text(
         text = text,
         style = monoLabel(size = size, tracking = tracking, color = color),
         maxLines = maxLines,
+        minLines = minLines,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier,
     )
