@@ -118,7 +118,73 @@ internal object LinkedNotes {
             if (sameDocument) lifted.add(container)
         }
         lifted.forEach { if (it.parentNode() != null && it !== doc.body()) it.remove() }
+        liftNotesCalledElsewhere(doc, chapterZipPath, loadDocument)
         return notes
+    }
+
+    /**
+     * Takes out of [doc] the notes whose call-outs are in other files — a converter that splits a
+     * long chapter into several files gathers the notes of all of them after the last one:
+     *
+     * `<p><a id="n2" href="part3.html#r2">2</a> Escolas de jurisprudência…</p>`
+     *
+     * The call-out's own file shows each of them in a popup already; left here they would be read
+     * out as stray paragraphs at the end of the chapter. A note counts only when the link goes
+     * both ways — its number leads to the call-out, and the call-out leads back to it — so a list
+     * of contents is never mistaken for one. A file with nothing else in it is a page of notes
+     * someone may turn to on purpose, and is left as it is.
+     */
+    private fun liftNotesCalledElsewhere(doc: Document, chapterZipPath: String, loadDocument: (String) -> Document?) {
+        val baseDir = EpubPaths.parentDir(chapterZipPath)
+        // Everything that opens like a note, and those of them whose call-out was found.
+        val noteLike = mutableListOf<Element>()
+        val found = mutableListOf<Element>()
+        for (anchor in doc.select("a[href]")) {
+            if (noteLike.any { note -> anchor.parents().any { it === note } }) continue
+            if (!isBacklink(anchor) && !(looksLikeMarker(anchor, anchor.text().trim()) && startsItsBlock(anchor))) continue
+            val href = anchor.attr("href")
+            val path = href.substringBefore('#')
+            val fragment = EpubPaths.percentDecode(href.substringAfter('#', ""))
+            if (path.isEmpty() || fragment.isEmpty()) continue
+            val callOutPath = EpubPaths.resolve(baseDir, path)
+            if (callOutPath == chapterZipPath) continue
+            val note = noteContainer(anchor, declared = true) ?: continue
+            noteLike.add(note)
+            // Only a note the call-out's file can show: anything else would be lost from the book.
+            noteText(note) ?: continue
+            val ids = (listOf(anchor) + anchor.parents().takeWhile { it !== note } + note)
+                .map { it.id() }
+                .filter { it.isNotEmpty() }
+                .toSet()
+            if (ids.isEmpty()) continue
+            val callOutDoc = loadDocument(callOutPath) ?: continue
+            val callOut = callOutDoc.getElementById(fragment) ?: continue
+            val callOutDir = EpubPaths.parentDir(callOutPath)
+            val linksBack = callOut.select("a[href]").any { link ->
+                val back = link.attr("href")
+                back.substringBefore('#').isNotEmpty() &&
+                    EpubPaths.resolve(callOutDir, back) == chapterZipPath &&
+                    EpubPaths.percentDecode(back.substringAfter('#', "")) in ids
+            }
+            if (linksBack) found.add(note)
+        }
+        if (found.isNotEmpty() && hasTextBesides(doc, noteLike)) found.forEach { it.remove() }
+    }
+
+    /** Whether [doc] has words of its own outside [notes] and its headings. */
+    private fun hasTextBesides(doc: Document, notes: List<Element>): Boolean {
+        var own = false
+        doc.body().traverse { node, _ ->
+            if (own || node !is TextNode || node.isBlank) return@traverse
+            var parent = node.parent()
+            while (parent != null) {
+                if (notes.any { it === parent }) return@traverse
+                if (parent is Element && parent.tagName().lowercase() in HEADINGS) return@traverse
+                parent = parent.parent()
+            }
+            own = true
+        }
+        return own
     }
 
     private fun isNoteRef(anchor: Element): Boolean =
@@ -232,7 +298,9 @@ internal object LinkedNotes {
 
     private const val MAX_NOTE_LENGTH = 8000
 
-    private val NOT_NOTES = setOf("section", "article", "body", "h1", "h2", "h3", "h4", "h5", "h6")
+    private val HEADINGS = setOf("h1", "h2", "h3", "h4", "h5", "h6")
+
+    private val NOT_NOTES = setOf("section", "article", "body") + HEADINGS
 
     private val NOTE_NAME = Regex("""(?i)note|nota|rodap|^fn|^n\d|_fn|-fn""")
 

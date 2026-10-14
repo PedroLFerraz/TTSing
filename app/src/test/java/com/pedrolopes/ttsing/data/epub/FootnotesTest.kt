@@ -91,6 +91,47 @@ class FootnotesTest {
         assertTrue(blocks.all { it.notes.isEmpty() })
     }
 
+    /** As a converter splits a long chapter: the notes of every part gathered after the last. */
+    @Test
+    fun `notes called out from earlier files leave the end of the chapter`() {
+        val blocks = parse(
+            """
+            <html><body>
+              <p>E partiu. Encontrou-os no fim do primeiro <em>rubber</em><a id="r5" href="ch.xhtml#n5">5</a>.</p>
+              <hr/>
+              <p class="footnoteline"></p>
+              <p class="c21"><a id="n1" href="parte1.xhtml#r1">1</a> Jornal mais antigo da Rússia.</p>
+              <p class="c21"><a id="n2" href="parte2.xhtml#r2">2</a> Escolas de jurisprudência.</p>
+              <p class="c21"><em><a id="n5" href="ch.xhtml#r5">5</a></em> No jogo de <em>vint</em>, três partidas.</p>
+            </body></html>
+            """.trimIndent(),
+            files = mapOf(
+                "OEBPS/parte1.xhtml" to """<html><body><p>O <em>Viédomosti</em><sup><a id="r1" href="ch.xhtml#n1">1</a></sup>, que chegara.</p></body></html>""",
+                "OEBPS/parte2.xhtml" to """<html><body><p>A escola<sup><a id="r2" href="ch.xhtml#n2">2</a></sup> de direito.</p></body></html>""",
+            ),
+        )
+        assertEquals(listOf("E partiu. Encontrou-os no fim do primeiro rubber⁵."), blocks.map { it.text })
+        assertEquals("No jogo de vint, três partidas.", blocks.single().notes.single().text)
+    }
+
+    @Test
+    fun `a numbered list of contents is not taken for notes`() {
+        val texts = parse(
+            """
+            <html><body>
+              <h1>Sumário</h1>
+              <p><a href="cap1.xhtml#c1">1</a> O começo</p>
+              <p><a href="cap2.xhtml#c2">2</a> O fim</p>
+            </body></html>
+            """.trimIndent(),
+            files = mapOf(
+                "OEBPS/cap1.xhtml" to """<html><body><h2 id="c1">O começo</h2><p>Texto.</p></body></html>""",
+                "OEBPS/cap2.xhtml" to """<html><body><h2 id="c2">O fim</h2><p>Texto.</p></body></html>""",
+            ),
+        ).map { it.text }
+        assertEquals(listOf("Sumário", "O começo", "O fim"), texts)
+    }
+
     @Test
     fun `a link to another part of the chapter is not a note`() {
         val texts = parse(

@@ -103,12 +103,14 @@ app running, not mockups.
   page as a small `¹` or `*`, and tapping it opens the note in a panel along the foot of the
   page, the way KOReader does. The voice reads past both. Linked notes (`epub:type="noteref"`,
   or a bare number linking to the note, in the chapter or in a separate notes file) are
-  followed to their text. A converted print book's unlinked notes — an asterisk after a word,
+  followed to their text; notes a converter gathered after the last part of a split chapter
+  leave the flow there too, rather than being read out as stray paragraphs. A converted print book's unlinked notes — an asterisk after a word,
   and a paragraph starting `* ` wherever the printed page ended — are matched to their
   asterisks, and the sentence the page break cut in two is joined back together; a note that
   can't be matched stays where it was.
 - **Messy-EPUB clean-up** — footnote call-outs that lead nowhere and page-break markers are
-  stripped before rendering, so the voice doesn't read "palavra um" for a footnote number.
+  stripped before rendering, so the voice doesn't read "palavra um" for a footnote number;
+  an ordinal's raised letter ("1<sup>a</sup> edição") becomes "1ª", not a call-out to drop.
   Conservative by design: a well-formed book is left untouched.
   Two more real-world defects are worked around: chapters whose bytes are UTF-8 but whose
   `<meta>` claims `iso-8859-1` (obeying the declaration turns every `’` into `â€™`, on screen
