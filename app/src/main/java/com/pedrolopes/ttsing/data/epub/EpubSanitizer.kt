@@ -2,6 +2,7 @@ package com.pedrolopes.ttsing.data.epub
 
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.TextNode
 
 /**
  * Conservative clean-up for badly formatted EPUBs. It only removes markup that is
@@ -76,9 +77,28 @@ internal object EpubSanitizer {
     private fun removeMarkerSuperscripts(doc: Document) {
         for (element in doc.select("sup")) {
             if (element.parentNode() == null) continue
-            if (matchesMarker(element.text(), SUP_MARKER)) element.remove()
+            val ordinal = ordinalSign(element)
+            when {
+                ordinal != null -> element.replaceWith(TextNode(ordinal))
+                matchesMarker(element.text(), SUP_MARKER) -> element.remove()
+            }
         }
     }
+
+    /**
+     * "1<sup>a</sup> edição", "2<sup>o</sup> andar": not a call-out but an ordinal, which the
+     * page shows and the voice reads ("primeira") only as "1ª". A number of four digits is a
+     * year, and a letter after it is a note.
+     */
+    private fun ordinalSign(sup: Element): String? {
+        val sign = ORDINAL_SIGNS[sup.text().trim()] ?: return null
+        val before = (sup.previousSibling() as? TextNode)?.wholeText ?: return null
+        return sign.takeIf { ORDINAL_NUMBER.containsMatchIn(before) }
+    }
+
+    private val ORDINAL_SIGNS = mapOf("a" to "ª", "o" to "º")
+
+    private val ORDINAL_NUMBER = Regex("""(?<![\p{L}\p{N}])\d{1,3}$""")
 
     /**
      * Anchors whose entire text is a bare number AND which point at an internal fragment

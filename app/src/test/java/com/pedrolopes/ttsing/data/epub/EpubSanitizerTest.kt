@@ -90,6 +90,12 @@ class EpubSanitizerTest {
     }
 
     @Test
+    fun `an ordinal's superscript letter is kept as its sign`() {
+        val html = "<html><body><p><em>1<sup>a</sup> edição</em>, no 2<sup>o</sup> andar, em 1990<sup>a</sup>.</p></body></html>"
+        assertEquals(listOf("1ª edição, no 2º andar, em 1990."), textOf(html))
+    }
+
+    @Test
     fun `does not strip long numeric text`() {
         val html = "<html><body><p>O ano de <a href=\"#x\">1500</a> foi importante.</p></body></html>"
         assertEquals(listOf("O ano de 1500 foi importante."), textOf(html))
