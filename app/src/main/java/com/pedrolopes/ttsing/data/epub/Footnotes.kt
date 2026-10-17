@@ -90,22 +90,28 @@ internal object LinkedNotes {
             if (notes.size >= Footnotes.MAX_NOTES) break
             if (anchor.parentNode() == null || insideNoteBody(anchor)) continue
             val href = anchor.attr("href")
-            if (!href.contains('#')) continue
             val raw = anchor.text().trim()
             val declared = isNoteRef(anchor)
             if (!declared && (!looksLikeMarker(anchor, raw) || isBacklink(anchor) || startsItsBlock(anchor))) continue
 
             val path = href.substringBefore('#')
-            val fragment = EpubPaths.percentDecode(href.substringAfter('#'))
-            if (fragment.isEmpty()) continue
+            val fragment = EpubPaths.percentDecode(href.substringAfter('#', ""))
+            // No fragment: the link opens a file of its own, one note to a file ("footnote14.html").
+            val wholeFile = fragment.isEmpty()
+            if (wholeFile && path.isEmpty()) continue
             val targetPath = if (path.isEmpty()) chapterZipPath else EpubPaths.resolve(baseDir, path)
             val sameDocument = targetPath == chapterZipPath
+            if (wholeFile && sameDocument) continue
             val targetDoc = if (sameDocument) doc else loadDocument(targetPath) ?: continue
-            val target = targetDoc.getElementById(fragment)
-                ?: targetDoc.getElementsByAttributeValue("name", fragment).firstOrNull()
-                ?: continue
-            val container = noteContainer(target, declared) ?: continue
-            if (!declared && !looksLikeNote(container, target, raw)) continue
+            val target = if (wholeFile) {
+                targetDoc.body()
+            } else {
+                targetDoc.getElementById(fragment)
+                    ?: targetDoc.getElementsByAttributeValue("name", fragment).firstOrNull()
+                    ?: continue
+            }
+            val container = if (wholeFile) target else noteContainer(target, declared) ?: continue
+            if (!declared && !(if (wholeFile) looksLikeNoteFile(container, path, raw) else looksLikeNote(container, target, raw))) continue
             // A link to the paragraph it sits in is no footnote.
             if (sameDocument && (container === anchor || anchor.parents().any { it === container })) continue
             val text = noteText(container) ?: continue
@@ -257,6 +263,14 @@ internal object LinkedNotes {
         return sequenceOf(target, container).any { element ->
             NOTE_NAME.containsMatchIn(element.id()) || NOTE_NAME.containsMatchIn(element.className())
         }
+    }
+
+    /** [looksLikeNote] for a link to a whole file: a short page without headings that opens with the call-out's mark or is named like a note. */
+    private fun looksLikeNoteFile(body: Element, path: String, raw: String): Boolean {
+        if (body.select("h1, h2, h3, h4, h5, h6").isNotEmpty()) return false
+        val mark = raw.trim('[', ']', '(', ')', '{', '}', '<', '>', '.', ' ')
+        return (mark.isNotEmpty() && body.text().trim().trimStart('[', '(').startsWith(mark)) ||
+            NOTE_NAME.containsMatchIn(path.substringAfterLast('/'))
     }
 
     /**
