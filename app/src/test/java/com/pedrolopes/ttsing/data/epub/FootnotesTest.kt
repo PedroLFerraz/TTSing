@@ -61,6 +61,34 @@ class FootnotesTest {
         assertEquals(listOf("¹", "²"), block.notes.map { block.marker(it) })
     }
 
+    /** As in Plato's Great Dialogues: every note is a file of its own, called out by a bare "*". */
+    @Test
+    fun `an asterisk linking to a file of its own is a note, not text to read`() {
+        val block = parse(
+            """
+            <html><body>
+              <p>Gorgias<span class="footnoteRef"><span><a href="footnote32.html">*</a></span></span> is the man.</p>
+            </body></html>
+            """.trimIndent(),
+            files = mapOf(
+                "OEBPS/footnote32.html" to """<html><body><div class="footnote"><p class="footnote" id="footnote32"><sup>*</sup> A sophist of Leontini.</p></div></body></html>""",
+            ),
+        ).single()
+        assertEquals("Gorgias* is the man.", block.text)
+        val note = block.notes.single()
+        assertEquals("*", block.marker(note))
+        assertEquals("A sophist of Leontini.", note.text)
+    }
+
+    @Test
+    fun `a link to a whole file that is not a note keeps its text`() {
+        val texts = parse(
+            """<html><body><p>Veja o capítulo <a href="cap1.xhtml">1</a> adiante.</p></body></html>""",
+            files = mapOf("OEBPS/cap1.xhtml" to """<html><body><p>Era uma vez um jardim.</p></body></html>"""),
+        ).map { it.text }
+        assertEquals(listOf("Veja o capítulo 1 adiante."), texts)
+    }
+
     @Test
     fun `a note kept at the end of the chapter leaves the flow`() {
         val blocks = parse(
