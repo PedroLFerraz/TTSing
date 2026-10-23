@@ -170,9 +170,8 @@ it yourself, see below.
 
 ## Requirements
 
-- Android Studio (uses its bundled JDK 21 — `gradle.properties` pins
-  `org.gradle.java.home` to `C:\Program Files\Android\Android Studio\jbr`).
-- Android SDK platform 36 + build-tools 36.0.0.
+- JDK 17 and the Android SDK (platform 36, build-tools 35.0.0, platform-tools). Android Studio
+  is optional.
 - A device or emulator running Android 8.0 (API 26) or newer, with a TTS engine and the
   Portuguese/English voice data installed (Settings → System → Languages →
   Text-to-speech). **Note:** stock emulator images often ship English only — for
@@ -186,16 +185,21 @@ it yourself, see below.
 
 ## Build & run
 
-Open the folder in Android Studio and Run, or from a terminal:
+From a terminal on Linux:
 
-```powershell
-.\gradlew.bat assembleDebug     # build the APK
-.\gradlew.bat test              # run the JVM unit tests
+```sh
+echo "sdk.dir=$HOME/Android/Sdk" > local.properties
+./gradlew :app:fetchPiperVoices    # once: the bundled pt-BR voice, not kept in git
+./gradlew :app:assembleDebug       # → app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:testDebugUnitTest   # the JVM unit tests
 ```
 
-The debug APK is written to `app\build\outputs\apk\debug\app-debug.apk`. Copies handed
-off for install/testing are kept in `releases/` (git-ignored — it's build output, not
-source).
+`./build-apk.sh` builds the signed release APK and copies it to `TTSing.apk` in the project
+folder, ready for `adb install -r TTSing.apk`. It signs with the key named in
+`keystore.properties` (gitignored, holding `storeFile`, `storePassword`, `keyAlias` and
+`keyPassword`). Android installs an update only if it's signed with the same key as the
+installed app, so keep that keystore safe. Replacing the app any other way means uninstalling
+it, and that loses its reading positions and settings.
 
 ## Trying it out
 
@@ -248,7 +252,8 @@ sentence segmentation, end-to-end parsing of the real sample EPUBs, PDF reflow (
 and page numbers, de-hyphenation, paragraph and page breaks, headings, where figures go
 and which pictures are decoration), whole-book page
 arithmetic, and the speaking-speed estimate — including a replay of sentences logged on a
-device, against the old average and the new one. Run with `.\gradlew.bat test`.
+device, against the old average and the new one. Run with `./gradlew :app:testDebugUnitTest`;
+CI runs them on every push (`.github/workflows/ci.yml`).
 
 ## License
 

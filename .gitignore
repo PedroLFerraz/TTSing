@@ -13,6 +13,14 @@
 /releases
 *.apk
 
+# Release signing secrets: never commit the keystore or its passwords.
+keystore.properties
+*.keystore
+*.jks
+
+.claude/settings.local.json
+.claude/worktrees/
+
 # Only the two tiny synthetic samples belong in the repo. Real books dropped in here for
 # testing are copyrighted and must not be committed or pushed.
 /sample-books/*

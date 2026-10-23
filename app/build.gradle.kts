@@ -1,10 +1,19 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+}
+
+// Release signing comes from a gitignored keystore.properties at the project root. Without it
+// the release signingConfig isn't created and a release build comes out unsigned, so a fresh
+// clone still builds.
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
 }
 
 android {
@@ -25,9 +34,21 @@ android {
         }
     }
 
+    signingConfigs {
+        if (File(keystoreProps.getProperty("storeFile", "")).exists()) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -49,6 +70,11 @@ android {
             (project.findProperty("pdfRawPages") as String?)?.let { test.systemProperty("pdfRawPages", it) }
             test.maxHeapSize = "2g"
         }
+    }
+    lint {
+        // The AnkiDroid API ships lint rules written for AnkiDroid's own code ("use the
+        // collection's getTime()"); they have no meaning here and fail every release build.
+        disable += setOf("DirectDateInstantiation", "DirectSystemCurrentTimeMillisUsage")
     }
     packaging {
         resources {
