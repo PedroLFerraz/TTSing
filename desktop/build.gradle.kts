@@ -72,6 +72,7 @@ dependencies {
     runtimeOnly(libs.sherpa.onnx.native.linux.x64)
 
     testImplementation(libs.junit)
+    testImplementation(compose.desktop.uiTestJUnit4)
 }
 
 tasks.test {

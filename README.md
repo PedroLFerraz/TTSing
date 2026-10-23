@@ -175,7 +175,8 @@ it yourself, see below.
 The desktop app is the library and the reader with the same voices: your books folder as a
 file explorer (its subfolders down the side, covers or a list beside them, search across all of
 it), and the paged reader with the karaoke highlight, contents, footnote popups, black / light /
-sepia pages, the time left and a sleep timer. Moving, renaming and trashing a book does it to the file; reading
+sepia pages, the time left and a sleep timer. A PDF opens as its own pages, with the sentence
+being read marked on the page as on the phone; it can be switched to reflowed text per book. Moving, renaming and trashing a book does it to the file; reading
 positions follow. News, video and flashcards are Android only for now, and the phone and the PC
 keep separate places in a book.
 

@@ -113,7 +113,7 @@ fun SettingsPanel(app: App, model: ReaderModel, narration: Narration) {
     }
 
     Column(
-        modifier = Modifier.width(340.dp).fillMaxHeight().background(Ink.Surface).verticalScroll(rememberScrollState()).padding(vertical = 16.dp),
+        modifier = Modifier.width(372.dp).fillMaxHeight().background(Ink.Surface).verticalScroll(rememberScrollState()).padding(vertical = 16.dp),
     ) {
         Section("Page") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -133,6 +133,22 @@ fun SettingsPanel(app: App, model: ReaderModel, narration: Narration) {
                 Chip("A−", selected = false) { app.settings.update { it.copy(fontScale = SettingsStore.fontStep(it.fontScale - 0.05f)) } }
                 MonoText("${(settings.fontScale * 100).roundToInt()}%", color = Ink.Text, size = 12f, modifier = Modifier.padding(horizontal = 16.dp))
                 Chip("A+", selected = false) { app.settings.update { it.copy(fontScale = SettingsStore.fontStep(it.fontScale + 0.05f)) } }
+            }
+        }
+
+        if (model.pdf != null) {
+            val asText = model.bookId in settings.pdfAsText
+            Section("PDF") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("Pages", selected = !asText) { app.settings.update { it.copy(pdfAsText = it.pdfAsText - model.bookId) } }
+                    Chip("Text", selected = asText) { app.settings.update { it.copy(pdfAsText = it.pdfAsText + model.bookId) } }
+                }
+                Text(
+                    if (asText) "Reflowed like a book: the type size and themes apply." else "The PDF as printed, with the sentence marked on the page. Ctrl + wheel zooms.",
+                    color = Ink.Muted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
         }
 

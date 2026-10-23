@@ -8,6 +8,7 @@ import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.Chapter
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.epub.TocEntry
+import com.pedrolopes.ttsing.data.pdf.PdfDocument
 import com.pedrolopes.ttsing.desktop.App
 import com.pedrolopes.ttsing.tts.BookContentSource
 import com.pedrolopes.ttsing.tts.SentenceRef
@@ -64,6 +65,10 @@ class ReaderModel(private val app: App, val bookId: String) {
     var locale by mutableStateOf(Locale.getDefault())
         private set
 
+    /** The book, when it is a PDF that has text: it can then be shown as its own pages. */
+    var pdf by mutableStateOf<PdfDocument?>(null)
+        private set
+
     /** Shown in place of playing when no voice for the book's language is installed. */
     var needsVoice by mutableStateOf(false)
 
@@ -101,6 +106,7 @@ class ReaderModel(private val app: App, val bookId: String) {
             error = it
             return
         }
+        pdf = opened as? PdfDocument
         val saved = record?.position ?: ReadingPosition.START
         val blocks = section(saved.chapterIndex)?.blocks
         showChapter(saved.chapterIndex, Anchor(saved.blockIndex, blocks?.let { sentenceStart(it, saved) } ?: 0))
@@ -166,8 +172,8 @@ class ReaderModel(private val app: App, val bookId: String) {
         }
     }
 
-    /** Text block [index] of the chapter on screen, if it is one. */
-    fun textBlock(index: Int): Block.Text? = chapter?.blocks?.getOrNull(index) as? Block.Text
+    /** Text block [index] of section [section], if it is one. */
+    suspend fun textBlockIn(section: Int, index: Int): Block.Text? = section(section)?.blocks?.getOrNull(index) as? Block.Text
 
     suspend fun readImage(key: String): ByteArray? = document?.readImage(key)
 

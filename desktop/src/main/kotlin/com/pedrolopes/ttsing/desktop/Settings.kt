@@ -23,6 +23,10 @@ data class Settings(
     val voiceByLanguage: Map<String, String> = emptyMap(),
     /** A book's reading language when its file declares the wrong one, by book id. */
     val languageByBook: Map<String, String> = emptyMap(),
+    /** PDFs read as reflowed text rather than as their own pages, by book id. */
+    val pdfAsText: Set<String> = emptySet(),
+    /** How wide PDF pages are drawn, as a share of the room there is. */
+    val pdfZoom: Float = 1f,
     /** Whether the library shows covers or a list. */
     val libraryAsList: Boolean = false,
 )

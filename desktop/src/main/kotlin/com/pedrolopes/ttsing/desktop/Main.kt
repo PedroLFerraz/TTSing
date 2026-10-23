@@ -29,9 +29,8 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /** Everything that outlives a screen: the library, the settings, the voices and the narrator. */
-class App {
+class App(val dirs: AppDirs = AppDirs.default()) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    val dirs = AppDirs.default()
     val settings = SettingsStore(dirs)
     val library = Library(dirs)
     val voiceFolder = PiperVoiceFolder(dirs.voices)

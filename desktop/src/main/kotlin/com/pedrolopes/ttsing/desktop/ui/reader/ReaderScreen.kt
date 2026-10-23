@@ -4,6 +4,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -103,6 +106,7 @@ import com.pedrolopes.ttsing.ui.reader.pageForAnchor
 import com.pedrolopes.ttsing.ui.reader.sliceText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -137,11 +141,27 @@ fun ReaderScreen(app: App, bookId: String, onBack: () -> Unit) {
     var openNote by remember { mutableStateOf<Note?>(null) }
     var laid by remember { mutableStateOf<Laid?>(null) }
     val current = laid?.takeIf { it.chapter === model.chapter }
+    // A PDF shows its own pages unless this book was switched to text, as on Android.
+    val pdf = model.pdf
+    val showsPages = pdf != null && bookId !in settings.pdfAsText
+    val pdfList = remember(bookId) { LazyListState() }
+    var voiceOnScreen by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     LaunchedEffect(model.needsVoice) { if (model.needsVoice) settingsOpen = true }
 
+    fun zoomPages(by: Float) = app.settings.update {
+        it.copy(pdfZoom = (Math.round((it.pdfZoom + by) * 10) / 10f).coerceIn(MIN_PDF_ZOOM, MAX_PDF_ZOOM))
+    }
+
     fun turn(forward: Boolean) {
+        if (showsPages) {
+            // A screenful, less a little so the last line stays in view.
+            val by = pdfList.layoutInfo.viewportSize.height * 0.9f
+            scope.launch { pdfList.animateScrollBy(if (forward) by else -by) }
+            return
+        }
         val view = current ?: return
         val start = view.viewStart(model.anchor)
         val target = start + if (forward) view.perView else -view.perView
@@ -150,6 +170,16 @@ fun ReaderScreen(app: App, bookId: String, onBack: () -> Unit) {
 
     /** Play from the sentence the voice is on, if it is on screen; else from the top of the page. */
     fun playHere() {
+        if (showsPages) {
+            val chapter = model.chapter ?: return
+            val sentence = narration.sentence
+            val anchor = model.anchor
+            model.play(
+                if (voiceOnScreen && sentence != null) sentence.position
+                else browsePosition(model.chapterIndex, chapter.blocks, anchor.block.coerceAtMost(chapter.blocks.size), anchor.offset),
+            )
+            return
+        }
         val view = current ?: return
         val start = view.viewStart(model.anchor)
         val shown = start until start + view.perView
@@ -191,9 +221,9 @@ fun ReaderScreen(app: App, bookId: String, onBack: () -> Unit) {
                     event.key == Key.DirectionDown && narration.sentence != null -> model.skip(true)
                     event.key == Key.DirectionUp && narration.sentence != null -> model.skip(false)
                     event.isCtrlPressed && (event.key == Key.Equals || event.key == Key.Plus) ->
-                        app.settings.update { it.copy(fontScale = SettingsStore.fontStep(it.fontScale + 0.05f)) }
+                        if (showsPages) zoomPages(0.1f) else app.settings.update { it.copy(fontScale = SettingsStore.fontStep(it.fontScale + 0.05f)) }
                     event.isCtrlPressed && event.key == Key.Minus ->
-                        app.settings.update { it.copy(fontScale = SettingsStore.fontStep(it.fontScale - 0.05f)) }
+                        if (showsPages) zoomPages(-0.1f) else app.settings.update { it.copy(fontScale = SettingsStore.fontStep(it.fontScale - 0.05f)) }
                     event.key == Key.Escape -> when {
                         openNote != null -> openNote = null
                         tocOpen || settingsOpen -> {
@@ -235,6 +265,18 @@ fun ReaderScreen(app: App, bookId: String, onBack: () -> Unit) {
                     if (model.error == null) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = palette.accent) }
                     }
+                } else if (showsPages && pdf != null) {
+                    PdfPagesView(
+                        pdf = pdf,
+                        model = model,
+                        narration = narration,
+                        zoom = settings.pdfZoom,
+                        listState = pdfList,
+                        background = palette.background,
+                        onReadFrom = { model.play(it) },
+                        onVoiceOnScreen = { voiceOnScreen = it },
+                        onZoom = ::zoomPages,
+                    )
                 } else {
                     PageArea(
                         model = model,
@@ -275,6 +317,9 @@ fun ReaderScreen(app: App, bookId: String, onBack: () -> Unit) {
 
     openNote?.let { note -> NotePopup(note, settings.fontScale, palette) { openNote = null } }
 }
+
+private const val MIN_PDF_ZOOM = 0.4f
+private const val MAX_PDF_ZOOM = 2.5f
 
 private val ColumnMaxWidth = 680.dp
 private val Gutter = 48.dp
