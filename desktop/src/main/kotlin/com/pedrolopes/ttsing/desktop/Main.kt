@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import com.pedrolopes.ttsing.desktop.library.FolderWatch
 import com.pedrolopes.ttsing.desktop.library.Library
 import com.pedrolopes.ttsing.desktop.tts.Narrator
 import com.pedrolopes.ttsing.desktop.ui.library.LibraryScreen
@@ -39,12 +40,19 @@ class App {
 
     val libraryRoot: File? get() = settings.value.libraryFolder?.let(::File)
 
+    /** Rescans when the books folder changes on disk, from the file manager or anywhere else. */
+    private val watch = FolderWatch(scope) { libraryRoot?.let { library.sync(it) } }
+
+    /** Rescans the books folder, and watches it from then on. */
     fun syncLibrary() {
-        val root = libraryRoot ?: return
+        val root = libraryRoot
+        watch.watch(root)
+        root ?: return
         scope.launch { library.sync(root) }
     }
 
     fun close() {
+        watch.stop()
         narrator.shutdown()
         scope.cancel()
     }

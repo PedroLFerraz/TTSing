@@ -92,6 +92,7 @@ class ReaderModel(private val app: App, val bookId: String) {
         }
         document = opened
         source = BookContentSource(opened)
+        app.library.markOpened(bookId)
         title = opened.title
         toc = opened.toc
         sectionCount = opened.sectionCount

@@ -137,7 +137,7 @@ fun SettingsPanel(app: App, model: ReaderModel, narration: Narration) {
         }
 
         Section("Voice") {
-            if (model.needsVoice || (selected == null && narration.sentence == null)) {
+            if (selected == null) {
                 Text(
                     "No voice for ${locale.getDisplayLanguage(Locale.ENGLISH)} yet. Download one below; it stays on this computer.",
                     color = Ink.Live,

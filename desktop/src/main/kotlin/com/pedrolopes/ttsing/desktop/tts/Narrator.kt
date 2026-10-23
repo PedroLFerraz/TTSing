@@ -63,10 +63,13 @@ class Narrator(private val scope: CoroutineScope) {
     /** Reads [source] from [from] on, in [voice], at [rate] times the voice's own pace. */
     fun play(source: ContentSource, from: ReadingPosition, voice: PiperVoice, locale: Locale, rate: Float) {
         val previous = job
+        debug { "play from $from in ${voice.id} at $rate" }
         job = scope.launch {
             previous?.cancelAndJoin()
+            debug { "previous job ended" }
             _state.update { it.copy(speaking = true, preparing = engine.voice?.id != voice.id, finished = false, error = null) }
             val ready = withContext(Dispatchers.IO) { synthesis.withLock { engine.prepare(voice) } }
+            debug { "voice ready: $ready" }
             _state.update { it.copy(preparing = false) }
             if (!ready) {
                 _state.update { it.copy(speaking = false, error = "The voice ${voice.id} could not be loaded") }
@@ -78,8 +81,9 @@ class Narrator(private val scope: CoroutineScope) {
 
     /** Stops the voice where it is; [state] keeps the sentence, so play resumes from it. */
     fun pause() {
+        // The audio thread silences the line itself as the job unwinds; see AudioOut.
+        debug { "pause" }
         job?.cancel()
-        audio.stop()
         _state.update { it.copy(speaking = false, word = null) }
     }
 
@@ -113,6 +117,7 @@ class Narrator(private val scope: CoroutineScope) {
             val speaking: SentenceRef = ref
             _state.update { it.copy(sentence = speaking, word = null) }
             val speech = (ahead.removeFirstOrNull()?.second ?: synthesizeAsync(speaking)).await()
+            debug { "sentence ${speaking.position}: ${speech?.durationMs} ms of audio" }
             if (speech == null) {
                 // A run of refusals means the voice can't speak this text at all: say so.
                 if (++failures >= MAX_FAILURES) {
@@ -135,15 +140,14 @@ class Narrator(private val scope: CoroutineScope) {
             val msPerFrame = 1000f / speech.sampleRate
             var lastWord: IntRange? = null
             val started = System.currentTimeMillis()
-            val heard = withContext(Dispatchers.IO) {
-                audio.play(speech) { frame ->
-                    val word = NeuralWordTiming.wordAt(words, (frame * msPerFrame).toInt())?.rangeInBlock
-                    if (word != null && word != lastWord) {
-                        lastWord = word
-                        _state.update { if (it.sentence === speaking) it.copy(word = word) else it }
-                    }
+            val heard = audio.play(speech) { frame ->
+                val word = NeuralWordTiming.wordAt(words, (frame * msPerFrame).toInt())?.rangeInBlock
+                if (word != null && word != lastWord) {
+                    lastWord = word
+                    _state.update { if (it.sentence === speaking) it.copy(word = word) else it }
                 }
             }
+            debug { "sentence ${speaking.position} heard: $heard" }
             if (!heard || !currentCoroutineContext().isActive) return@coroutineScope
             onSpoken(speaking, System.currentTimeMillis() - started, rate)
             ref = next

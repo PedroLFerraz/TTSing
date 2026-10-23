@@ -234,6 +234,12 @@ class Library(private val dirs: AppDirs) {
         counts
     }
 
+    /** The book was opened: it goes to the top of Recent. */
+    fun markOpened(id: String) {
+        val record = book(id) ?: return
+        put(record.copy(lastOpenedAt = System.currentTimeMillis()))
+    }
+
     fun savePosition(id: String, position: ReadingPosition, progress: Float) {
         val record = book(id) ?: return
         put(
@@ -307,7 +313,8 @@ class Library(private val dirs: AppDirs) {
                 ProcessBuilder("gio", "trash", record.path).redirectErrorStream(true).start()
             }.getOrElse { throw IOException("Moving to the trash needs `gio` (from GLib)") }
             val output = process.inputStream.bufferedReader().readText()
-            if (process.waitFor() != 0) throw IOException(output.trim().ifEmpty { "Could not move the file to the trash" })
+            // gio says "gio: file:///…/book.epub: <reason>"; the reason is what's worth showing.
+            if (process.waitFor() != 0) throw IOException("Couldn't move ${record.fileName} to the trash: ${output.trim().substringAfterLast(": ").ifEmpty { "gio failed" }}")
             record.coverFile?.let { File(it).delete() }
             change { it - id }
         }

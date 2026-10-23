@@ -1,5 +1,7 @@
 package com.pedrolopes.ttsing.desktop.ui.theme
 
+import androidx.compose.foundation.DefaultContextMenuRepresentation
+import androidx.compose.foundation.LocalContextMenuRepresentation
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -12,6 +14,7 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -160,8 +163,17 @@ fun TTSingTheme(content: @Composable () -> Unit) {
         colorScheme = BlackScheme,
         typography = TTSingTypography,
         shapes = SquareShapes,
-        content = content,
-    )
+    ) {
+        // Right-click menus in the app's colours rather than Compose's light default.
+        CompositionLocalProvider(
+            LocalContextMenuRepresentation provides DefaultContextMenuRepresentation(
+                backgroundColor = Ink.Raised,
+                textColor = Ink.Text,
+                itemHoverColor = Ink.Well,
+            ),
+            content = content,
+        )
+    }
 }
 
 /** The diagonal yellow/black band under the library's header: what makes the black screen this app's. */

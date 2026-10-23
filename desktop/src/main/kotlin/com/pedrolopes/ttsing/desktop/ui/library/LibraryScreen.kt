@@ -43,6 +43,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,7 +55,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -155,6 +165,7 @@ fun LibraryScreen(
 
             Header(
                 shelf = shelf,
+                searching = searching,
                 query = query,
                 asList = settings.libraryAsList,
                 onQuery = { query = it },
@@ -228,7 +239,7 @@ fun LibraryScreen(
         AlertDialog(
             onDismissRequest = { trashing = null },
             title = { Text("Move to trash?") },
-            text = { Text("${book.fileName} goes to the trash, with its reading position. It can be restored from there.") },
+            text = { Text("${book.fileName} goes to your desktop's trash, where it can be restored from; TTSing forgets its place in it.") },
             confirmButton = {
                 TextButton(onClick = {
                     trashing = null
@@ -387,6 +398,7 @@ private fun SidebarRow(
 @Composable
 private fun Header(
     shelf: Shelf,
+    searching: Boolean,
     query: String,
     asList: Boolean,
     onQuery: (String) -> Unit,
@@ -398,9 +410,10 @@ private fun Header(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            when (shelf) {
-                Shelf.Recent -> Crumb("Recent", current = true) {}
-                is Shelf.Folder -> {
+            when {
+                searching -> Crumb("Search", current = true) {}
+                shelf == Shelf.Recent -> Crumb("Recent", current = true) {}
+                shelf is Shelf.Folder -> {
                     Crumb("Library", current = shelf.path.isEmpty()) { onShelf(Shelf.Folder("")) }
                     val parts = shelf.path.split('/').filter { it.isNotEmpty() }
                     parts.forEachIndexed { i, part ->
@@ -620,7 +633,13 @@ private fun BookList(
 
 @Composable
 private fun RenameDialog(book: BookRecord, onDismiss: () -> Unit, onRename: (String) -> Unit) {
-    var name by remember { mutableStateOf(book.fileName.substringBeforeLast('.')) }
+    // The whole name selected and ready to type over, as file managers do; Enter renames.
+    var name by remember {
+        val base = book.fileName.substringBeforeLast('.')
+        mutableStateOf(TextFieldValue(base, TextRange(0, base.length)))
+    }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Rename") },
@@ -630,9 +649,14 @@ private fun RenameDialog(book: BookRecord, onDismiss: () -> Unit, onRename: (Str
                 onValueChange = { name = it },
                 singleLine = true,
                 suffix = { Text(".${book.bookFormat.extension}", color = Ink.Dim) },
+                modifier = Modifier.focusRequester(focus).onPreviewKeyEvent { event ->
+                    val enter = event.type == KeyEventType.KeyDown && (event.key == Key.Enter || event.key == Key.NumPadEnter)
+                    if (enter && name.text.isNotBlank()) onRename(name.text)
+                    enter
+                },
             )
         },
-        confirmButton = { TextButton(onClick = { onRename(name) }, enabled = name.isNotBlank()) { Text("Rename") } },
+        confirmButton = { TextButton(onClick = { onRename(name.text) }, enabled = name.text.isNotBlank()) { Text("Rename") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
         containerColor = Ink.Raised,
     )
