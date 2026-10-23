@@ -3,7 +3,7 @@ package com.pedrolopes.ttsing.tts
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
 
 /** The service's small decisions, kept free of Android so they can be tested. */
-internal object PlaybackPolicy {
+object PlaybackPolicy {
 
     /**
      * Where a Play starts. A position asked for wins. Otherwise a book that has finished starts
@@ -28,7 +28,7 @@ internal object PlaybackPolicy {
      * True when [position] is the last sentence of [source]. A book read to its end is saved
      * parked there, and a service started afresh must still know to start it over.
      */
-    suspend fun isParkedAtEnd(source: Narrator.ContentSource, position: ReadingPosition): Boolean =
+    suspend fun isParkedAtEnd(source: ContentSource, position: ReadingPosition): Boolean =
         source.next(position) == null
 
     /**
@@ -66,6 +66,6 @@ internal object PlaybackPolicy {
      * where there is nothing to do), or the previous one, which at the start is the current
      * sentence again.
      */
-    suspend fun skipTarget(source: Narrator.ContentSource, current: SentenceRef, forward: Boolean): SentenceRef? =
+    suspend fun skipTarget(source: ContentSource, current: SentenceRef, forward: Boolean): SentenceRef? =
         if (forward) source.next(current.position) else source.prev(current.position) ?: current
 }

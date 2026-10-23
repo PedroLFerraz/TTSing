@@ -90,6 +90,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":core"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
@@ -134,6 +135,8 @@ val unpackPdfboxAssets = tasks.register<Sync>("unpackPdfboxAssets") {
     into(layout.buildDirectory.dir("pdfbox-test-resources"))
 }
 android.sourceSets.getByName("test").resources.srcDir(layout.buildDirectory.dir("pdfbox-test-resources"))
+// The sample EPUBs the tests read live with the :core tests.
+android.sourceSets.getByName("test").resources.srcDir(rootProject.file("core/src/test/resources"))
 tasks.matching { it.name.endsWith("UnitTestJavaRes") }.configureEach { dependsOn(unpackPdfboxAssets) }
 
 /**

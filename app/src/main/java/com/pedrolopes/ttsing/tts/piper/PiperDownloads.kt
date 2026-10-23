@@ -151,8 +151,8 @@ class PiperDownloads(private val context: Context, private val scope: CoroutineS
                 }
             }
             if (!File(target, "tokens.txt").isFile) throw IOException("The download was incomplete")
-            sharedTemp?.let { PiperVoices.publishShared(it, shared) }
-            File(target, PiperVoices.MARKER).writeText(voice.id)
+            sharedTemp?.let { PiperVoiceFiles.publishShared(it, shared) }
+            File(target, PiperVoiceFiles.MARKER).writeText(voice.id)
         } finally {
             sharedTemp?.deleteRecursively()
             http.disconnect()

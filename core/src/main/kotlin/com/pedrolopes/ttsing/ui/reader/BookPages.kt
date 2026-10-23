@@ -38,7 +38,7 @@ fun List<Block>.hasReadableContent(): Boolean =
     any { (it is Block.Text && it.text.isNotBlank()) || it is Block.Image }
 
 /** A chapter's pages with the blocks they were cut from: pages only mean anything for those. */
-internal class CachedPages(val blocks: List<Block>, val pages: List<ReaderPage>) {
+class CachedPages(val blocks: List<Block>, val pages: List<ReaderPage>) {
     /** False once the chapter at this index has been swapped for other text (an article's full text). */
     fun isFor(current: List<Block>): Boolean = blocks === current || blocks == current
 }
@@ -47,7 +47,7 @@ internal class CachedPages(val blocks: List<Block>, val pages: List<ReaderPage>)
  * The text a page slice stands for, or null when the slice does not fit [blocks] (a page laid
  * out for other text): showing nothing beats crashing on it.
  */
-internal fun sliceText(blocks: List<Block>, slice: TextSlice): Block.Text? =
+fun sliceText(blocks: List<Block>, slice: TextSlice): Block.Text? =
     (blocks.getOrNull(slice.blockIndex) as? Block.Text)
         ?.takeIf { slice.start in 0..slice.end && slice.end <= it.text.length }
 

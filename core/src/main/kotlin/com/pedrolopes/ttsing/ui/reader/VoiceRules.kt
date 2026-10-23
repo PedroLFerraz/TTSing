@@ -4,7 +4,7 @@ import com.pedrolopes.ttsing.tts.piper.CatalogVoice
 import com.pedrolopes.ttsing.tts.piper.DownloadProgress
 
 /** The settings sheet's small decisions, pulled out so they can be tested without a screen. */
-internal object VoiceRules {
+object VoiceRules {
 
     /** What, if anything, to say about the engine having nothing for this language. */
     enum class NoVoices { NONE, DEVICE_ONLY, ALL }
@@ -64,8 +64,11 @@ internal object VoiceRules {
     }
 }
 
+/** What the settings sheet's `sleepMinutesLeft` uses to mean "when the chapter ends". */
+const val CHAPTER_END = -1
+
 /** The sleep timer's chips and the line that says how long is left. */
-internal object SleepTimerUi {
+object SleepTimerUi {
 
     /**
      * Whether a chip is lit. The chip that started the timer stays lit while it counts down

@@ -11,7 +11,7 @@ import java.util.Locale
  * piece — but the service only needs a title, a language and a way to count what is left, so
  * both fit behind this.
  */
-interface ReadableContent : Narrator.ContentSource {
+interface ReadableContent : ContentSource {
     val title: String
     val author: String?
     val locale: Locale

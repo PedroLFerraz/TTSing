@@ -111,7 +111,7 @@ class DownloadStateTest {
     fun `a finished copy is renamed into place`() {
         val temp = folder.newFolder("espeak-ng-data.partial-1").also { File(it, "phondata").writeText("x") }
         val shared = File(folder.root, "espeak-ng-data")
-        assertTrue(PiperVoices.publishShared(temp, shared))
+        assertTrue(PiperVoiceFiles.publishShared(temp, shared))
         assertTrue(File(shared, "phondata").isFile)
         assertFalse(temp.exists())
     }
@@ -128,7 +128,7 @@ class DownloadStateTest {
     fun `when another writer finished first theirs stands`() {
         val shared = folder.newFolder("espeak-ng-data").also { File(it, "phondata").writeText("first") }
         val temp = folder.newFolder("espeak-ng-data.partial-3").also { File(it, "phondata").writeText("second") }
-        assertTrue(PiperVoices.publishShared(temp, shared))
+        assertTrue(PiperVoiceFiles.publishShared(temp, shared))
         assertEquals("first", File(shared, "phondata").readText())
         assertFalse(temp.exists())
     }
@@ -136,7 +136,7 @@ class DownloadStateTest {
     @Test
     fun `publishing nothing publishes nothing`() {
         val shared = File(folder.root, "espeak-ng-data")
-        assertFalse(PiperVoices.publishShared(File(folder.root, "missing"), shared))
+        assertFalse(PiperVoiceFiles.publishShared(File(folder.root, "missing"), shared))
         assertFalse(shared.exists())
     }
 }

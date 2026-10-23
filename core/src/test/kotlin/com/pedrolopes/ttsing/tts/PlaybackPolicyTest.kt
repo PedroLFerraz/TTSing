@@ -138,7 +138,7 @@ class PlaybackPolicyTest {
     // ---- skipping ----
 
     /** Sentences numbered 0..count-1 in one block. */
-    private class Numbered(private val count: Int) : Narrator.ContentSource {
+    private class Numbered(private val count: Int) : ContentSource {
         fun at(i: Int) = SentenceRef(ReadingPosition(0, 0, i), "s$i", i * 10)
         override suspend fun firstAtOrAfter(position: ReadingPosition) = at(position.sentenceIndex).takeIf { position.sentenceIndex < count }
         override suspend fun next(position: ReadingPosition) = at(position.sentenceIndex + 1).takeIf { position.sentenceIndex + 1 < count }

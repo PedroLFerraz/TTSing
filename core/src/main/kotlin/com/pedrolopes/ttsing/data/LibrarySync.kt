@@ -9,7 +9,7 @@ package com.pedrolopes.ttsing.data
  * [folderOf] maps each cached book id to its folder path; [unlistedFolders] holds the paths
  * that could not be read ("" is the library folder itself, so it shields everything).
  */
-internal fun booksGone(
+fun booksGone(
     folderOf: Map<String, String>,
     seen: Set<String>,
     unlistedFolders: Set<String>,
@@ -22,7 +22,7 @@ private fun isInFolder(folder: String, dir: String) =
     dir.isEmpty() || folder == dir || folder.startsWith("$dir/")
 
 /** What the provider says when a move lands on a name already taken. */
-internal fun isAlreadyExists(message: String?) = message?.contains("already exists", ignoreCase = true) == true
+fun isAlreadyExists(message: String?) = message?.contains("already exists", ignoreCase = true) == true
 
-internal fun alreadyThereMessage(fileName: String, folder: String) =
+fun alreadyThereMessage(fileName: String, folder: String) =
     "A file named $fileName is already in ${folder.substringAfterLast('/').ifEmpty { "Library" }}"

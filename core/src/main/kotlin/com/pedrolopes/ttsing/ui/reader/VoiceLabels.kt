@@ -5,7 +5,7 @@ import com.pedrolopes.ttsing.tts.VoiceInfo
 import java.util.Locale
 
 /** One of the device engine's voices, reduced to what the list needs (and to what a test can build). */
-internal data class DeviceVoice(
+data class DeviceVoice(
     val name: String,
     val locale: Locale,
     val quality: Int,
@@ -17,7 +17,7 @@ internal data class DeviceVoice(
 }
 
 /** How one device voice reads in the list. */
-internal data class VoiceLine(
+data class VoiceLine(
     val name: String,
     /** "Voice A" — the engine's own ids ("en-gb-x-gba-local") mean nothing to a reader. */
     val short: String,
@@ -30,9 +30,9 @@ internal data class VoiceLine(
     val full: String get() = "$region · ${short.replaceFirstChar { it.lowercase() }}"
 }
 
-internal data class VoiceGroup(val region: String, val voices: List<VoiceLine>)
+data class VoiceGroup(val region: String, val voices: List<VoiceLine>)
 
-internal object VoiceLabels {
+object VoiceLabels {
 
     // Voice.QUALITY_*, which the pure code would otherwise need Android to know.
     private const val VERY_HIGH = 500

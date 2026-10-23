@@ -210,6 +210,11 @@ press play to see the sentence/word highlighting and auto-scroll.
 
 ## Architecture
 
+Two Gradle modules. **`core/`** is plain Kotlin/JVM and holds everything that needs no
+Android: EPUB parsing, PDF reflow, sentences and words, reading positions and page arithmetic,
+voice choice and timing. **`app/`** is the Android app built on it. Packages keep the same
+names in both, so the map below covers the two together.
+
 ```
 data/book/    BookDocument — an open book of either format: sections of blocks, a TOC,
               images. EpubDocument wraps the EPUB parser; everything downstream uses this.
@@ -246,13 +251,14 @@ it, so every speech callback maps directly to what to highlight and where to scr
 
 ## Tests
 
-Pure-JVM unit tests under `app/src/test` cover EPUB parsing (EPUB 2 NCX + EPUB 3 nav,
+Pure-JVM unit tests under `core/src/test` and `app/src/test` cover EPUB parsing (EPUB 2 NCX + EPUB 3 nav,
 percent-encoded hrefs, cover detection), the XHTML→blocks conversion, Portuguese/English
 sentence segmentation, end-to-end parsing of the real sample EPUBs, PDF reflow (headers
 and page numbers, de-hyphenation, paragraph and page breaks, headings, where figures go
 and which pictures are decoration), whole-book page
 arithmetic, and the speaking-speed estimate — including a replay of sentences logged on a
-device, against the old average and the new one. Run with `./gradlew :app:testDebugUnitTest`;
+device, against the old average and the new one. Run with
+`./gradlew :core:test :app:testDebugUnitTest`;
 CI runs them on every push (`.github/workflows/ci.yml`).
 
 ## License

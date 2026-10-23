@@ -10,9 +10,9 @@ class PiperCatalogTest {
 
     @Test
     fun `a voice folder says which language it speaks`() {
-        assertEquals(Locale("pt", "BR"), PiperVoices.localeOf("vits-piper-pt_BR-faber-medium"))
-        assertEquals(Locale("en", "US"), PiperVoices.localeOf("vits-piper-en_US-lessac-medium"))
-        assertNull(PiperVoices.localeOf("something-else"))
+        assertEquals(Locale("pt", "BR"), PiperVoiceFiles.localeOf("vits-piper-pt_BR-faber-medium"))
+        assertEquals(Locale("en", "US"), PiperVoiceFiles.localeOf("vits-piper-en_US-lessac-medium"))
+        assertNull(PiperVoiceFiles.localeOf("something-else"))
     }
 
     @Test
@@ -48,7 +48,7 @@ class PiperCatalogTest {
                 voice.downloadUrl.startsWith("https://github.com/k2-fsa/sherpa-onnx/releases/") &&
                     voice.downloadUrl.endsWith("${voice.id}.tar.bz2"),
             )
-            assertEquals("${voice.id} locale", voice.locale, PiperVoices.localeOf(voice.id))
+            assertEquals("${voice.id} locale", voice.locale, PiperVoiceFiles.localeOf(voice.id))
         }
     }
 

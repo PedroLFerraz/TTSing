@@ -53,7 +53,7 @@ data class PlaybackState(
 )
 
 /** This state with the sleep timer of [previous], for a state rebuilt while the timer keeps running. */
-internal fun PlaybackState.carryingSleepTimerOf(previous: PlaybackState): PlaybackState = copy(
+fun PlaybackState.carryingSleepTimerOf(previous: PlaybackState): PlaybackState = copy(
     sleepAtElapsedMs = previous.sleepAtElapsedMs,
     sleepAtChapterEnd = previous.sleepAtChapterEnd,
     sleepMinutes = previous.sleepMinutes,

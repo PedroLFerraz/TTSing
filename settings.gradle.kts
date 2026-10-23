@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "TTSing"
 include(":app")
+include(":core")

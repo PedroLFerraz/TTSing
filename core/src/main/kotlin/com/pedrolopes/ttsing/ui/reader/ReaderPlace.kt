@@ -15,7 +15,7 @@ import com.pedrolopes.ttsing.data.epub.ReadingPosition
  * moved it. A block with no page of its own (blank, so never laid out) resolves to the page
  * it would have sat on; an anchor past the end resolves to the last page.
  */
-internal fun pageForAnchor(pages: List<ReaderPage>, blockIndex: Int, offset: Int): Int {
+fun pageForAnchor(pages: List<ReaderPage>, blockIndex: Int, offset: Int): Int {
     fun blockOf(element: PageElement) = when (element) {
         is PageElement.TextEl -> element.slice.blockIndex
         is PageElement.ImageEl -> element.blockIndex
@@ -39,7 +39,7 @@ internal fun pageForAnchor(pages: List<ReaderPage>, blockIndex: Int, offset: Int
  * image is parked on the text after it rather than somewhere the voice would then move from.
  * Past the last block it is the end of the chapter.
  */
-internal fun browsePosition(
+fun browsePosition(
     chapterIndex: Int,
     blocks: List<Block>?,
     firstBlockIndex: Int,
@@ -58,7 +58,7 @@ internal fun browsePosition(
 }
 
 /** Character offset in its block at which [position]'s sentence begins; 0 when unknown. */
-internal fun sentenceStart(blocks: List<Block>, position: ReadingPosition): Int =
+fun sentenceStart(blocks: List<Block>, position: ReadingPosition): Int =
     (blocks.getOrNull(position.blockIndex) as? Block.Text)?.sentences?.getOrNull(position.sentenceIndex)?.start ?: 0
 
 /**
@@ -66,7 +66,7 @@ internal fun sentenceStart(blocks: List<Block>, position: ReadingPosition): Int 
  * use, so the library shows one figure whichever of the two saved the place. Falls back to a
  * section-based guess before the book's character counts exist.
  */
-internal fun browseFraction(
+fun browseFraction(
     chapterCharCounts: List<Int>,
     blocks: List<Block>?,
     position: ReadingPosition,
@@ -83,7 +83,7 @@ internal fun browseFraction(
 }
 
 /** What settling on a page does to the saved place and to the voice. */
-internal enum class BrowseAction { NONE, SAVE, SAVE_AND_PARK }
+enum class BrowseAction { NONE, SAVE, SAVE_AND_PARK }
 
 /**
  * Browsing the text moves the place that is remembered, but never the voice's while it is
@@ -95,7 +95,7 @@ internal enum class BrowseAction { NONE, SAVE, SAVE_AND_PARK }
  * layout changed: neither is the reader going anywhere. [cardSheetOpen] means a pause here was
  * the sheet's, not the reader's: the voice resumes where it stopped, so nothing is parked.
  */
-internal fun browseAction(
+fun browseAction(
     navigated: Boolean,
     speakingHere: Boolean,
     serviceHasBook: Boolean,
@@ -114,7 +114,7 @@ internal fun browseAction(
  * the one before the swipe. Null — play from wherever the voice is parked — when nothing was
  * browsed, or the browse would not have moved the voice.
  */
-internal fun playStartAfterBrowse(
+fun playStartAfterBrowse(
     browsePending: Boolean,
     serviceHasBook: Boolean,
     voiceOnPage: Boolean,
@@ -130,7 +130,7 @@ internal fun playStartAfterBrowse(
  * first page reported, and any page that shows up because the layout changed, are not the
  * reader going anywhere.
  */
-internal fun isNavigation(
+fun isNavigation(
     previous: VisiblePage?,
     now: VisiblePage,
     layoutChanged: Boolean,
@@ -146,7 +146,7 @@ internal fun isNavigation(
  * one that starts latest (the last of them when several start together). Entries rarely line
  * up with every spine item, so an exact match would leave most chapters with nothing lit.
  */
-internal fun currentTocIndex(spineIndexes: List<Int>, chapter: Int): Int {
+fun currentTocIndex(spineIndexes: List<Int>, chapter: Int): Int {
     var best = -1
     spineIndexes.forEachIndexed { i, spine ->
         if (spine <= chapter && (best < 0 || spine >= spineIndexes[best])) best = i
@@ -155,7 +155,7 @@ internal fun currentTocIndex(spineIndexes: List<Int>, chapter: Int): Int {
 }
 
 /** The last word spoken, and the sentence (in the block at [position]) it was in. */
-internal data class WordAt(val position: ReadingPosition, val sentence: IntRange?, val offset: Int)
+data class WordAt(val position: ReadingPosition, val sentence: IntRange?, val offset: Int)
 
 /**
  * Where the page should follow the voice to. The word being spoken moves the page exactly when
@@ -163,7 +163,7 @@ internal data class WordAt(val position: ReadingPosition, val sentence: IntRange
  * its sentence would flip back a page when the sentence began on the previous one. So while the
  * sentence is unchanged the last word's offset is kept.
  */
-internal fun followOffset(
+fun followOffset(
     word: IntRange?,
     position: ReadingPosition,
     sentence: IntRange?,
