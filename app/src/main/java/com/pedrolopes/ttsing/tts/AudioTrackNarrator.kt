@@ -9,6 +9,7 @@ import com.pedrolopes.ttsing.tts.piper.PiperCatalog
 import com.pedrolopes.ttsing.tts.piper.PiperSynthesizer
 import com.pedrolopes.ttsing.tts.piper.PiperVoice
 import com.pedrolopes.ttsing.tts.piper.PiperVoices
+import com.pedrolopes.ttsing.tts.piper.asEngineVoice
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -67,7 +68,7 @@ class AudioTrackNarrator(
     /** Held while a sentence is being synthesized: one at a time, whatever the voice. */
     private val synthesis = Mutex()
 
-    private var source: Narrator.ContentSource? = null
+    private var source: ContentSource? = null
     private var readingJob: Job? = null
 
     /** The coroutine bringing a reading up: cancelled by the next start, and by [pause]. */
@@ -97,7 +98,7 @@ class AudioTrackNarrator(
 
     override suspend fun awaitReady(): Boolean = ready.await()
 
-    override fun setContentSource(contentSource: Narrator.ContentSource) {
+    override fun setContentSource(contentSource: ContentSource) {
         source = contentSource
         // The previous book's sentence must not be what a Play in this one resumes from.
         currentRef = null
@@ -189,7 +190,7 @@ class AudioTrackNarrator(
      * hides it whenever the voice can synthesize faster than it speaks. Only ever one
      * synthesis runs at a time, which both engines require.
      */
-    private suspend fun readLoop(src: Narrator.ContentSource, from: ReadingPosition) = coroutineScope {
+    private suspend fun readLoop(src: ContentSource, from: ReadingPosition) = coroutineScope {
         var ref = src.firstAtOrAfter(from)
         if (ref == null) {
             finishBook()

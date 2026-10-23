@@ -12,21 +12,6 @@ import androidx.compose.ui.unit.sp
 import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.ui.theme.AppFonts
 
-/** A contiguous run of one text block's characters that fits on a page. */
-data class TextSlice(
-    val blockIndex: Int,
-    val start: Int,
-    val end: Int,
-    val kind: Block.Text.Kind,
-)
-
-sealed interface PageElement {
-    data class TextEl(val slice: TextSlice) : PageElement
-    data class ImageEl(val blockIndex: Int, val zipPath: String, val alt: String?) : PageElement
-}
-
-typealias ReaderPage = List<PageElement>
-
 // ---- Shared typography (used for BOTH measuring and rendering so pages match) ----
 
 private const val LINE_HEIGHT_EM = 1.62f

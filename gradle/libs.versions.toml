@@ -19,6 +19,9 @@ sherpaOnnx = "1.13.4"
 pdfboxAndroid = "2.0.27.0"
 commonsCompress = "1.27.1"
 junit = "4.13.2"
+composeMultiplatform = "1.9.3"
+serialization = "1.9.0"
+pdfbox = "2.0.37"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -42,14 +45,24 @@ androidx-documentfile = { group = "androidx.documentfile", name = "documentfile"
 androidx-media = { group = "androidx.media", name = "media", version.ref = "media" }
 jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 ankidroid-api = { group = "com.github.ankidroid", name = "Anki-Android", version.ref = "ankidroidApi" }
 sherpa-onnx = { group = "com.github.k2-fsa", name = "sherpa-onnx", version.ref = "sherpaOnnx" }
 pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfboxAndroid" }
 commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+kotlinx-coroutines-swing = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-swing", version.ref = "coroutines" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
+pdfbox = { group = "org.apache.pdfbox", name = "pdfbox", version.ref = "pdfbox" }
+# The desktop app's sherpa-onnx: JVM jars published as GitHub release assets (see settings.gradle.kts).
+sherpa-onnx-jvm = { group = "com.k2fsa.sherpa.onnx", name = "sherpa-onnx-jvm", version.ref = "sherpaOnnx" }
+sherpa-onnx-native-linux-x64 = { group = "com.k2fsa.sherpa.onnx", name = "sherpa-onnx-native-lib-linux-x64", version.ref = "sherpaOnnx" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+jetbrains-compose = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }

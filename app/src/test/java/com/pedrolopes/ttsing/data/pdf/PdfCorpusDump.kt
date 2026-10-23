@@ -27,8 +27,8 @@ class PdfCorpusDump {
                 val info = pdf.documentInformation
                 report.appendLine("FILE ${file.name}")
                 report.appendLine("TITLE ${PdfMetadata.title(info?.title, file.nameWithoutExtension)} | AUTHOR ${PdfMetadata.author(info?.author)} (raw ${info?.author}) | LANG ${PdfMetadata.language(pdf.documentCatalog?.language)}")
-                val sections = PdfDocument.sections(pdf)
-                val titles = PdfDocument.outlineTitles(pdf)
+                val sections = PdfBook.sections(pdf)
+                val titles = PdfBook.outlineTitles(pdf)
                 val count = pdf.numberOfPages
                 val step = maxOf(1, count / 40)
                 val sample = (0 until count step step).take(40).flatMap { PdfExtract.lines(pdf, it, it + 1) }

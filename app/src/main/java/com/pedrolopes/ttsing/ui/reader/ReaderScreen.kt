@@ -173,16 +173,6 @@ private class BrowseState {
     }
 }
 
-/** The page on screen, as the pager reports it: where it is in its chapter, and where it starts. */
-internal data class VisiblePage(
-    val chapterIndex: Int,
-    val pageInChapter: Int,
-    val pagesInChapter: Int,
-    /** First text on the page — the reading position when the voice isn't playing. */
-    val firstBlockIndex: Int,
-    val firstOffset: Int,
-)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderScreen(
