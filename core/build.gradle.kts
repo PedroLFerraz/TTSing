@@ -21,6 +21,7 @@ kotlin {
 dependencies {
     api(libs.jsoup)
     api(libs.kotlinx.coroutines.core)
+    implementation(libs.commons.compress)
 
     testImplementation(libs.junit)
 }

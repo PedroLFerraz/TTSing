@@ -1,6 +1,5 @@
 package com.pedrolopes.ttsing.tts.piper
 
-import android.content.Context
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,11 +27,16 @@ import java.net.URL
  * leaves a half-written folder, which is deleted rather than kept: a voice is only usable
  * whole, and 60 MB is cheap to fetch again.
  *
- * One instance lives with the app ([com.pedrolopes.ttsing.TTSingApp]) and runs in a scope of
- * its own: closing the settings sheet, or leaving the reader, neither loses the progress nor
- * lets a second download start into the same folder.
+ * One instance lives with the app and runs in a scope of its own: closing the settings sheet,
+ * or leaving the reader, neither loses the progress nor lets a second download start into the
+ * same folder. [available] lists every voice the reader can speak with, which may be more than
+ * [folder] holds (the Android app also ships one inside the APK).
  */
-class PiperDownloads(private val context: Context, private val scope: CoroutineScope) {
+class PiperDownloads(
+    private val folder: PiperVoiceFolder,
+    private val scope: CoroutineScope,
+    private val available: () -> Set<String> = { folder.voices().map { it.id }.toSet() },
+) {
 
     private val state = DownloadState()
 
@@ -58,15 +62,15 @@ class PiperDownloads(private val context: Context, private val scope: CoroutineS
         scope.launch { _installed.value = scan() }
     }
 
-    private fun scan(): Set<String> = PiperVoices.available(context).map { it.id }.toSet()
+    private fun scan(): Set<String> = available()
 
     fun start(voice: CatalogVoice): StartResult {
         val result = state.tryStart(voice.id, voice.megabytes)
         if (result != StartResult.STARTED) return result
         job = scope.launch {
-            val target = PiperVoices.directoryFor(context, voice.id)
+            val target = folder.directoryFor(voice.id)
             // A tap can never wipe a voice that works: the folder is only cleared for a fetch.
-            if (PiperVoices.find(context, voice.id) != null) {
+            if (voice.id in available()) {
                 state.finish(voice.id)
                 return@launch
             }
@@ -99,7 +103,7 @@ class PiperDownloads(private val context: Context, private val scope: CoroutineS
             cancel()
             job?.join()
         }
-        PiperVoices.delete(context, id)
+        folder.delete(id)
         _installed.value = scan()
     }
 
@@ -114,8 +118,8 @@ class PiperDownloads(private val context: Context, private val scope: CoroutineS
         connection = http
         // The phoneme data is written beside its final folder and renamed into place whole,
         // so an interrupted extraction never leaves a folder that merely looks complete.
-        val shared = PiperVoices.sharedDataDir(context)
-        val sharedTemp = if (!shared.isDirectory) PiperVoices.newSharedTemp(context) else null
+        val shared = folder.sharedDataDir
+        val sharedTemp = if (!shared.isDirectory) folder.newSharedTemp() else null
         try {
             if (http.responseCode !in 200..299) throw HttpStatusException(http.responseCode)
             http.inputStream.use { raw ->

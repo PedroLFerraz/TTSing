@@ -22,32 +22,19 @@ object PiperVoices {
     fun bundled(context: Context): List<PiperVoice> =
         runCatching { context.assets.list(ASSET_DIR) }.getOrNull().orEmpty().mapNotNull { id ->
             val locale = PiperVoiceFiles.localeOf(id) ?: return@mapNotNull null
-            PiperVoice(id, locale, directoryFor(context, id).takeIf { it.isReadyFor(id) })
+            val folder = folder(context)
+            PiperVoice(id, locale, folder.directoryFor(id).takeIf { folder.isReady(id) })
         }
 
-    /** The shared espeak-ng data, beside the voices that use it. */
-    fun sharedDataDir(context: Context): File =
-        File(File(context.filesDir, ASSET_DIR), PiperVoice.DATA_DIR_NAME)
-
-    /** The voices already downloaded into the app's own storage. */
-    fun downloaded(context: Context): List<PiperVoice> {
-        val root = File(context.filesDir, ASSET_DIR)
-        return root.listFiles().orEmpty().mapNotNull { dir ->
-            if (!dir.isDirectory || !dir.isReadyFor(dir.name)) return@mapNotNull null
-            val locale = PiperVoiceFiles.localeOf(dir.name) ?: return@mapNotNull null
-            PiperVoice(dir.name, locale, dir)
-        }
-    }
+    /** Where voices are unpacked and downloaded to. */
+    fun folder(context: Context): PiperVoiceFolder = PiperVoiceFolder(File(context.filesDir, ASSET_DIR))
 
     /** Every voice the reader can speak with right now, bundled or downloaded, no repeats. */
     fun available(context: Context): List<PiperVoice> =
-        (bundled(context) + downloaded(context)).distinctBy { it.id }.sortedBy { it.id }
+        (bundled(context) + folder(context).voices()).distinctBy { it.id }.sortedBy { it.id }
 
     fun find(context: Context, name: String?): PiperVoice? =
         name?.let { available(context).firstOrNull { voice -> voice.id == it } }
-
-    /** Where [id] lives (or will live) on disk. */
-    fun directoryFor(context: Context, id: String): File = File(File(context.filesDir, ASSET_DIR), id)
 
     /**
      * The voice's folder on disk, unpacking it from the assets the first time. espeak-ng
@@ -55,12 +42,13 @@ object PiperVoices {
      * Blocking and slow (tens of megabytes), so callers run it off the main thread.
      */
     fun unpack(context: Context, voice: PiperVoice): PiperVoice {
-        val directory = directoryFor(context, voice.id)
+        val folder = folder(context)
+        val directory = folder.directoryFor(voice.id)
         // A downloaded voice is already on disk; only the bundled one has to be copied out.
-        if (!directory.isReadyFor(voice.id)) {
+        if (!folder.isReady(voice.id)) {
             directory.deleteRecursively()
-            val shared = sharedDataDir(context)
-            val sharedTemp = if (!shared.isDirectory) newSharedTemp(context) else null
+            val shared = folder.sharedDataDir
+            val sharedTemp = if (!shared.isDirectory) folder.newSharedTemp() else null
             try {
                 copyAsset(context, "$ASSET_DIR/${voice.id}", directory) { name ->
                     // The phoneme data goes to the shared folder, and only the first voice needs
@@ -79,13 +67,6 @@ object PiperVoices {
         }
         return voice.copy(directory = directory)
     }
-
-    /** A scratch folder for the shared phoneme data, unique so two writers never share one. */
-    fun newSharedTemp(context: Context): File =
-        File(File(context.filesDir, ASSET_DIR), "${PiperVoice.DATA_DIR_NAME}.partial-${System.nanoTime()}")
-
-    private fun File.isReadyFor(id: String): Boolean =
-        File(this, PiperVoiceFiles.MARKER).takeIf { it.isFile }?.readText() == id
 
     /** Copies an asset folder out, with [destination] saying where each file goes (null: skip). */
     private fun copyAsset(
@@ -111,7 +92,4 @@ object PiperVoices {
         }
     }
 
-    /** Frees a downloaded voice's files. The one inside the app is left alone. */
-    fun delete(context: Context, id: String): Boolean =
-        directoryFor(context, id).takeIf { it.isDirectory }?.deleteRecursively() ?: false
 }

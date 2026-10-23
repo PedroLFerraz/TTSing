@@ -52,7 +52,10 @@ class TTSingApp : Application() {
 
     /** Voice downloads live here, not in the settings sheet, so closing it doesn't lose one. */
     val piperDownloads: com.pedrolopes.ttsing.tts.piper.PiperDownloads by lazy {
-        com.pedrolopes.ttsing.tts.piper.PiperDownloads(this, appScope)
+        com.pedrolopes.ttsing.tts.piper.PiperDownloads(
+            com.pedrolopes.ttsing.tts.piper.PiperVoices.folder(this),
+            appScope,
+        ) { com.pedrolopes.ttsing.tts.piper.PiperVoices.available(this).map { it.id }.toSet() }
     }
 
     val news: NewsRepository by lazy { NewsRepository(newsDatabase.newsDao(), appScope, com.pedrolopes.ttsing.data.news.ArticleImageStore(this)) }

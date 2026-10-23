@@ -114,7 +114,6 @@ dependencies {
     implementation(libs.ankidroid.api)
     implementation(libs.sherpa.onnx)
     implementation(libs.pdfbox.android)
-    implementation(libs.commons.compress)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)
