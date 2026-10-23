@@ -94,7 +94,7 @@ class PdfExtractTest {
             }
             outline.mark(pdf, "Index", 62)
 
-            val sections = PdfDocument.sections(pdf)
+            val sections = PdfBook.sections(pdf)
             assertEquals(
                 listOf(
                     "Copyright" to 0, "Preface" to 2, "Part I. Foundations" to 5, "Chapter 1. Described" to 6,
@@ -102,7 +102,7 @@ class PdfExtractTest {
                 ),
                 sections.map { it.title to it.firstPage },
             )
-            assertTrue(PdfReflow.titleKey("History") in PdfDocument.outlineTitles(pdf))
+            assertTrue(PdfReflow.titleKey("History") in PdfBook.outlineTitles(pdf))
         }
     }
 }
