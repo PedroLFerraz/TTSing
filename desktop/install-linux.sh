@@ -31,7 +31,7 @@ Comment=Reads your EPUBs and PDFs aloud, highlighting every word as it's spoken
 Exec=$lib/bin/ttsing %f
 Icon=ttsing
 Terminal=false
-Categories=Office;Viewer;Literature;
+Categories=Office;Viewer;Education;Literature;
 MimeType=application/epub+zip;application/pdf;
 StartupWMClass=ttsing
 EOF

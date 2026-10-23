@@ -1,7 +1,12 @@
 package com.pedrolopes.ttsing.desktop
 
+import com.pedrolopes.ttsing.data.book.EpubDocument
+import com.pedrolopes.ttsing.data.epub.EpubParser
+import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.desktop.tts.PiperEngine
+import com.pedrolopes.ttsing.tts.BookContentSource
 import com.pedrolopes.ttsing.tts.piper.PiperVoiceFolder
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -23,7 +28,7 @@ class PiperEngineCheck {
     fun `a Piper voice speaks, faster when asked`() {
         val folder = System.getProperty("piperVoices")?.let(::File)
         assumeTrue("set -PpiperVoices=<folder>", folder?.isDirectory == true)
-        val voice = PiperVoiceFolder(folder!!).voices().firstOrNull()
+        val voice = PiperVoiceFolder(folder!!).voices().firstOrNull { it.locale.language == "pt" }
         assertNotNull("no whole voice in $folder", voice)
 
         val engine = PiperEngine()
@@ -38,6 +43,17 @@ class PiperEngineCheck {
             assertTrue(normal.durationMs in 2_000..10_000)
             // 1.5× from the model, the rest from TimeStretch: about half as long overall.
             assertEquals(0.5, fast.durationMs.toDouble() / normal.durationMs, 0.12)
+
+            // The Portuguese sample's first sentence, fed the way the reader feeds the voice.
+            val book = File(javaClass.getResource("/o-pequeno-jardim.epub")!!.toURI())
+            val parser = EpubParser(book)
+            EpubDocument(parser, parser.parseBook()).use { document ->
+                val first = runBlocking { BookContentSource(document).firstAtOrAfter(ReadingPosition.START) }
+                assertNotNull(first)
+                val spoken = engine.synthesize(first!!.text, 1f, document.locale())
+                assertNotNull("no audio for \"${first.text}\"", spoken)
+                println("\"${first.text}\": ${spoken!!.durationMs} ms")
+            }
 
             val format = AudioFormat(normal.sampleRate.toFloat(), 16, 1, true, false)
             assertTrue("no sound output takes $format", AudioSystem.isLineSupported(javax.sound.sampled.DataLine.Info(javax.sound.sampled.SourceDataLine::class.java, format)))

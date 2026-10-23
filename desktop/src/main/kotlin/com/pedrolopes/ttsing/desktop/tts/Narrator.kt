@@ -16,6 +16,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +38,11 @@ data class Narration(
     val preparing: Boolean = false,
     val finished: Boolean = false,
     val error: String? = null,
+    /** When a sleep timer stops the voice ([System.currentTimeMillis]), and what it was set to. */
+    val sleepAt: Long? = null,
+    val sleepMinutes: Int? = null,
+    /** The sleep timer stops the voice when the chapter being read ends. */
+    val sleepAtChapterEnd: Boolean = false,
 )
 
 /**
@@ -56,6 +62,10 @@ class Narrator(private val scope: CoroutineScope) {
     val state: StateFlow<Narration> = _state.asStateFlow()
 
     private var job: Job? = null
+    private var sleepJob: Job? = null
+
+    /** The chapter a "stop at the end of the chapter" timer waits for the voice to leave. */
+    private var sleepChapter: Int? = null
 
     /** Called after each sentence heard in full, with how long it took at [rate]. */
     var onSpoken: (SentenceRef, Long, Float) -> Unit = { _, _, _ -> }
@@ -75,6 +85,7 @@ class Narrator(private val scope: CoroutineScope) {
                 _state.update { it.copy(speaking = false, error = "The voice ${voice.id} could not be loaded") }
                 return@launch
             }
+            sleepChapter = PlaybackPolicy.sleepChapterAtStart(sleepChapter, from)
             readLoop(source, from, locale, rate)
         }
     }
@@ -85,6 +96,30 @@ class Narrator(private val scope: CoroutineScope) {
         debug { "pause" }
         job?.cancel()
         _state.update { it.copy(speaking = false, word = null) }
+    }
+
+    /**
+     * Stops the voice after [minutes], or when [chapter] ends if [atChapterEnd], or never when
+     * neither: falling asleep over a book shouldn't wake you eleven chapters further on.
+     */
+    fun setSleepTimer(minutes: Int?, atChapterEnd: Boolean, chapter: Int) {
+        sleepJob?.cancel()
+        sleepChapter = if (atChapterEnd) chapter else null
+        val stopAt = minutes?.let { System.currentTimeMillis() + it * 60_000L }
+        _state.update { it.copy(sleepAt = stopAt, sleepMinutes = minutes, sleepAtChapterEnd = atChapterEnd) }
+        if (stopAt == null) return
+        sleepJob = scope.launch {
+            delay(stopAt - System.currentTimeMillis())
+            clearSleepTimer()
+            pause()
+        }
+    }
+
+    private fun clearSleepTimer() {
+        sleepJob?.cancel()
+        sleepJob = null
+        sleepChapter = null
+        _state.update { it.copy(sleepAt = null, sleepMinutes = null, sleepAtChapterEnd = false) }
     }
 
     /** The sentence [forward] or back from the one being read, or null at the end of the book. */
@@ -115,6 +150,13 @@ class Narrator(private val scope: CoroutineScope) {
         }
         while (ref != null && currentCoroutineContext().isActive) {
             val speaking: SentenceRef = ref
+            // A timer set for the end of the chapter: the voice has just left it.
+            val sleepAfter = sleepChapter
+            if (sleepAfter != null && speaking.position.chapterIndex != sleepAfter) {
+                clearSleepTimer()
+                _state.update { it.copy(speaking = false, word = null, sentence = speaking) }
+                return@coroutineScope
+            }
             _state.update { it.copy(sentence = speaking, word = null) }
             val speech = (ahead.removeFirstOrNull()?.second ?: synthesizeAsync(speaking)).await()
             debug { "sentence ${speaking.position}: ${speech?.durationMs} ms of audio" }

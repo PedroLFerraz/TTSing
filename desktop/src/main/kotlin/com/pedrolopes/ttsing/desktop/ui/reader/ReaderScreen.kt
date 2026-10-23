@@ -93,6 +93,7 @@ import com.pedrolopes.ttsing.tts.SpeakingSpeed
 import com.pedrolopes.ttsing.tts.SpeedSteps
 import com.pedrolopes.ttsing.ui.reader.PageElement
 import com.pedrolopes.ttsing.ui.reader.ReaderPage
+import com.pedrolopes.ttsing.ui.reader.CHAPTER_END
 import com.pedrolopes.ttsing.ui.reader.ReadingEstimate
 import com.pedrolopes.ttsing.ui.reader.TimeLeft
 import com.pedrolopes.ttsing.ui.reader.browseFraction
@@ -430,7 +431,8 @@ private fun PageView(
                 is PageElement.ImageEl -> {
                     val image = rememberImage("book:$bookId:${element.zipPath}") { loadImage(element.zipPath) }
                     Box(Modifier.fillMaxWidth().height(ImageDisplayHeight).padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                        image?.let { Image(it, contentDescription = element.alt, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
+                        // Shrunk to fit, never blown up: a small ornament stays sharp at its own size.
+                        image?.let { Image(it, contentDescription = element.alt, contentScale = ContentScale.Inside, modifier = Modifier.fillMaxSize()) }
                     }
                 }
             }
@@ -524,6 +526,9 @@ private fun Footer(
             }
             Spacer(Modifier.width(8.dp))
             SpeedChip(speechRate, palette, onRate)
+            rememberSleepMinutesLeft(narration)?.let { left ->
+                MonoText(if (left == CHAPTER_END) "Sleep ch" else "Sleep $left", color = palette.accent, size = 10f)
+            }
             Spacer(Modifier.weight(1f))
             if (chapter != null && position != null) {
                 val offset = (chapter.blocks.getOrNull(position.blockIndex) as? Block.Text)

@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -52,6 +53,9 @@ import com.pedrolopes.ttsing.desktop.ui.theme.Ink
 import com.pedrolopes.ttsing.tts.piper.CatalogVoice
 import com.pedrolopes.ttsing.tts.piper.PiperCatalog
 import com.pedrolopes.ttsing.tts.piper.StartResult
+import com.pedrolopes.ttsing.ui.reader.CHAPTER_END
+import com.pedrolopes.ttsing.ui.reader.SleepTimerUi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -132,6 +136,24 @@ fun SettingsPanel(app: App, model: ReaderModel, narration: Narration) {
             }
         }
 
+        Section("Sleep timer") {
+            val left = rememberSleepMinutesLeft(narration)
+            SleepTimerUi.remaining(left)?.let { MonoText(it, color = Ink.Live, size = 10f, modifier = Modifier.padding(bottom = 10.dp)) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf<Triple<String, Int?, Boolean>>(
+                    Triple("Off", null, false),
+                    Triple("15", 15, false),
+                    Triple("30", 30, false),
+                    Triple("60", 60, false),
+                    Triple("Chapter", null, true),
+                ).forEach { (label, minutes, chapterEnd) ->
+                    Chip(label, SleepTimerUi.chipSelected(minutes, chapterEnd, narration.sleepMinutes, left)) {
+                        app.narrator.setSleepTimer(minutes, chapterEnd, model.chapterIndex)
+                    }
+                }
+            }
+        }
+
         Section("Reading language") {
             LanguagePicker(locale) { model.selectLanguage(it) }
         }
@@ -193,6 +215,23 @@ fun SettingsPanel(app: App, model: ReaderModel, narration: Narration) {
         )
     }
 }
+
+/** Minutes until the sleep timer stops the voice, [CHAPTER_END] for "when the chapter ends", or null. */
+@Composable
+fun rememberSleepMinutesLeft(narration: Narration): Int? {
+    if (narration.sleepAtChapterEnd) return CHAPTER_END
+    val at = narration.sleepAt ?: return null
+    val left by produceState(minutesUntil(at), at) {
+        while (true) {
+            value = minutesUntil(at)
+            delay(5_000)
+        }
+    }
+    return left
+}
+
+/** Rounded up: "1 min" until the very end, never "0 min" while it still runs. */
+private fun minutesUntil(at: Long): Int = ((at - System.currentTimeMillis() + 59_999) / 60_000).toInt().coerceAtLeast(0)
 
 @Composable
 private fun Section(title: String, content: @Composable () -> Unit) {
