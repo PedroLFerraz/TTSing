@@ -11,6 +11,7 @@
 <p align="center">
   <a href="https://github.com/PedroLFerraz/TTSing/releases/latest"><img src="https://img.shields.io/badge/download-APK-FFD400?labelColor=111111" alt="Download the APK"></a>
   <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84" alt="Android 8.0+">
+  <img src="https://img.shields.io/badge/Linux-desktop-FCC624" alt="Linux desktop">
   <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF" alt="Kotlin and Jetpack Compose">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT license"></a>
 </p>
@@ -19,7 +20,8 @@
 An Android app (Kotlin + Jetpack Compose) that reads your EPUB and PDF library aloud with
 text-to-speech, highlighting the current sentence and word karaoke-style and
 auto-scrolling to follow along. Built for Portuguese and English books, with
-background playback and media-notification controls.
+background playback and media-notification controls. A Linux desktop app does the same for
+the books on your PC: see [On Linux](#on-linux).
 
 ![TTSing: the library, the reader mid-sentence, a PDF being read, the reading settings sheet, and the news list](docs/screenshots/showcase.png)
 
@@ -168,6 +170,37 @@ Download `TTSing.apk` from the [latest release](https://github.com/PedroLFerraz/
 open it on the phone and allow the install from that source. It needs Android 8.0 or newer. To build
 it yourself, see below.
 
+## On Linux
+
+The desktop app is the library and the reader with the same voices: your books folder as a
+file explorer (its subfolders down the side, covers or a list beside them, search across all of
+it), and the paged reader with the karaoke highlight, contents, footnote popups, black / light /
+sepia pages and the time left. Moving, renaming and trashing a book does it to the file; reading
+positions follow. News, video and flashcards are Android only for now, and the phone and the PC
+keep separate places in a book.
+
+```sh
+desktop/install-linux.sh      # builds it and installs it for you: no root, its own Java runtime
+ttsing                        # or TTSing from the app launcher; it also opens .epub and .pdf files
+```
+
+Building needs JDK 17; the rest downloads on the first build. Voices are fetched from the reader's
+settings panel (about 67 MB each, kept in `~/.local/share/ttsing/voices`), the same Piper voices as
+on the phone, run by the same sherpa-onnx. Faster than 1.5× is played faster with the pitch kept,
+as on Android. The library index, positions and settings live in `~/.local/share/ttsing`;
+`desktop/uninstall-linux.sh` removes the app and leaves them.
+
+| Key | |
+| --- | --- |
+| → ← PgDn PgUp, the wheel, a click in the margin | turn the page (two side by side in a wide window) |
+| Space | read aloud / pause |
+| ↓ ↑ | next / previous sentence |
+| double-click | read from that sentence |
+| Ctrl + / Ctrl − | type size |
+| Esc | close a panel, then back to the library |
+
+`./gradlew :desktop:run` runs it from the source tree.
+
 ## Requirements
 
 - JDK 17 and the Android SDK (platform 36, build-tools 35.0.0, platform-tools). Android Studio
@@ -210,10 +243,15 @@ press play to see the sentence/word highlighting and auto-scroll.
 
 ## Architecture
 
-Two Gradle modules. **`core/`** is plain Kotlin/JVM and holds everything that needs no
+Three Gradle modules. **`core/`** is plain Kotlin/JVM and holds everything that needs no
 Android: EPUB parsing, PDF reflow, sentences and words, reading positions and page arithmetic,
-voice choice and timing. **`app/`** is the Android app built on it. Packages keep the same
-names in both, so the map below covers the two together.
+voice choice, timing and voice downloads. **`app/`** is the Android app built on it, and
+**`desktop/`** the Linux app (Compose Multiplatform). Packages keep the same names across them,
+so the map below covers `core/` and `app/` together.
+
+The two PDF files that only need PDFBox, `PdfBook.kt` and `PdfExtract.kt`, live in `app/`
+against PDFBox-Android; the desktop build compiles the same files against Apache PDFBox, whose
+API is the same under another package name. The fonts and the icon are shared the same way.
 
 ```
 data/book/    BookDocument — an open book of either format: sections of blocks, a TOC,
@@ -251,14 +289,15 @@ it, so every speech callback maps directly to what to highlight and where to scr
 
 ## Tests
 
-Pure-JVM unit tests under `core/src/test` and `app/src/test` cover EPUB parsing (EPUB 2 NCX + EPUB 3 nav,
+Pure-JVM unit tests under `core/src/test`, `app/src/test` and `desktop/src/test` cover EPUB parsing (EPUB 2 NCX + EPUB 3 nav,
 percent-encoded hrefs, cover detection), the XHTML→blocks conversion, Portuguese/English
 sentence segmentation, end-to-end parsing of the real sample EPUBs, PDF reflow (headers
 and page numbers, de-hyphenation, paragraph and page breaks, headings, where figures go
 and which pictures are decoration), whole-book page
 arithmetic, and the speaking-speed estimate — including a replay of sentences logged on a
-device, against the old average and the new one. Run with
-`./gradlew :core:test :app:testDebugUnitTest`;
+device, against the old average and the new one; and on the desktop, the library's file
+operations and the pitch-kept speed-up. Run with
+`./gradlew :core:test :app:testDebugUnitTest :desktop:test`;
 CI runs them on every push (`.github/workflows/ci.yml`).
 
 ## License
@@ -272,3 +311,7 @@ TTSing's own code is MIT; see [LICENSE](LICENSE). The APK also carries:
   [jsoup](https://jsoup.org/) (MIT), the [AnkiDroid API](https://github.com/ankidroid/Anki-Android/tree/main/api)
   (LGPL-3.0), and AndroidX and Kotlin coroutines (Apache-2.0);
 - the fonts JetBrains Mono, Space Grotesk and Source Serif 4 (SIL Open Font License 1.1).
+
+The Linux app carries sherpa-onnx, jsoup, Commons Compress and the fonts as above, and
+[Apache PDFBox](https://pdfbox.apache.org/), Compose Multiplatform and kotlinx.serialization
+(Apache-2.0); its voices are downloaded, not bundled.
