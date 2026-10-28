@@ -1,4 +1,4 @@
-package com.pedrolopes.ttsing.desktop.tts
+package com.pedrolopes.ttsing.tts
 
 import kotlin.math.PI
 import kotlin.math.cos
@@ -8,8 +8,9 @@ import kotlin.math.cos
  *
  * A neural voice is asked to talk at most [com.pedrolopes.ttsing.tts.SpeedSteps.MAX_MODEL_SPEED]
  * times its own pace; past that it swallows short words, and the rest of the speed comes from
- * playing its audio faster. Android's `AudioTrack` does that itself; Java Sound has no such
- * thing, so it is done here, to the samples, before they are played.
+ * playing its audio faster. Java Sound has no way to do that, and Android's `AudioTrack` speed
+ * (Sonic, in the platform's mixer) makes a fast voice warble, so on both it is done here, to
+ * the samples, before they are played.
  *
  * The input is cut into overlapping windows that are laid down closer together than they were
  * taken; each window is taken from wherever, near its nominal place, it best continues the one
