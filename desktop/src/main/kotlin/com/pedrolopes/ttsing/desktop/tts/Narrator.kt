@@ -186,7 +186,9 @@ class Narrator(private val scope: CoroutineScope) {
                 val word = NeuralWordTiming.wordAt(words, (frame * msPerFrame).toInt())?.rangeInBlock
                 if (word != null && word != lastWord) {
                     lastWord = word
-                    _state.update { if (it.sentence === speaking) it.copy(word = word) else it }
+                    // Equal, not identical: resuming on the sentence paused in sets an equal ref, which
+                    // the state flow drops, keeping the old one.
+                    _state.update { if (it.sentence == speaking) it.copy(word = word) else it }
                 }
             }
             debug { "sentence ${speaking.position} heard: $heard" }
