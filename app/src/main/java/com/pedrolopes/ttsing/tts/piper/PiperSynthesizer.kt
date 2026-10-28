@@ -9,6 +9,7 @@ import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import com.pedrolopes.ttsing.tts.SpeedSteps
 import com.pedrolopes.ttsing.tts.SpokenText
 import com.pedrolopes.ttsing.tts.SynthesizedSentence
+import com.pedrolopes.ttsing.tts.TimeStretch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
@@ -25,7 +26,8 @@ import java.util.Locale
  *
  * Speed is a property of the *model* up to [SpeedSteps.MAX_MODEL_SPEED]: `generate(speed)`
  * shortens the phoneme durations, so it is properly faster speech. Past that the model
- * swallows short words, so the rest is made up by playing the audio faster, pitch kept.
+ * swallows short words, so the rest is made up by speeding the audio up, pitch kept, with
+ * [TimeStretch] as on the desktop: `AudioTrack`'s own speed made the voice warble.
  */
 class PiperSynthesizer(private val context: Context) {
 
@@ -85,12 +87,13 @@ class PiperSynthesizer(private val context: Context) {
             val anchors = mutableListOf<SynthesizedSentence.FrameMark>()
             PiperChunks.split(text).forEach { piece ->
                 val generated = runCatching { engine.generate(SpokenText.normalize(piece, locale), 0, rate) }.getOrNull()
-                val samples = generated?.samples?.takeIf { it.isNotEmpty() }
+                val raw = generated?.samples?.takeIf { it.isNotEmpty() }
                 // Where this piece's words sit in the sentence, for the highlight.
                 val start = text.indexOf(piece, cursor).takeIf { it >= 0 } ?: cursor
                 cursor = start + piece.length
-                if (samples == null) return@forEach
+                if (raw == null) return@forEach
                 sampleRate = generated.sampleRate
+                val samples = if (split.playback > 1.01f) TimeStretch.stretch(raw, sampleRate, split.playback) else raw
                 audio.add(samples)
                 anchors.add(SynthesizedSentence.FrameMark(frame, start, cursor))
                 frame += samples.size
@@ -103,7 +106,6 @@ class PiperSynthesizer(private val context: Context) {
                 channelCount = 1,
                 marks = emptyList(),
                 pieces = anchors.takeIf { it.size > 1 }.orEmpty(),
-                playbackSpeed = split.playback,
             )
         }
 

@@ -6,6 +6,7 @@ import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import com.pedrolopes.ttsing.tts.SpeedSteps
 import com.pedrolopes.ttsing.tts.SpokenText
+import com.pedrolopes.ttsing.tts.TimeStretch
 import com.pedrolopes.ttsing.tts.piper.PiperChunks
 import com.pedrolopes.ttsing.tts.piper.PiperVoice
 import java.util.Locale
