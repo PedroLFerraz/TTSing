@@ -71,9 +71,6 @@ import com.pedrolopes.ttsing.ui.theme.AppFonts
 import com.pedrolopes.ttsing.ui.theme.Ink
 import java.util.Locale
 
-/** What [ReaderSettingsSheet]'s `sleepMinutesLeft` uses to mean "when the chapter ends". */
-const val CHAPTER_END = -1
-
 /** The order the design lists themes in: the app's own first, the system's last. */
 private val ThemeOrder = listOf(ReaderTheme.DARK, ReaderTheme.LIGHT, ReaderTheme.SEPIA, ReaderTheme.SYSTEM)
 

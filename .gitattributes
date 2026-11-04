@@ -1,0 +1,12 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jar binary
+*.apk binary
+*.epub binary
+*.pdf binary
+*.ttf binary
+*.otf binary
+*.keystore binary
+*.bat text eol=crlf

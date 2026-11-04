@@ -21,7 +21,7 @@ import java.io.Writer
 
 /**
  * Pulls positioned lines and pictures out of a PDF with PDFBox, for [PdfReflow]. Apart from
- * [PdfDocument] so the corpus test can run the same extraction on real books without a device.
+ * [PdfBook] so the corpus test can run the same extraction on real books without a device.
  * Not thread-safe: callers hold the document's lock.
  */
 internal object PdfExtract {

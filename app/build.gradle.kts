@@ -1,10 +1,19 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+}
+
+// Release signing comes from a gitignored keystore.properties at the project root. Without it
+// the release signingConfig isn't created and a release build comes out unsigned, so a fresh
+// clone still builds.
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
 }
 
 android {
@@ -25,9 +34,21 @@ android {
         }
     }
 
+    signingConfigs {
+        if (File(keystoreProps.getProperty("storeFile", "")).exists()) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -50,6 +71,11 @@ android {
             test.maxHeapSize = "2g"
         }
     }
+    lint {
+        // The AnkiDroid API ships lint rules written for AnkiDroid's own code ("use the
+        // collection's getTime()"); they have no meaning here and fail every release build.
+        disable += setOf("DirectDateInstantiation", "DirectSystemCurrentTimeMillisUsage")
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -64,6 +90,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":core"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
@@ -87,7 +114,6 @@ dependencies {
     implementation(libs.ankidroid.api)
     implementation(libs.sherpa.onnx)
     implementation(libs.pdfbox.android)
-    implementation(libs.commons.compress)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)
@@ -108,6 +134,8 @@ val unpackPdfboxAssets = tasks.register<Sync>("unpackPdfboxAssets") {
     into(layout.buildDirectory.dir("pdfbox-test-resources"))
 }
 android.sourceSets.getByName("test").resources.srcDir(layout.buildDirectory.dir("pdfbox-test-resources"))
+// The sample EPUBs the tests read live with the :core tests.
+android.sourceSets.getByName("test").resources.srcDir(rootProject.file("core/src/test/resources"))
 tasks.matching { it.name.endsWith("UnitTestJavaRes") }.configureEach { dependsOn(unpackPdfboxAssets) }
 
 /**
