@@ -1,6 +1,5 @@
-package com.pedrolopes.ttsing.desktop
+package com.pedrolopes.ttsing.tts
 
-import com.pedrolopes.ttsing.desktop.tts.TimeStretch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue

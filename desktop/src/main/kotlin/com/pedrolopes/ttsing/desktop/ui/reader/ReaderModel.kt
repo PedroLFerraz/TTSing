@@ -10,10 +10,10 @@ import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.epub.TocEntry
 import com.pedrolopes.ttsing.data.pdf.PdfDocument
 import com.pedrolopes.ttsing.desktop.App
+import com.pedrolopes.ttsing.desktop.tts.Voice
 import com.pedrolopes.ttsing.tts.BookContentSource
 import com.pedrolopes.ttsing.tts.SentenceRef
 import com.pedrolopes.ttsing.tts.piper.PiperCatalog
-import com.pedrolopes.ttsing.tts.piper.PiperVoice
 import com.pedrolopes.ttsing.ui.reader.browseFraction
 import com.pedrolopes.ttsing.ui.reader.browsePosition
 import com.pedrolopes.ttsing.ui.reader.hasReadableContent
@@ -179,13 +179,16 @@ class ReaderModel(private val app: App, val bookId: String) {
 
     // ---- the voice ----
 
-    /** The voice the book is read in: the one chosen for its language, else the first installed. */
-    fun voice(): PiperVoice? {
-        val installed = app.voiceFolder.voices().filter { it.locale.language == locale.language }
+    /** The voice the book is read in: the one chosen for its language, else the first Piper voice installed. */
+    fun voice(): Voice? {
         val chosen = app.settings.value.voiceByLanguage[locale.language]
+        if (chosen == Voice.Google.idFor(locale)) return Voice.Google(locale)
+        if (chosen == Voice.Tacotron2.id && locale.language == Voice.Tacotron2.locale.language && app.coqui.ready.value) return Voice.Tacotron2
+        val installed = app.voiceFolder.voices().filter { it.locale.language == locale.language }
         val order = PiperCatalog.forLanguage(locale).map { it.id }
-        return installed.firstOrNull { it.id == chosen }
+        val piper = installed.firstOrNull { it.id == chosen }
             ?: installed.minByOrNull { order.indexOf(it.id).let { i -> if (i < 0) Int.MAX_VALUE else i } }
+        return piper?.let(Voice::Piper)
     }
 
     /** Reads from [from]. With no voice installed for the book's language, asks for one instead. */
@@ -223,7 +226,7 @@ class ReaderModel(private val app: App, val bookId: String) {
         }
     }
 
-    fun selectVoice(voice: PiperVoice) {
+    fun selectVoice(voice: Voice) {
         app.settings.update { it.copy(voiceByLanguage = it.voiceByLanguage + (voice.locale.language to voice.id)) }
         needsVoice = false
         restartVoice()

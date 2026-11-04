@@ -15,6 +15,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.pedrolopes.ttsing.desktop.library.FolderWatch
 import com.pedrolopes.ttsing.desktop.library.Library
+import com.pedrolopes.ttsing.desktop.tts.CoquiSetup
 import com.pedrolopes.ttsing.desktop.tts.Narrator
 import com.pedrolopes.ttsing.desktop.ui.library.LibraryScreen
 import com.pedrolopes.ttsing.desktop.ui.reader.ReaderScreen
@@ -35,7 +36,8 @@ class App(val dirs: AppDirs = AppDirs.default()) {
     val library = Library(dirs)
     val voiceFolder = PiperVoiceFolder(dirs.voices)
     val downloads = PiperDownloads(voiceFolder, CoroutineScope(SupervisorJob() + Dispatchers.IO))
-    val narrator = Narrator(scope)
+    val coqui = CoquiSetup(dirs, CoroutineScope(SupervisorJob() + Dispatchers.IO))
+    val narrator = Narrator(scope, coqui)
 
     val libraryRoot: File? get() = settings.value.libraryFolder?.let(::File)
 
