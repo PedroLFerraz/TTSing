@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -12,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import com.pedrolopes.ttsing.data.epub.ReadingPosition
 import com.pedrolopes.ttsing.data.pdf.PdfDocument
@@ -193,6 +195,34 @@ class ReaderScreenUiTest {
         compose.waitForIdle()
         assertEquals(null, app.narrator.state.value.sleepAt)
         assertTrue(!app.narrator.state.value.sleepAtChapterEnd)
+    }
+
+    @Test
+    fun `Google and Tacotron 2 are offered beside the Piper voices, and Google can be chosen`() {
+        val root = temp.newFolder("Books")
+        val book = File(root, "the-little-garden.epub")
+        File(javaClass.getResource("/the-little-garden.epub")!!.toURI()).copyTo(book)
+        app = App(AppDirs(temp.newFolder("data")))
+        app.settings.update { it.copy(libraryFolder = root.absolutePath) }
+        runBlocking { app.library.sync(root) }
+
+        compose.setContent {
+            TTSingTheme {
+                Box(Modifier.size(1300.dp, 900.dp)) { ReaderScreen(app, Library.idFor(book), onBack = {}) }
+            }
+        }
+        compose.waitUntil(20_000) { compose.onAllNodesWithContentDescriptionCount("Page and voice") > 0 }
+        compose.onNodeWithContentDescription("Page and voice").performClick()
+        compose.waitForIdle()
+        // An English book: Tacotron 2 is offered, not installed here, so with its Get.
+        compose.onNodeWithText("Tacotron 2").performScrollTo().assertExists()
+        compose.onNodeWithText("GET · 1 GB").assertExists()
+        compose.onNodeWithText("Google").performScrollTo().performClick()
+        compose.waitForIdle()
+        assertEquals("google-en", app.settings.value.voiceByLanguage["en"])
+        // Chosen, so the reader no longer says there's no voice.
+        compose.onAllNodesWithText("No voice for English", substring = true).assertCountEquals(0)
+        shot("voices-google-tacotron")
     }
 
     private companion object {

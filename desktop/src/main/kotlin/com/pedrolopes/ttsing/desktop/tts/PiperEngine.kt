@@ -11,18 +11,6 @@ import com.pedrolopes.ttsing.tts.piper.PiperChunks
 import com.pedrolopes.ttsing.tts.piper.PiperVoice
 import java.util.Locale
 
-/** One sentence's audio: 16-bit mono samples, and where each piece of it begins. */
-class Speech(
-    val pcm: ShortArray,
-    val sampleRate: Int,
-    /** Each piece's first sample and the characters of the sentence it speaks. */
-    val pieces: List<Piece>,
-) {
-    data class Piece(val frame: Int, val start: Int, val end: Int)
-
-    val durationMs: Int get() = (pcm.size * 1000L / sampleRate).toInt()
-}
-
 /**
  * Speaks with a Piper voice through sherpa-onnx's JVM bindings: a sentence in, samples out.
  * The model reports no word boundaries; the highlight comes from
@@ -33,7 +21,7 @@ class Speech(
  *
  * Not thread-safe: one sentence at a time.
  */
-class PiperEngine {
+class PiperEngine : SpeechEngine {
 
     private var loaded: PiperVoice? = null
     private var tts: OfflineTts? = null
@@ -76,35 +64,20 @@ class PiperEngine {
      * [text] spoken at [speed] (1.0 is the voice's own pace), or null if it could not be.
      * A long sentence is synthesized clause by clause ([PiperChunks]) and joined.
      */
-    fun synthesize(text: String, speed: Float, locale: Locale): Speech? {
+    override fun synthesize(text: String, speed: Float, locale: Locale): Speech? {
         val engine = tts ?: return null
         val split = SpeedSteps.split(speed.coerceAtLeast(MIN_SPEED))
-        var sampleRate = 0
-        var frame = 0
-        var cursor = 0
-        val audio = mutableListOf<FloatArray>()
-        val pieces = mutableListOf<Speech.Piece>()
+        val speech = Speech.Builder(text)
         PiperChunks.split(text).forEach { piece ->
             val generated = runCatching { engine.generate(SpokenText.normalize(piece, locale), 0, split.model) }.getOrNull()
-            val start = text.indexOf(piece, cursor).takeIf { it >= 0 } ?: cursor
-            cursor = start + piece.length
-            var samples = generated?.samples?.takeIf { it.isNotEmpty() } ?: return@forEach
-            sampleRate = generated.sampleRate
-            if (split.playback > 1.01f) samples = TimeStretch.stretch(samples, sampleRate, split.playback)
-            audio.add(samples)
-            pieces.add(Speech.Piece(frame, start, cursor))
-            frame += samples.size
+            val rate = generated?.sampleRate ?: 0
+            val samples = generated?.samples ?: FloatArray(0)
+            speech.add(piece, if (split.playback > 1.01f) TimeStretch.stretch(samples, rate, split.playback) else samples, rate)
         }
-        if (audio.isEmpty() || sampleRate <= 0) return null
-        val pcm = ShortArray(frame)
-        var at = 0
-        audio.forEach { piece ->
-            piece.forEach { sample -> pcm[at++] = (sample.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort() }
-        }
-        return Speech(pcm, sampleRate, pieces)
+        return speech.build()
     }
 
-    fun release() {
+    override fun release() {
         runCatching { tts?.release() }
         tts = null
         loaded = null

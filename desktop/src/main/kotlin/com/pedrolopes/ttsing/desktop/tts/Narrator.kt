@@ -7,7 +7,6 @@ import com.pedrolopes.ttsing.tts.NeuralWordTiming
 import com.pedrolopes.ttsing.tts.PlaybackPolicy
 import com.pedrolopes.ttsing.tts.SentenceRef
 import com.pedrolopes.ttsing.tts.WordTiming
-import com.pedrolopes.ttsing.tts.piper.PiperVoice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -50,9 +49,16 @@ data class Narration(
  * is synthesized to samples and played through a line this app owns, with the next two being
  * synthesized while it plays so no silence opens up between them.
  */
-class Narrator(private val scope: CoroutineScope) {
+class Narrator(private val scope: CoroutineScope, coqui: CoquiSetup) {
 
-    private val engine = PiperEngine()
+    private val piper = PiperEngine()
+    private val google = GoogleEngine()
+    private val tacotron = CoquiEngine(coqui)
+
+    /** The engine of the voice last loaded, and that voice. */
+    private var engine: SpeechEngine = piper
+    private var loaded: Voice? = null
+
     private val audio = AudioOut()
 
     /** Only one synthesis runs at a time; the engine requires it. First come, first served. */
@@ -71,23 +77,43 @@ class Narrator(private val scope: CoroutineScope) {
     var onSpoken: (SentenceRef, Long, Float) -> Unit = { _, _, _ -> }
 
     /** Reads [source] from [from] on, in [voice], at [rate] times the voice's own pace. */
-    fun play(source: ContentSource, from: ReadingPosition, voice: PiperVoice, locale: Locale, rate: Float) {
+    fun play(source: ContentSource, from: ReadingPosition, voice: Voice, locale: Locale, rate: Float) {
         val previous = job
         debug { "play from $from in ${voice.id} at $rate" }
         job = scope.launch {
             previous?.cancelAndJoin()
             debug { "previous job ended" }
-            _state.update { it.copy(speaking = true, preparing = engine.voice?.id != voice.id, finished = false, error = null) }
-            val ready = withContext(Dispatchers.IO) { synthesis.withLock { engine.prepare(voice) } }
-            debug { "voice ready: $ready" }
+            _state.update { it.copy(speaking = true, preparing = loaded?.id != voice.id, finished = false, error = null) }
+            val failure = withContext(Dispatchers.IO) { synthesis.withLock { prepare(voice) } }
+            debug { "voice ready: ${failure ?: "yes"}" }
             _state.update { it.copy(preparing = false) }
-            if (!ready) {
-                _state.update { it.copy(speaking = false, error = "The voice ${voice.id} could not be loaded") }
+            if (failure != null) {
+                _state.update { it.copy(speaking = false, error = failure) }
                 return@launch
             }
             sleepChapter = PlaybackPolicy.sleepChapterAtStart(sleepChapter, from)
             readLoop(source, from, locale, rate)
         }
+    }
+
+    /** Loads [voice]'s engine and makes it the one speaking; null when ready, else why not. */
+    private fun prepare(voice: Voice): String? {
+        val next: SpeechEngine = when (voice) {
+            is Voice.Piper -> piper
+            is Voice.Google -> google
+            Voice.Tacotron2 -> tacotron
+        }
+        val ready = when (voice) {
+            is Voice.Piper -> piper.prepare(voice.voice)
+            is Voice.Google -> true
+            Voice.Tacotron2 -> tacotron.prepare()
+        }
+        if (!ready) return next.failure ?: "The voice ${voice.id} could not be loaded"
+        // One engine at a time: a model or the Coqui helper is a lot of memory to keep idle.
+        if (engine !== next) engine.release()
+        engine = next
+        loaded = voice
+        return null
     }
 
     /** Stops the voice where it is; [state] keeps the sentence, so play resumes from it. */
@@ -138,7 +164,7 @@ class Narrator(private val scope: CoroutineScope) {
     fun shutdown() {
         job?.cancel()
         audio.close()
-        engine.release()
+        listOf(piper, google, tacotron).forEach { it.release() }
     }
 
     private suspend fun readLoop(source: ContentSource, from: ReadingPosition, locale: Locale, rate: Float) = coroutineScope {
@@ -161,6 +187,11 @@ class Narrator(private val scope: CoroutineScope) {
             val speech = (ahead.removeFirstOrNull()?.second ?: synthesizeAsync(speaking)).await()
             debug { "sentence ${speaking.position}: ${speech?.durationMs} ms of audio" }
             if (speech == null) {
+                // The engine knows why (no connection, the helper stopped): no point trying on.
+                engine.failure?.let { reason ->
+                    _state.update { it.copy(speaking = false, error = reason) }
+                    return@coroutineScope
+                }
                 // A run of refusals means the voice can't speak this text at all: say so.
                 if (++failures >= MAX_FAILURES) {
                     _state.update { it.copy(speaking = false, error = "This voice can't speak the text. Try another voice.") }

@@ -46,6 +46,7 @@ import com.pedrolopes.ttsing.desktop.App
 import com.pedrolopes.ttsing.desktop.ReaderTheme
 import com.pedrolopes.ttsing.desktop.SettingsStore
 import com.pedrolopes.ttsing.desktop.tts.Narration
+import com.pedrolopes.ttsing.desktop.tts.Voice
 import com.pedrolopes.ttsing.desktop.ui.Hairline
 import com.pedrolopes.ttsing.desktop.ui.MonoText
 import com.pedrolopes.ttsing.desktop.ui.theme.AppFonts
@@ -99,10 +100,12 @@ fun SettingsPanel(app: App, model: ReaderModel, narration: Narration) {
     val settings by app.settings.state.collectAsState()
     val installed by app.downloads.installed.collectAsState()
     val progress by app.downloads.progress.collectAsState()
+    val coquiReady by app.coqui.ready.collectAsState()
+    val coquiSetup by app.coqui.progress.collectAsState()
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf<String?>(null) }
-    // Read here so the list follows a download finishing.
-    val selected = installed.let { model.voice() }
+    // Keyed on what it depends on, so the list follows a choice, a download or a setup finishing.
+    val selected = remember(settings, installed, coquiReady, model.locale) { model.voice() }
     val locale = model.locale
 
     fun download(voice: CatalogVoice) {
@@ -177,7 +180,7 @@ fun SettingsPanel(app: App, model: ReaderModel, narration: Narration) {
         Section("Voice") {
             if (selected == null) {
                 Text(
-                    "No voice for ${locale.getDisplayLanguage(Locale.ENGLISH)} yet. Download one below; it stays on this computer.",
+                    "No voice for ${locale.getDisplayLanguage(Locale.ENGLISH)} yet. Pick Google (online), or get one below; it stays on this computer.",
                     color = Ink.Live,
                     fontSize = 13.sp,
                     modifier = Modifier.padding(bottom = 10.dp),
@@ -185,15 +188,48 @@ fun SettingsPanel(app: App, model: ReaderModel, narration: Narration) {
             }
             PiperCatalog.forLanguage(locale).forEach { voice ->
                 VoiceRow(
-                    voice = voice,
+                    name = voice.displayName,
+                    detail = "${placeOf(voice.locale)} · neural",
                     installed = voice.id in installed,
                     selected = selected?.id == voice.id,
-                    progress = progress?.takeIf { it.id == voice.id },
-                    onSelect = { app.voiceFolder.voices().firstOrNull { it.id == voice.id }?.let(model::selectVoice) },
-                    onDownload = { download(voice) },
+                    progress = progress?.takeIf { it.id == voice.id && !it.failed }?.fraction,
+                    onSelect = { app.voiceFolder.voices().firstOrNull { it.id == voice.id }?.let { model.selectVoice(Voice.Piper(it)) } },
+                    getLabel = "Get · ${voice.megabytes} MB",
+                    onGet = { download(voice) },
                     onCancel = { app.downloads.cancel() },
-                    onDelete = { scope.launch { app.downloads.delete(voice.id) } },
+                    onRemove = { scope.launch { app.downloads.delete(voice.id) } },
                 )
+            }
+            val google = Voice.Google(locale)
+            VoiceRow(
+                name = "Google",
+                detail = "${placeOf(locale)} · online",
+                installed = true,
+                selected = selected?.id == google.id,
+                progress = null,
+                onSelect = { model.selectVoice(google) },
+            )
+            if (locale.language == Voice.Tacotron2.locale.language) {
+                VoiceRow(
+                    name = "Tacotron 2",
+                    detail = "${placeOf(Voice.Tacotron2.locale)} · Coqui",
+                    installed = coquiReady,
+                    selected = selected?.id == Voice.Tacotron2.id,
+                    progress = coquiSetup?.takeIf { !it.failed }?.fraction,
+                    onSelect = { model.selectVoice(Voice.Tacotron2) },
+                    getLabel = "Get · 1 GB",
+                    onGet = { app.coqui.start() },
+                    onCancel = { app.coqui.cancel() },
+                    onRemove = { app.coqui.remove() },
+                )
+                coquiSetup?.let {
+                    Text(
+                        if (it.failed) it.reason.orEmpty() else it.step,
+                        color = if (it.failed) Color(0xFFFF6B57) else Ink.Muted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 10.dp, top = 2.dp, bottom = 6.dp),
+                    )
+                }
             }
             busy?.let { Text(it, color = Ink.Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)) }
             progress?.takeIf { it.failed }?.let {
@@ -210,21 +246,23 @@ fun SettingsPanel(app: App, model: ReaderModel, narration: Narration) {
                     MonoText(language, color = Ink.Dim, size = 10f, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
                     voices.forEach { voice ->
                         VoiceRow(
-                            voice = voice,
+                            name = voice.displayName,
+                            detail = "${placeOf(voice.locale)} · neural",
                             installed = voice.id in installed,
                             selected = false,
-                            progress = progress?.takeIf { it.id == voice.id },
+                            progress = progress?.takeIf { it.id == voice.id && !it.failed }?.fraction,
                             onSelect = null,
-                            onDownload = { download(voice) },
+                            getLabel = "Get · ${voice.megabytes} MB",
+                            onGet = { download(voice) },
                             onCancel = { app.downloads.cancel() },
-                            onDelete = { scope.launch { app.downloads.delete(voice.id) } },
+                            onRemove = { scope.launch { app.downloads.delete(voice.id) } },
                         )
                     }
                 }
             }
         }
         MonoText(
-            "Voices: Piper (MIT), run on this computer by sherpa-onnx",
+            "Voices: Piper (MIT) and Coqui Tacotron 2 run on this computer; Google's is online and is sent the text",
             color = Ink.Faint,
             size = 9f,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
@@ -300,16 +338,27 @@ private fun LanguagePicker(locale: Locale, onPick: (String) -> Unit) {
     }
 }
 
+/** A country, or the language when the locale names none: "Brazil", "English". */
+private fun placeOf(locale: Locale): String =
+    locale.getDisplayCountry(Locale.ENGLISH).ifEmpty { locale.getDisplayLanguage(Locale.ENGLISH) }
+
+/**
+ * One voice in the list: chosen by a click once it's on the computer, with Get, Cancel or Remove
+ * beside it. A voice with nothing to get ([getLabel] null) has no button.
+ */
 @Composable
 private fun VoiceRow(
-    voice: CatalogVoice,
+    name: String,
+    detail: String,
     installed: Boolean,
     selected: Boolean,
-    progress: com.pedrolopes.ttsing.tts.piper.DownloadProgress?,
+    /** How far its download or setup is, while one runs. */
+    progress: Float?,
     onSelect: (() -> Unit)?,
-    onDownload: () -> Unit,
-    onCancel: () -> Unit,
-    onDelete: () -> Unit,
+    getLabel: String? = null,
+    onGet: () -> Unit = {},
+    onCancel: () -> Unit = {},
+    onRemove: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier
@@ -322,22 +371,18 @@ private fun VoiceRow(
             Box(Modifier.size(8.dp).background(if (selected) Ink.Live else if (installed) Ink.Muted else Color.Transparent, CircleShape))
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(voice.displayName, color = if (installed) Ink.Text else Ink.Muted, fontFamily = AppFonts.Grotesk, fontSize = 14.sp)
-                MonoText(
-                    "${voice.locale.getDisplayCountry(Locale.ENGLISH).ifEmpty { voice.locale.getDisplayLanguage(Locale.ENGLISH) }} · neural",
-                    color = Ink.Dim,
-                    size = 9f,
-                )
+                Text(name, color = if (installed) Ink.Text else Ink.Muted, fontFamily = AppFonts.Grotesk, fontSize = 14.sp)
+                MonoText(detail, color = Ink.Dim, size = 9f)
             }
             when {
-                progress != null && !progress.failed -> TextButton(onClick = onCancel) { MonoText("Cancel", color = Ink.Muted, size = 10f) }
-                installed -> TextButton(onClick = onDelete) { MonoText("Remove", color = Ink.Faint, size = 10f) }
-                else -> TextButton(onClick = onDownload) { MonoText("Get · ${voice.megabytes} MB", color = Ink.Live, size = 10f) }
+                progress != null -> TextButton(onClick = onCancel) { MonoText("Cancel", color = Ink.Muted, size = 10f) }
+                installed -> onRemove?.let { TextButton(onClick = it) { MonoText("Remove", color = Ink.Faint, size = 10f) } }
+                getLabel != null -> TextButton(onClick = onGet) { MonoText(getLabel, color = Ink.Live, size = 10f) }
             }
         }
-        if (progress != null && !progress.failed) {
+        if (progress != null) {
             LinearProgressIndicator(
-                progress = { progress.fraction },
+                progress = { progress },
                 color = Ink.Live,
                 trackColor = Ink.Track,
                 modifier = Modifier.fillMaxWidth().height(2.dp).padding(top = 4.dp),
