@@ -6,8 +6,11 @@ import org.apache.pdfbox.cos.COSName
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
+import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceGray
 import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB
+import org.apache.pdfbox.pdmodel.graphics.image.CCITTFactory
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -18,6 +21,7 @@ import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.ByteBuffer
 import javax.imageio.ImageIO
 
 /**
@@ -61,8 +65,53 @@ class ScannedPdfTest {
     }
 
     @Test
-    fun jbig2CanBeRead() {
-        // Encoding JBIG2 needs another library; that PDFBox can find a reader is what matters.
-        assertTrue(ImageIO.getImageReadersByFormatName("JBIG2").hasNext())
+    fun jbig2PageIsDrawn() {
+        val file = scannedText()
+        PdfDocument.open(file, "scan").use { pdf ->
+            val page = runBlocking { pdf.renderPage(0, 400) }!!
+            assertTrue("the page came out white", !page.isBlank())
+            // Black where the picture is black, white around it: decoded, not just filled in.
+            assertEquals(0x000000, page.getRGB(page.width / 2, page.height / 2) and 0xffffff)
+            assertEquals(0xffffff, page.getRGB(2, 2) and 0xffffff)
+        }
+    }
+
+    /**
+     * One page whose only content is a JBIG2 picture of a black square, as a scanned book's
+     * text pages are. Nothing writes JBIG2 here, but its MMR coding is fax G4, which PDFBox
+     * writes: so the square goes through PDFBox's fax encoder and into JBIG2 segments by hand.
+     */
+    private fun scannedText(): File {
+        val width = 200
+        val height = 300
+        val picture = BufferedImage(width, height, BufferedImage.TYPE_BYTE_BINARY)
+        picture.createGraphics().apply {
+            color = Color.WHITE; fillRect(0, 0, width, height)
+            color = Color.BLACK; fillRect(50, 75, 100, 150)
+            dispose()
+        }
+        val file = temp.newFile("text.pdf")
+        PDDocument().use { pdf ->
+            val g4 = CCITTFactory.createFromImage(pdf, picture).cosObject.createRawInputStream().use { it.readBytes() }
+            val jbig2 = ByteArrayOutputStream().also { out ->
+                // Page information: size, unknown resolution, default pixel white, no striping.
+                out.segment(0, type = 48, ByteBuffer.allocate(19).putInt(width).putInt(height).putInt(0).putInt(0).put(0).putShort(0))
+                // An immediate lossless generic region covering the page, MMR coded.
+                out.segment(1, type = 39, ByteBuffer.allocate(18 + g4.size).putInt(width).putInt(height).putInt(0).putInt(0).put(0).put(1).put(g4))
+                out.segment(2, type = 49, ByteBuffer.allocate(0))
+            }.toByteArray()
+            val page = PDPage()
+            pdf.addPage(page)
+            val image = PDImageXObject(pdf, ByteArrayInputStream(jbig2), COSName.JBIG2_DECODE, width, height, 1, PDDeviceGray.INSTANCE)
+            PDPageContentStream(pdf, page).use { it.drawImage(image, 0f, 0f, page.mediaBox.width, page.mediaBox.height) }
+            pdf.save(file)
+        }
+        return file
+    }
+
+    /** A JBIG2 segment of page 1, referring to no other: header, then [data]. */
+    private fun ByteArrayOutputStream.segment(number: Int, type: Int, data: ByteBuffer) {
+        write(ByteBuffer.allocate(11).putInt(number).put(type.toByte()).put(0).put(1).putInt(data.capacity()).array())
+        write(data.array())
     }
 }
