@@ -314,5 +314,7 @@ TTSing's own code is MIT; see [LICENSE](LICENSE). The APK also carries:
 - the fonts JetBrains Mono, Space Grotesk and Source Serif 4 (SIL Open Font License 1.1).
 
 The Linux app carries sherpa-onnx, jsoup, Commons Compress and the fonts as above, and
-[Apache PDFBox](https://pdfbox.apache.org/), Compose Multiplatform and kotlinx.serialization
-(Apache-2.0); its voices are downloaded, not bundled.
+[Apache PDFBox](https://pdfbox.apache.org/) with its JBIG2 decoder, Compose Multiplatform and
+kotlinx.serialization (Apache-2.0), and [jai-imageio-jpeg2000](https://github.com/jai-imageio/jai-imageio-jpeg2000)
+(BSD-3-Clause and the JJ2000 license), which draws scanned PDFs' JPEG 2000 pages; its voices are
+downloaded, not bundled.
