@@ -43,7 +43,13 @@ data class Narration(
     val sleepMinutes: Int? = null,
     /** The sleep timer stops the voice when the chapter being read ends. */
     val sleepAtChapterEnd: Boolean = false,
-)
+) {
+    /** [word] being spoken in [spoken], shown only while that is still the sentence shown. */
+    fun withWord(spoken: SentenceRef, word: IntRange): Narration =
+        // Equal, not identical: resuming on the sentence paused in sets an equal ref, which
+        // the state flow drops, keeping the old one.
+        if (sentence == spoken) copy(word = word) else this
+}
 
 /**
  * Reads a book aloud, sentence by sentence, as the Android app's narrator does: each sentence
@@ -186,7 +192,7 @@ class Narrator(private val scope: CoroutineScope) {
                 val word = NeuralWordTiming.wordAt(words, (frame * msPerFrame).toInt())?.rangeInBlock
                 if (word != null && word != lastWord) {
                     lastWord = word
-                    _state.update { if (it.sentence === speaking) it.copy(word = word) else it }
+                    _state.update { it.withWord(speaking, word) }
                 }
             }
             debug { "sentence ${speaking.position} heard: $heard" }
