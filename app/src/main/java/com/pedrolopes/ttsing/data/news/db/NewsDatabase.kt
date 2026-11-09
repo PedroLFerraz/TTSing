@@ -234,8 +234,15 @@ interface NewsDao {
     @Query("SELECT id, title, link, fetchedAt, lastOpenedAt FROM articles WHERE feedUrl = :feedUrl")
     suspend fun storedStories(feedUrl: String): List<StoredStory>
 
-    @Query("UPDATE articles SET title = :title WHERE id = :id")
-    suspend fun setTitle(id: String, title: String)
+    /**
+     * Gives a story its feed's new title, unless it changed since [from] was read or the feed
+     * no longer owns it: a page fetch or an open that landed meanwhile wins over the rename.
+     */
+    @Query(
+        """UPDATE articles SET title = :title WHERE id = :id AND title = :from
+           AND (:isVideo OR (fetchedAt = 0 AND lastOpenedAt = 0))""",
+    )
+    suspend fun setFeedTitle(id: String, from: String, title: String, isVideo: Boolean)
 
     /**
      * Newest stories in a feed whose page hasn't been fetched yet (`fetchedAt == 0`) — i.e.

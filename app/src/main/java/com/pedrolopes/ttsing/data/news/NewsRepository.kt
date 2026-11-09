@@ -248,7 +248,8 @@ class NewsRepository(
         val existing = dao.storedStories(feedUrl).associateBy { it.id }
         val known = existing.keys
         for ((id, title) in renamedTitles(existing, items.map { it to articleId(feedUrl, it.guid) })) {
-            dao.setTitle(id, title)
+            val story = existing.getValue(id)
+            dao.setFeedTitle(id, from = story.title, title = title, isVideo = YouTube.videoId(story.link) != null)
         }
         val cutoff = retentionCutoff()
         val fresh = items
