@@ -89,6 +89,15 @@ data class ArticleEntity(
     }
 }
 
+/** What a refresh needs of a story it already has: whether the feed may still rename it. */
+data class StoredStory(
+    val id: String,
+    val title: String,
+    val link: String,
+    val fetchedAt: Long,
+    val lastOpenedAt: Long,
+)
+
 @Dao
 interface NewsDao {
 
@@ -222,8 +231,11 @@ interface NewsDao {
     @Query("SELECT imageUrl FROM articles WHERE imageUrl IS NOT NULL")
     suspend fun imageUrls(): List<String>
 
-    @Query("SELECT id FROM articles WHERE feedUrl = :feedUrl")
-    suspend fun articleIds(feedUrl: String): List<String>
+    @Query("SELECT id, title, link, fetchedAt, lastOpenedAt FROM articles WHERE feedUrl = :feedUrl")
+    suspend fun storedStories(feedUrl: String): List<StoredStory>
+
+    @Query("UPDATE articles SET title = :title WHERE id = :id")
+    suspend fun setTitle(id: String, title: String)
 
     /**
      * Newest stories in a feed whose page hasn't been fetched yet (`fetchedAt == 0`) — i.e.
