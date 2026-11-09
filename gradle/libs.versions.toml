@@ -22,6 +22,8 @@ junit = "4.13.2"
 composeMultiplatform = "1.9.3"
 serialization = "1.9.0"
 pdfbox = "2.0.37"
+jbig2Imageio = "3.0.4"
+jaiImageioJpeg2000 = "1.4.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -54,6 +56,9 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 kotlinx-coroutines-swing = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-swing", version.ref = "coroutines" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 pdfbox = { group = "org.apache.pdfbox", name = "pdfbox", version.ref = "pdfbox" }
+# Image decoders PDFBox finds through ImageIO: scanned PDFs store their pages as JBIG2 and JPEG 2000.
+jbig2-imageio = { group = "org.apache.pdfbox", name = "jbig2-imageio", version.ref = "jbig2Imageio" }
+jai-imageio-jpeg2000 = { group = "com.github.jai-imageio", name = "jai-imageio-jpeg2000", version.ref = "jaiImageioJpeg2000" }
 # The desktop app's sherpa-onnx: JVM jars published as GitHub release assets (see settings.gradle.kts).
 sherpa-onnx-jvm = { group = "com.k2fsa.sherpa.onnx", name = "sherpa-onnx-jvm", version.ref = "sherpaOnnx" }
 sherpa-onnx-native-linux-x64 = { group = "com.k2fsa.sherpa.onnx", name = "sherpa-onnx-native-lib-linux-x64", version.ref = "sherpaOnnx" }

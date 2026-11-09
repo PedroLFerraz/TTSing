@@ -5,6 +5,7 @@ import com.pedrolopes.ttsing.data.epub.SentenceSplitter
 import com.pedrolopes.ttsing.data.news.db.ArticleEntity
 import com.pedrolopes.ttsing.data.news.db.FeedEntity
 import com.pedrolopes.ttsing.data.news.db.NewsDao
+import com.pedrolopes.ttsing.data.news.db.StoredStory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -239,9 +240,17 @@ class NewsRepository(
         return result
     }
 
-    /** Inserts stories not seen before, returning how many; existing ones keep their text and position. */
+    /**
+     * Inserts stories not seen before, returning how many; existing ones keep their text and
+     * position, and take the feed's new title when [renamedTitles] lets them.
+     */
     private suspend fun storeItems(feedUrl: String, items: List<FeedItem>): Int {
-        val known = dao.articleIds(feedUrl).toSet()
+        val existing = dao.storedStories(feedUrl).associateBy { it.id }
+        val known = existing.keys
+        for ((id, title) in renamedTitles(existing, items.map { it to articleId(feedUrl, it.guid) })) {
+            val story = existing.getValue(id)
+            dao.setFeedTitle(id, from = story.title, title = title, isVideo = YouTube.videoId(story.link) != null)
+        }
         val cutoff = retentionCutoff()
         val fresh = items
             // Older than what refreshAll() keeps: storing it would only bring a deleted story
@@ -567,6 +576,21 @@ class NewsRepository(
         fun articleId(feedUrl: String, guid: String): String = ARTICLE_PREFIX + sha1("$feedUrl|$guid")
 
         const val ARTICLE_PREFIX = "article:"
+
+        /**
+         * New titles, by id, for stored stories that the feed has since renamed: YouTube retitles
+         * a stream once it has aired, and the list kept the old name. Only titles the feed still
+         * owns follow it: a video's, and a story's not yet fetched or opened. A fetched page's
+         * headline beats the feed's, and a new headline on a story being read could move its
+         * saved position by a block.
+         */
+        fun renamedTitles(stored: Map<String, StoredStory>, items: List<Pair<FeedItem, String>>): Map<String, String> =
+            items.mapNotNull { (item, id) ->
+                val story = stored[id] ?: return@mapNotNull null
+                val feedOwnsTitle = YouTube.videoId(story.link) != null ||
+                    (story.fetchedAt == 0L && story.lastOpenedAt == 0L)
+                (id to item.title).takeIf { feedOwnsTitle && item.title.isNotBlank() && item.title != story.title }
+            }.toMap()
 
         fun isArticle(id: String): Boolean = id.startsWith(ARTICLE_PREFIX)
 

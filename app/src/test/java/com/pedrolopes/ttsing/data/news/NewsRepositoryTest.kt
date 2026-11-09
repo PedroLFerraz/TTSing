@@ -2,6 +2,7 @@ package com.pedrolopes.ttsing.data.news
 
 import com.pedrolopes.ttsing.data.epub.Block
 import com.pedrolopes.ttsing.data.epub.SentenceSplitter
+import com.pedrolopes.ttsing.data.news.db.StoredStory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -159,5 +160,44 @@ class NewsRepositoryTest {
             "Microsoft closes its deal for the game studio",
         ).forEach { assertFalse(it, NewsRepository.isAd(item(it, "Business", "Business / Big Tech"))) }
         assertFalse(NewsRepository.isAd(item("Antitrust ruling reshapes app stores", "Mergers and deals", "Policy")))
+    }
+
+    private val video = "https://www.youtube.com/watch?v=TmjLE8bTC3g"
+    private val page = "https://example.com/story"
+
+    private fun stored(title: String, link: String, fetchedAt: Long = 0, lastOpenedAt: Long = 0) =
+        mapOf("id" to StoredStory("id", title, link, fetchedAt, lastOpenedAt))
+
+    private fun renamed(stored: Map<String, StoredStory>, title: String, link: String) =
+        NewsRepository.renamedTitles(stored, listOf(FeedItem(title, link, null, null, 0, "g") to "id"))
+
+    @Test
+    fun `a video takes the title its feed renamed it to`() {
+        // A stream YouTube retitled after it aired. Videos are marked fetched when stored.
+        val before = stored("ANÁLISES RENAIS | 09/11/2026", video, fetchedAt = 1, lastOpenedAt = 1)
+        val after = "FLÁVIO PASSA VERGONHA INTERNACIONAL | ANÁLISES RENAIS | 09/11/2026"
+        assertEquals(mapOf("id" to after), renamed(before, after, video))
+    }
+
+    @Test
+    fun `a story not yet fetched or opened takes the feed's new title`() {
+        assertEquals(mapOf("id" to "New"), renamed(stored("Old", page), "New", page))
+    }
+
+    @Test
+    fun `a fetched story keeps the headline its page gave it`() {
+        assertEquals(emptyMap<String, String>(), renamed(stored("Page headline", page, fetchedAt = 1), "Feed title", page))
+    }
+
+    @Test
+    fun `a story being read keeps its headline so its position holds`() {
+        assertEquals(emptyMap<String, String>(), renamed(stored("Old", page, lastOpenedAt = 1), "New", page))
+    }
+
+    @Test
+    fun `unchanged, blank and unknown titles are left alone`() {
+        assertEquals(emptyMap<String, String>(), renamed(stored("Same", video), "Same", video))
+        assertEquals(emptyMap<String, String>(), renamed(stored("Old", video), " ", video))
+        assertEquals(emptyMap<String, String>(), renamed(emptyMap(), "New", video))
     }
 }

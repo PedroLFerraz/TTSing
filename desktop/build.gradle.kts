@@ -68,6 +68,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.swing)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.pdfbox)
+    // Without these PDFBox draws a scanned page's JBIG2 or JPEG 2000 image as nothing: a white page.
+    runtimeOnly(libs.jbig2.imageio)
+    runtimeOnly(libs.jai.imageio.jpeg2000)
     implementation(libs.sherpa.onnx.jvm)
     runtimeOnly(libs.sherpa.onnx.native.linux.x64)
 

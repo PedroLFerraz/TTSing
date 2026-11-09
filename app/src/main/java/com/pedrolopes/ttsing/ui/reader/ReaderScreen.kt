@@ -480,7 +480,8 @@ fun ReaderScreen(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet(drawerContainerColor = Ink.Surface) {
+            // Given the state, the sheet handles Back itself: closes the contents, not the book.
+            ModalDrawerSheet(drawerState = drawerState, drawerContainerColor = Ink.Surface) {
                 MonoText(
                     "Contents",
                     size = 13f,
